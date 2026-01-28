@@ -10,6 +10,4 @@ need git
 need install
 need ulogd
 
-need swag
-
 echo "ok"
