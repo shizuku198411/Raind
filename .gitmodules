@@ -1,0 +1,9 @@
+[submodule "components/raind-cli"]
+	path = components/raind-cli
+	url = https://github.com/shizuku198411/Raind-CLI.git
+[submodule "components/condenser"]
+	path = components/condenser
+	url = https://github.com/shizuku198411/Condenser.git
+[submodule "components/droplet"]
+	path = components/droplet
+	url = https://github.com/shizuku198411/Droplet.git

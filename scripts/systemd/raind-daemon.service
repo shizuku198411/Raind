@@ -1,0 +1,12 @@
+[Unit]
+Description=Raind Daemon Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/condenser
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
