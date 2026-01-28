@@ -30,7 +30,7 @@ sudo sysctl -p.
 
 ## ビルド&インストール
 ```
-git clone --recurse-submodules https://github.com/<org>/raind.git
+git clone --recurse-submodules https://github.com/shizuku198411/Raind.git
 cd raind
 make bootstrap
 make build
