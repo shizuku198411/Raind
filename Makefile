@@ -12,9 +12,9 @@ install:
 	@sudo PREFIX=$${PREFIX:-/usr/local} ./scripts/install.sh
 
 enable-service:
-	@sudo install -m 0644 ./scripts/systemd/condenser.service /etc/systemd/system/condenser.service
+	@sudo install -m 0644 ./scripts/systemd/raind-daemon.service /etc/systemd/system/raind-daemon.service
 	@sudo systemctl daemon-reload
-	@sudo systemctl enable --now condenser.service
+	@sudo systemctl enable --now raind-daemon.service
 
 disable-service:
 	@sudo systemctl disable --now condenser.service || true
