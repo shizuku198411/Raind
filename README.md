@@ -3,7 +3,7 @@
   <img src="assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
-[version](https://img.shields.io/badge/version-v0.1.1-blue)
+![version](https://img.shields.io/badge/version-v0.1.1-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
 
 **Raind** は **Zero Trust コンテナ** をコンセプトに設計された、実験的なコンテナランタイムです。  
 従来の「ネットワークは外部で守る」という前提ではなく、**ランタイム自身が通信を制御・観測するセキュリティ境界になる** ことを目指しています。
