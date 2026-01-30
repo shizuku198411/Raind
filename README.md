@@ -3,6 +3,8 @@
   <img src="assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
+[version](https://img.shields.io/badge/version-v0.1.1-blue)
+
 **Raind** は **Zero Trust コンテナ** をコンセプトに設計された、実験的なコンテナランタイムです。  
 従来の「ネットワークは外部で守る」という前提ではなく、**ランタイム自身が通信を制御・観測するセキュリティ境界になる** ことを目指しています。
 
@@ -27,6 +29,93 @@
 
 という問題が残ります。  
 Raindはこれらを **ランタイムレイヤで解決できるか** を検証します。
+
+## Raindの特徴
+Raindで最も特徴的な機能は以下です。
+
+- ポリシーの明示的宣言
+- 通信の可視化
+
+データベースを利用するWebサーバ(Wordpress等)の構築を例に、Raindの特徴を見てみます。
+
+### 1. ポリシー定義
+Raindでは、コンテナ間通信(East-West)はデフォルトで拒否されます。  
+そのため、明示的に許可ポリシーを作成します。
+```
+// wordpress → databaseへのtcp/3306を許可するポリシーの作成
+$ raind policy add --type ew -s wordpress -d wp_database -p tcp --dport 3306
+policy: 01kg6m673gr5y0cbh62dyeakth created
+
+// 設定反映
+$ raind policy commit
+This operation will affect the container network.
+Are you sure you want to commit? (y/n): y
+policy commit success
+
+// ポリシー確認
+$ raind policy ls --type ew
+FLAG: [*] - Applied, [+] - Apply next commit, [-] - Remove next commit, [ ] - Not applied
+
+POLICY TYPE : East-West
+CURRENT MODE: deny_by_default
+
+FLAG  POLICY ID                   SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION  COMMENT  REASON
+[ ]   01kg6m673gr5y0cbh62dyeakth  wordpress      wp_database    tcp       3306      ALLOW            container: wordpress not found
+  >> DENY ALL EAST-WEST TRAFFIC <<
+```
+作成予定のコンテナ名をキーにすることが可能で、該当のコンテナが作成された際に自動でポリシーが適用されます。
+これにより、アップタイム時のポリシー適用までのラグを最小限に抑えることが可能です。
+
+### 2. コンテナ作成 & 起動
+```
+// MySQLコンテナ作成
+$ raind container create --name wp_database \
+-e MYSQL_ROOT_PASSWORD=wordpress \
+-e MYSQL_USER=wordpress -e MYSQL_PASSWORD=wordpress -e MYSQL_DATABASE=wordpress \
+mysql:latest
+
+// wordpressコンテナ作成
+$ raind container create --name wordpress \
+-p 10080:80
+-e WORDPRESS_DB_HOST=10.166.0.1:3306
+-e WORDPRESS_DB_USER=wordpress -e WORDPRESS_DB_PASSWORD=wordpress -e WORDPRESS_DB_NAME=wordpress \
+wordpress:latest
+
+// コンテナ起動
+$ raind container start wp_database
+$ raind container start wordpress
+
+// コンテナステータス確認
+$ raind container ls
+CONTAINER ID  IMAGE             COMMAND                  CREATED              STATUS   PORTS                  NAME
+01kg6mv5pmpy  mysql:latest      "docker-entrypoint.sh…"  less than a minutes  running                         wp_database
+01kg6mka4jfc  wordpress:latest  "docker-entrypoint.sh…"  less than a minutes  running  0.0.0.0:10080->80/tcp  wordpress
+
+// ポリシー適用確認
+$ raind policy ls --type ew
+FLAG: [*] - Applied, [+] - Apply next commit, [-] - Remove next commit, [ ] - Not applied
+
+POLICY TYPE : East-West
+CURRENT MODE: deny_by_default
+
+FLAG  POLICY ID                   SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION  COMMENT  REASON
+[*]   01kg6m673gr5y0cbh62dyeakth  wordpress      wp_database    tcp       3306      ALLOW 
+  >> DENY ALL EAST-WEST TRAFFIC <<
+```
+RaindのコマンドラインはDockerと類似の設計としているため、Dockerユーザにとって馴染みのあるコマンドで作成ができます。
+
+### 3. トラフィックログ確認
+```
+$ raind logs netflow
+  :
+2026-01-30 13:40:48     ALLOW   FROM: wordpress => TO: 8.8.8.8 {UDP/53}
+2026-01-30 13:40:49     ALLOW   FROM: wordpress => TO: 65.21.231.50 {TCP/443}
+2026-01-30 13:40:52     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
+2026-01-30 13:40:54     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
+2026-01-30 13:40:58     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
+```
+Raindのトラフィックログは、コンテナのIPに対しコンテナID/コンテナ名がマッピングされます。  
+「どのコンテナが」「どのコンテナ/アドレスに」通信を行っているか、直感的に確認することが可能です。
 
 ## 設計思想
 ### 1. Zero Trustは「デフォルトで拒否」から始まる
@@ -101,7 +190,7 @@ Raindは一般的なコンテナランタイムの機能として以下を実装
 ### OCI準拠のコンテナ起動
 コンテナ起動におけるライフサイクルおよび設定ファイルは、[OCI Runtime Spec](https://github.com/opencontainers/runtime-spec/tree/main)に準拠しています。
 
-## 位置づけ (v0.1.0)
+## 位置づけ (v0.1.x)
 Raind v0.1.0は以下を目的としたリリースです。
 
 - Zero Trust を コンテナランタイムの責務として実装可能か の検証

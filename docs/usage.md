@@ -10,6 +10,7 @@ $ raind container create [options] <image:tag>
 --name <container-name>: コンテナ名
 --publish, -p <host-port:container-port>: ポートフォワード設定
 --volume, -v <host-path:container-path>: ホストディレクトリのマウント設定
+--environment, -e <KEY=VALUE>: 環境変数
 ```
 
 ### 起動
@@ -37,6 +38,11 @@ $ raind container run [options] <image:tag>
 --name <container-name>: コンテナ名
 --publish, -p <host-port:container-port>: ポートフォワード設定
 --volume, -v <host-path:container-path>: ホストディレクトリのマウント設定
+```
+
+### ログ確認
+```
+$ raind container logs <container-id|container-name>
 ```
 
 ### コンテナ内でのコマンド実行
@@ -77,7 +83,7 @@ $ raind image ls
 全てのポリシー変更操作は、`commit`コマンドを実行するまでは実際のポリシーに反映されません。
 ### ポリシー作成
 ```
-$ raind policy create --type <ew|ns-obs|ns-enf> \
+$ raind policy add --type <ew|ns-obs|ns-enf> \
 -s <container-id|container-name> \
 -d <container-id|container-name|address> \
 -p <icmp|tcp|udp>
@@ -107,4 +113,15 @@ $ raind policy commit
 ### ポリシー一覧
 ```
 $ raind policy ls
+```
+
+## ログ確認
+### トラフィックログ確認
+```
+$ raind logs netflow [options]
+
+[options]
+--pager: lessコマンドでの表示
+--line: 表示行数
+--json: json形式での表示
 ```
