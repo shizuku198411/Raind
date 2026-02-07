@@ -1,217 +1,158 @@
 # Raind - Zero Trust Oriented Container Runtime
+
 <p>
   <img src="assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
-![version](https://img.shields.io/badge/version-v0.1.1-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
+![version](https://img.shields.io/badge/version-v0.1.2-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
 
-**Raind** は **Zero Trust コンテナ** をコンセプトに設計された、実験的なコンテナランタイムです。  
-従来の「ネットワークは外部で守る」という前提ではなく、**ランタイム自身が通信を制御・観測するセキュリティ境界になる** ことを目指しています。
+Raindは、**Zero Trustをコンテナランタイムのレイヤで実装できるか**を検証するPoC（概念実証）として作られたコンテナランタイムです。  
+本リポジトリは、Raindを構成する3コンポーネントを`components/`配下にsubmoduleとして配置したメタリポジトリです。
 
-本プロジェクトは「実用的な代替ランタイム」を目指すものではなく、
+**構成要素**
+- `Raind-CLI`: 利用者向けCLI（UI層）
+- `Condenser`: 高レベルコンテナランタイム（制御面）
+- `Droplet`: 低レベルコンテナランタイム（実行面 / OCI準拠）
 
-> コンテナランタイム自身がセキュリティ境界になり得るか
+詳細な設計や責務分離については[Design Document](docs/design.md)を参照してください。
 
-という設計思想に基づくPoCです。
+## 主要な特徴
+- Zero Trust指向コンテナ制御
+- East-West通信はデフォルトDenyのポリシー設計
+- North-South通信は`observe`/`enforce`モード切替
+- iptables管理チェーンのフル再構築による冪等なポリシー反映
+- NFLOG + ulogd2 + CondenserによるログEnrichment
+- CLIからのコンテナ操作とポリシー管理
+- Condenserによるコンテナ・イメージ管理
+- DropletによるOCI準拠のコンテナ実行
 
-## 問題意識
-多くのコンテナ環境では、以下が暗黙の前提になっています。
+### Zero Trust指向コンテナ制御
+Raindでは、East-West通信(コンテナ間通信)はデフォルトで拒否します。  
+コンテナ起動時に **明示的に** ポリシーによって許可することでのみ通信可能とし、コンテナ侵害時の横移動や偵察行為等をブロックするとともに、後述のログEnrichmentと併せることで、不審な挙動を行っているコンテナの検知を可能とします。  
+Bottle(≒docker-compose)作成時には明示的にポリシーを定義することも可能です。
 
-- コンテナ間通信は基本的に自由 (flat network)
-- ネットワークセキュリティは上位 (FW / Service Mesh / CNI) に委ねる
-- ランタイムは「起動と隔離」までが責務
-
-しかしこの前提では、
-
-- **どのコンテナが、どこへ通信したか** をランタイム単位で把握できない
-- 通信ログとコンテナ実体の突合が困難 (SNATによるコンテナアドレスの隠蔽)
-- 「許可されている通信」と「偶然通っている通信」の区別が曖昧
-
-という問題が残ります。  
-Raindはこれらを **ランタイムレイヤで解決できるか** を検証します。
-
-## Raindの特徴
-Raindで最も特徴的な機能は以下です。
-
-- ポリシーの明示的宣言
-- 通信の可視化
-
-データベースを利用するWebサーバ(Wordpress等)の構築を例に、Raindの特徴を見てみます。
-
-### 1. ポリシー定義
-Raindでは、コンテナ間通信(East-West)はデフォルトで拒否されます。  
-そのため、明示的に許可ポリシーを作成します。
+```yaml
+# bottle.yaml
+bottle:
+  name: wordpress
+services:
+  wp:
+    image: wordpress
+    env:
+      - WORDPRESS_DB_HOST=db:3306
+      - WORDPRESS_DB_USER=wordpress
+      - WORDPRESS_DB_PASSWORD=wordpress
+      - WORDPRESS_DB_NAME=wordpress
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+  db:
+    image: mysql
+    env:
+      - MYSQL_ROOT_PASSWORD=wordpress
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=wordpress
+      - MYSQL_PASSWORD=wordpress
+# allowed traffic
+policies:
+  - type: east-west
+    source: wp
+    destination: db
+    protocol: tcp
+    dest_port: 3306
+    comment: "wp->db 3306/tcp: Allow Database Traffic"
 ```
-// wordpress → databaseへのtcp/3306を許可するポリシーの作成
-$ raind policy add --type ew -s wordpress -d wp_database -p tcp --dport 3306
-policy: 01kg6m673gr5y0cbh62dyeakth created
 
-// 設定反映
-$ raind policy commit
-This operation will affect the container network.
-Are you sure you want to commit? (y/n): y
-policy commit success
+### NFLOG + ulogd2 + CondenserによるログEnrichment
+Raindでは、コンテナによる通信の可視化を標準機能として実装しています。
 
-// ポリシー確認
-$ raind policy ls --type ew
-FLAG: [*] - Applied, [+] - Apply next commit, [-] - Remove next commit, [ ] - Not applied
+- Trafficログ
+- DNSログ
+- Metrics
 
-POLICY TYPE : East-West
-CURRENT MODE: deny_by_default
+また全てのログにおける送信元/宛先はコンテナ名とマッピングされ、より直感的に確認できます。
 
-FLAG  POLICY ID                   SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION  COMMENT  REASON
-[ ]   01kg6m673gr5y0cbh62dyeakth  wordpress      wp_database    tcp       3306      ALLOW            container: wordpress not found
-  >> DENY ALL EAST-WEST TRAFFIC <<
+#### SIEM連携
+[Wazuh](https://wazuh.com/)を利用し、これらのログを可視化した場合のイメージです。  
+
+- Trafficログ
+![netflow_timeline](assets/siem/netflow_timeline.png)
+![netflow](assets/siem/netflow.png)
+
+- DNSログ
+![dns](assets/siem/dns.png)
+
+- Metrics
+![metrics_timeline](assets/siem/metrics_timeline.png)
+![metrics](assets/siem/metrics.png)
+
+SIEM連携により、トラフィック急増/リソース占有/OOMといったコンテナの異常動作を検知することが可能となります。
+
+## アーキテクチャ概要
+- `Raind-CLI`がREST/WebSocket経由で`Condenser`を操作
+- `Condenser`がコンテナ状態・ネットワーク・ポリシーをSSOTとして管理
+- `Droplet`がOCI設定に基づきNamespace/Cgroup/Capability等を構成して実行
+
+設計図と詳細な責務は[Design Document](docs/design.md)にまとめています。
+
+## 前提条件
+- Linux（namespace/cgroup対応カーネル）
+- Go 1.25以上
+- `sudo`実行権限
+- `iptables`利用環境
+- `ulogd2`（NFLOG収集用）
+
+Droplet単体での検証では、イメージ取得等にDockerが必要になる場合があります。  
+ネットワークログの収集・Enrichmentは`ulogd2`が前提です。
+
+## セットアップ（メタリポジトリ）
+1. submoduleの初期化
 ```
-作成予定のコンテナ名をキーにすることが可能で、該当のコンテナが作成された際に自動でポリシーが適用されます。
-これにより、アップタイム時のポリシー適用までのラグを最小限に抑えることが可能です。
-
-### 2. コンテナ作成 & 起動
+git submodule update --init --recursive
 ```
-// MySQLコンテナ作成
-$ raind container create --name wp_database \
--e MYSQL_ROOT_PASSWORD=wordpress \
--e MYSQL_USER=wordpress -e MYSQL_PASSWORD=wordpress -e MYSQL_DATABASE=wordpress \
-mysql:latest
-
-// wordpressコンテナ作成
-$ raind container create --name wordpress \
--p 10080:80
--e WORDPRESS_DB_HOST=10.166.0.1:3306
--e WORDPRESS_DB_USER=wordpress -e WORDPRESS_DB_PASSWORD=wordpress -e WORDPRESS_DB_NAME=wordpress \
-wordpress:latest
-
-// コンテナ起動
-$ raind container start wp_database
-$ raind container start wordpress
-
-// コンテナステータス確認
-$ raind container ls
-CONTAINER ID  IMAGE             COMMAND                  CREATED              STATUS   PORTS                  NAME
-01kg6mv5pmpy  mysql:latest      "docker-entrypoint.sh…"  less than a minutes  running                         wp_database
-01kg6mka4jfc  wordpress:latest  "docker-entrypoint.sh…"  less than a minutes  running  0.0.0.0:10080->80/tcp  wordpress
-
-// ポリシー適用確認
-$ raind policy ls --type ew
-FLAG: [*] - Applied, [+] - Apply next commit, [-] - Remove next commit, [ ] - Not applied
-
-POLICY TYPE : East-West
-CURRENT MODE: deny_by_default
-
-FLAG  POLICY ID                   SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION  COMMENT  REASON
-[*]   01kg6m673gr5y0cbh62dyeakth  wordpress      wp_database    tcp       3306      ALLOW 
-  >> DENY ALL EAST-WEST TRAFFIC <<
+2. 依存チェック
 ```
-RaindのコマンドラインはDockerと類似の設計としているため、Dockerユーザにとって馴染みのあるコマンドで作成ができます。
-
-### 3. トラフィックログ確認
+make bootstrap
 ```
-$ raind logs netflow
-  :
-2026-01-30 13:40:48     ALLOW   FROM: wordpress => TO: 8.8.8.8 {UDP/53}
-2026-01-30 13:40:49     ALLOW   FROM: wordpress => TO: 65.21.231.50 {TCP/443}
-2026-01-30 13:40:52     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
-2026-01-30 13:40:54     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
-2026-01-30 13:40:58     ALLOW   FROM: wordpress => TO: wp_database {TCP/3306}
+3. ビルド
 ```
-Raindのトラフィックログは、コンテナのIPに対しコンテナID/コンテナ名がマッピングされます。  
-「どのコンテナが」「どのコンテナ/アドレスに」通信を行っているか、直感的に確認することが可能です。
+make build
+```
+4. インストール（任意）
+```
+sudo make install
+```
 
-## 設計思想
-### 1. Zero Trustは「デフォルトで拒否」から始まる
-Raindでは以下を前提にします。
+上記のほか、パッケージインストールやulogd2の設定等も必要です。  
+詳細は[Raind Install](docs/install.md)を参照してください。
 
-- コンテナは **互いに信頼しない**
-- 通信は **明示的なポリシーでのみ許可**
-- 暗黙の許可は存在しない
+## 実行例
+Condenserを起動してからCLIを利用します。
+```
+sudo ./components/condenser/bin/condenser
+sudo ./components/raind-cli/bin/raind container ls
+```
 
-この思想は特に **East-West (コンテナ間通信)** に強く反映しています。
+systemdサービスとして起動する場合:
+```
+sudo make enable-service
+```
 
-### 2. ランタイム自身を通信の強制ポイントにする
-Raindは以下を重視しています。
-
-- 通信制御を「外部コンポーネント」に一任しない
-- ランタイム自身が
-    - 通信を止められる
-    - 通信を観測できる
-    - 判定理由をログに残せる
-
-ポイントは、**「通信が必ず通過するポイントをランタイムが握る」** ことです。
-
-### 3. 観測(Observe)と強制(Enforce)を分離する
-RaindはNorth-South(外部通信)に対して、
-
-- **Observe** (全許可・ログのみ)
-- **Enforce** (ポリシー未定義は拒否)
-
-を切り替え可能にしています。これは、
-
-- いきなり遮断しない
-- 実トラフィックを見ながらポリシーを設計する
-
-という実運用を意識した設計思想です。
-
-## ネットワークモデル
-### East-West (コンテナ間通信)
-- デフォルト: **Deny**
-- 方向性を持った明示ポリシーによってのみAllow
-
-### North-South (外部通信)
-- デフォルト: **Observeモード**
-- Enforceモードへの切り替えが可能
-
-### ポリシーは「コンテナ起点」で定義可能
-ポリシーはアドレス起点ではなく、「コンテナ起点」で定義が可能  
-例: 送信元コンテナ: Web、宛先コンテナ: DB、プロトコル：TCP/3306、アクション: Allow
-
-## ログ設計
-Raindは通信ログを **ランタイムの一次成果** として扱います。
-### ログの特徴
-- 5-tuple (src/dst IP, src/dst port, protocol)
-- コンテナID / コンテナ名 / veth
-- East-West / North-Southの区別
-- Allow /Deny
-- 適用されたポリシーID
-
-ログは単なるデバッグ用途ではなく、
-
-> 「なぜその通信が許可/拒否されたか」を説明できる監査ログ
-
-として設計しています。
-
-## ランタイムとしての機能範囲
-Raindは一般的なコンテナランタイムの機能として以下を実装しています。
-
-- Linux Namespaceによる隔離
-- cgroup v2によるリソース制限
-- Capability / Seccomp / AppArmor
-- Docker Hubからのイメージ取得
-
-### OCI準拠のコンテナ起動
-コンテナ起動におけるライフサイクルおよび設定ファイルは、[OCI Runtime Spec](https://github.com/opencontainers/runtime-spec/tree/main)に準拠しています。
-
-## 位置づけ (v0.1.x)
-Raind v0.1.0は以下を目的としたリリースです。
-
-- Zero Trust を コンテナランタイムの責務として実装可能か の検証
-- ネットワーク制御・観測をランタイムに統合する設計の検証
-- 実運用ではなく 設計・実装・思想の PoC
-
-### ロードマップ
-- 安定性・パフォーマンス最適化
-- 高度なL7ポリシー
-- eBPF / nftables等への拡張
-- コンテナ隔離処理のセキュリティ向上
+## CLI利用方法
+詳細なコマンドは[Command List](docs/command_list.md)を参照してください。  
+例:
+```
+sudo raind container run -t alpine:latest
+sudo raind policy ls
+sudo raind logs netflow --json
+```
 
 ## ドキュメント
-- [Raindセットアップ](./docs/install.md)
-- [Raind利用方法](./docs/usage.md)
-- [デザインドキュメント](./docs/design.md)
+- [Design Document](docs/design.md): Zero Trust設計・iptables設計・ログ設計
+- [Command List](docs/command_list.md): CLIコマンド一覧
+- [Bottle Usage](docs/bottle.md): Bottle(複数コンテナオーケストレーション)利用手順
 
 ## ステータス
-- Status: Experimental / PoC (Proof of Concept)
-- Version: v0.1.0
-- 対象読者:
-    - コンテナランタイム開発者
-    - コンテナセキュリティ設計者
-    - Zero Trust / ネットワーク制御に関心のあるエンジニア
+RaindはPoCとして開発中です。  
+APIや挙動は今後変更される可能性があります。
