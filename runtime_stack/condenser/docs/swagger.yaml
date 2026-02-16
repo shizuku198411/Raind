@@ -1,0 +1,1012 @@
+definitions:
+  container.CreateContainerRequest:
+    properties:
+      command:
+        example:
+        - /bin/sh
+        - -c
+        - echo hello; sleep 60
+        items:
+          type: string
+        type: array
+      env:
+        items:
+          type: string
+        type: array
+      image:
+        example: alpine:latest
+        type: string
+      mount:
+        example:
+        - /host/dir:/container/dir
+        - /src:/dst
+        items:
+          type: string
+        type: array
+      name:
+        example: my-container
+        type: string
+      network:
+        example: raind0
+        type: string
+      podId:
+        example: pod-1234
+        type: string
+      port:
+        example:
+        - 8080:80
+        - 4443:443
+        items:
+          type: string
+        type: array
+      tty:
+        example: false
+        type: boolean
+    type: object
+  container.ExecContainerRequest:
+    properties:
+      command:
+        example:
+        - /bin/sh
+        - -c
+        - echo hello
+        items:
+          type: string
+        type: array
+      tty:
+        example: true
+        type: boolean
+    type: object
+  container.StartContainerRequest:
+    properties:
+      tty:
+        example: false
+        type: boolean
+    type: object
+  image.PullImageRequest:
+    properties:
+      arch:
+        example: arm64
+        type: string
+      image:
+        example: alpine:latest
+        type: string
+      os:
+        example: linux
+        type: string
+    type: object
+  image.RemoveImageRequest:
+    properties:
+      image:
+        example: alpine:latest
+        type: string
+    type: object
+  network.CreateBridgeRequest:
+    properties:
+      bridge:
+        type: string
+    type: object
+  pod.CreatePodContainerRequest:
+    properties:
+      command:
+        items:
+          type: string
+        type: array
+      env:
+        items:
+          type: string
+        type: array
+      image:
+        type: string
+      mount:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      network:
+        type: string
+      port:
+        items:
+          type: string
+        type: array
+      tty:
+        type: boolean
+    type: object
+  pod.CreatePodRequest:
+    properties:
+      annotations:
+        additionalProperties:
+          type: string
+        type: object
+      containers:
+        items:
+          $ref: '#/definitions/pod.CreatePodContainerRequest'
+        type: array
+      ipcNS:
+        type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      namespace:
+        type: string
+      networkNS:
+        type: string
+      uid:
+        type: string
+      userNS:
+        type: string
+      utsNS:
+        type: string
+    type: object
+  pod.ScaleReplicaSetRequest:
+    properties:
+      replicas:
+        type: integer
+    type: object
+  policy.AddPolicyRequest:
+    properties:
+      chain:
+        example: RAIND-EW
+        type: string
+      comment:
+        example: allow https traffic
+        type: string
+      dest:
+        example: dst-container-name
+        type: string
+      dport:
+        example: 443
+        type: integer
+      protocol:
+        example: tcp
+        type: string
+      source:
+        example: src-container-name
+        type: string
+    type: object
+  policy.ChangeNSModeRequest:
+    properties:
+      mode:
+        example: enforce
+        type: string
+    type: object
+  utils.ApiResponse:
+    properties:
+      data: {}
+      message:
+        type: string
+      status:
+        description: success | fail
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /v1/bottle:
+    get:
+      description: list bottles
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: list bottles
+      tags:
+      - bottles
+    post:
+      consumes:
+      - text/plain
+      description: register a bottle from yaml spec
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: register a bottle
+      tags:
+      - bottles
+  /v1/bottle/{bottleId}:
+    get:
+      description: get bottle detail by id or name
+      parameters:
+      - description: Bottle ID or Name
+        in: path
+        name: bottleId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get bottle detail
+      tags:
+      - bottles
+  /v1/bottle/{bottleId}/actions/{action}:
+    post:
+      description: start/stop/remove bottle
+      parameters:
+      - description: Bottle ID or Name
+        in: path
+        name: bottleId
+        required: true
+        type: string
+      - description: Action
+        in: path
+        name: action
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: perform bottle action
+      tags:
+      - bottles
+  /v1/containers:
+    get:
+      description: get all container list
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get container list
+      tags:
+      - containers
+    post:
+      consumes:
+      - application/json
+      description: create a new container
+      parameters:
+      - description: Container Spec
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/container.CreateContainerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: Create a container
+      tags:
+      - containers
+  /v1/containers/{containerId}:
+    get:
+      description: get an exitsting container info
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get container info
+      tags:
+      - containers
+  /v1/containers/{containerId}/actions/delete:
+    delete:
+      description: delete an exitsting container
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: delete a container
+      tags:
+      - containers
+  /v1/containers/{containerId}/actions/exec:
+    post:
+      description: execute command inside an exitsting container
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      - description: Execute Options
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/container.ExecContainerRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: exec a container
+      tags:
+      - containers
+  /v1/containers/{containerId}/actions/start:
+    post:
+      description: start an exitsting container
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      - description: Start Options
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/container.StartContainerRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: start a container
+      tags:
+      - containers
+  /v1/containers/{containerId}/actions/stop:
+    post:
+      description: stop an exitsting container
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: stop a container
+      tags:
+      - containers
+  /v1/containers/{containerId}/log:
+    get:
+      description: get container log
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get container log
+      tags:
+      - containers
+  /v1/containers/{containerId}/logpath:
+    get:
+      description: get container log path
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get container log path
+      tags:
+      - containers
+  /v1/containers/{containerId}/stats:
+    get:
+      description: get container stats
+      parameters:
+      - description: Container ID
+        in: path
+        name: containerId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get container stats
+      tags:
+      - containers
+  /v1/containers/stats:
+    get:
+      description: list container stats
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: list container stats
+      tags:
+      - containers
+  /v1/hooks/droplet:
+    post:
+      description: apply hook from droplet
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: apply hook
+      tags:
+      - hooks
+  /v1/images:
+    delete:
+      consumes:
+      - application/json
+      description: remove image from local
+      parameters:
+      - description: Target Image
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/image.RemoveImageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: remove image
+      tags:
+      - image
+    get:
+      description: get image list in local storage
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get image list
+      tags:
+      - image
+    post:
+      consumes:
+      - application/json
+      description: pull image from registry
+      parameters:
+      - description: Target Image
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/image.PullImageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: pull image
+      tags:
+      - image
+  /v1/images/build:
+    post:
+      consumes:
+      - application/x-tar
+      description: build image from Dripfile-like archive (tar)
+      parameters:
+      - description: Target image tag (e.g. myapp:latest)
+        in: query
+        name: tag
+        required: true
+        type: string
+      - description: 'Dripfile path in context (default: Dripfile)'
+        in: query
+        name: dripfile
+        type: string
+      - description: 'Bridge interface (default: raind0)'
+        in: query
+        name: network
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: build image
+      tags:
+      - image
+  /v1/images/fs:
+    get:
+      description: get image filesystem usage
+      parameters:
+      - description: Target Image
+        in: query
+        name: image
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get image fs info
+      tags:
+      - image
+  /v1/images/status:
+    get:
+      description: get image status details
+      parameters:
+      - description: Target Image
+        in: query
+        name: image
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get image status
+      tags:
+      - image
+  /v1/networks:
+    get:
+      consumes:
+      - application/json
+      description: get bridge list
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get bridge list
+      tags:
+      - Network
+    post:
+      consumes:
+      - application/json
+      description: create new bridge
+      parameters:
+      - description: Bridge Information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/network.CreateBridgeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: create bridge
+      tags:
+      - Network
+  /v1/networks/{bridge}/actions/delete:
+    delete:
+      consumes:
+      - application/json
+      description: delete new bridge
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: delete bridge
+      tags:
+      - Network
+  /v1/pods:
+    get:
+      description: list pod sandbox
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: list pods
+      tags:
+      - pods
+    post:
+      consumes:
+      - application/json
+      description: create a pod sandbox (no container start)
+      parameters:
+      - description: Pod Spec
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pod.CreatePodRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: create pod sandbox
+      tags:
+      - pods
+  /v1/pods/{podId}:
+    delete:
+      description: remove a pod sandbox
+      parameters:
+      - description: Pod ID
+        in: path
+        name: podId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: remove pod sandbox
+      tags:
+      - pods
+    get:
+      description: get pod sandbox detail
+      parameters:
+      - description: Pod ID
+        in: path
+        name: podId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get pod detail
+      tags:
+      - pods
+  /v1/pods/{podId}/actions/start:
+    post:
+      description: start a pod sandbox
+      parameters:
+      - description: Pod ID
+        in: path
+        name: podId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: start pod sandbox
+      tags:
+      - pods
+  /v1/pods/{podId}/actions/stop:
+    post:
+      description: stop a pod sandbox
+      parameters:
+      - description: Pod ID
+        in: path
+        name: podId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: stop pod sandbox
+      tags:
+      - pods
+  /v1/policies:
+    get:
+      consumes:
+      - application/json
+      description: get policy
+      parameters:
+      - description: Chain Name
+        in: path
+        name: chainName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get policy list
+      tags:
+      - Policy
+    post:
+      consumes:
+      - application/json
+      description: Add new policy
+      parameters:
+      - description: policy parameter
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/policy.AddPolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: Add policy
+      tags:
+      - Policy
+  /v1/policies/{policyId}:
+    delete:
+      description: remove an existing policy
+      parameters:
+      - description: Policy ID
+        in: path
+        name: policyId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: remove a policy
+      tags:
+      - Policy
+  /v1/policies/commit:
+    post:
+      consumes:
+      - application/json
+      description: commit all policy
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: commit policy
+      tags:
+      - Policy
+  /v1/policies/ns/mode:
+    post:
+      consumes:
+      - application/json
+      description: change north-south mode
+      parameters:
+      - description: mode
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/policy.ChangeNSModeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: change north-south mode
+      tags:
+      - Policy
+  /v1/policies/revert:
+    post:
+      consumes:
+      - application/json
+      description: revert policy
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: revert policy
+      tags:
+      - Policy
+  /v1/replicasets:
+    get:
+      description: list replica sets
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: list replica sets
+      tags:
+      - replicasets
+  /v1/replicasets/{replicaSetId}:
+    delete:
+      description: remove replica set
+      parameters:
+      - description: ReplicaSet ID
+        in: path
+        name: replicaSetId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: remove replica set
+      tags:
+      - replicasets
+    get:
+      description: get replica set detail
+      parameters:
+      - description: ReplicaSet ID
+        in: path
+        name: replicaSetId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get replica set detail
+      tags:
+      - replicasets
+  /v1/replicasets/{replicaSetId}/actions/scale:
+    post:
+      consumes:
+      - application/json
+      description: scale replica set replicas
+      parameters:
+      - description: ReplicaSet ID
+        in: path
+        name: replicaSetId
+        required: true
+        type: string
+      - description: Scale Options
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pod.ScaleReplicaSetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: scale replica set
+      tags:
+      - replicasets
+  /v1/resource/apply:
+    post:
+      consumes:
+      - text/plain
+      description: apply kubectl-compatible yaml manifest
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: apply pod/replicaset manifest
+      tags:
+      - pods
+  /v1/resource/delete:
+    post:
+      consumes:
+      - text/plain
+      description: delete resources defined in kubectl-compatible yaml manifest
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: delete resources by manifest
+      tags:
+      - resources
+  /v1/services:
+    get:
+      description: list services
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: list services
+      tags:
+      - services
+    post:
+      consumes:
+      - text/plain
+      description: create a L4 service
+      parameters:
+      - description: Service Manifest (yaml)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: create service
+      tags:
+      - services
+  /v1/services/{serviceId}:
+    delete:
+      description: remove service
+      parameters:
+      - description: Service ID
+        in: path
+        name: serviceId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: remove service
+      tags:
+      - services
+    get:
+      description: get service detail
+      parameters:
+      - description: Service ID
+        in: path
+        name: serviceId
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/utils.ApiResponse'
+      summary: get service detail
+      tags:
+      - services
+swagger: "2.0"
