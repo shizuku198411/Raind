@@ -1,0 +1,13 @@
+FROM node:20-alpine
+WORKDIR /app
+
+COPY . .
+RUN npm ci
+RUN npm run build
+
+ENV NODE_ENV=production
+ENV WEBUI_HOST=0.0.0.0
+ENV WEBUI_PORT=8080
+ENV RAIND_UI_SOCKET_PATH=/run/raind/ui.sock
+
+CMD ["node", "server/index.js"]

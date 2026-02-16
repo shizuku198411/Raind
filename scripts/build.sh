@@ -6,12 +6,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
+UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
 VERSION_FILE="${ROOT_DIR}/VERSION"
 
 COMPONENTS=(
   "runtime_stack/raind-cli"
   "runtime_stack/condenser"
   "runtime_stack/droplet"
+  "runtime_stack/raind-ui-gateway"
 )
 
 BINARIES=(
@@ -19,6 +21,7 @@ BINARIES=(
   "runtime_stack/condenser/bin/condenser"
   "runtime_stack/condenser/bin/condenser-hook-agent"
   "runtime_stack/droplet/bin/droplet"
+  "runtime_stack/raind-ui-gateway/bin/raind-ui-gateway"
 )
 
 need_root() {
@@ -113,13 +116,53 @@ enable_service() {
   systemctl status "${SERVICE_NAME}" --no-pager
 }
 
+write_ui_gateway_service_file() {
+  need_root
+
+  local service_path="${SYSTEMD_DIR}/${UI_GATEWAY_SERVICE_NAME}"
+
+  echo "==> write ${service_path}"
+  cat > "${service_path}" <<SERVICE_EOF
+[Unit]
+Description=Raind UI UDS Gateway
+After=network-online.target ${SERVICE_NAME}
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/raind-ui-gateway
+Restart=always
+RestartSec=3
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+}
+
+enable_ui_gateway_service() {
+  need_root
+  write_ui_gateway_service_file
+
+  echo "==> systemctl daemon-reload"
+  systemctl daemon-reload
+
+  echo "==> systemctl enable --now ${UI_GATEWAY_SERVICE_NAME}"
+  systemctl enable --now "${UI_GATEWAY_SERVICE_NAME}"
+
+  echo "==> systemctl status ${UI_GATEWAY_SERVICE_NAME} --no-pager"
+  systemctl status "${UI_GATEWAY_SERVICE_NAME}" --no-pager
+}
+
 usage() {
   cat <<USAGE
-Usage: $0 [build|install|enable-service|all]
+Usage: $0 [build|install|enable-service|enable-ui-gateway-service|all]
 
   build           Build all components
   install         Install built binaries to ${INSTALL_DIR}
   enable-service  Create and start ${SERVICE_NAME}
+  enable-ui-gateway-service Create and start ${UI_GATEWAY_SERVICE_NAME}
   all             Build, install, and enable service
 USAGE
 }
@@ -136,6 +179,9 @@ main() {
       ;;
     enable-service)
       enable_service
+      ;;
+    enable-ui-gateway-service)
+      enable_ui_gateway_service
       ;;
     all)
       build_components

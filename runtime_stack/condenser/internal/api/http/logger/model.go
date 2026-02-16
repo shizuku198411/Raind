@@ -101,14 +101,42 @@ type Rule struct {
 }
 
 var rules = []Rule{
+	// bottle
+	{"POST", "/v1/bottle", "bottle.register", SEV_MEDIUM},
+	{"GET", "/v1/bottle", "bottle.list", SEV_INFO},
+	{"GET", "/v1/bottle/{bottleId}", "bottle.detail", SEV_INFO},
+	{"POST", "/v1/bottle/{bottleId}/actions/{action}", "bottle.action", SEV_MEDIUM},
+
 	// container
 	{"GET", "/v1/containers", "container.list", SEV_INFO},
 	{"GET", "/v1/containers/{containerId}", "container.info", SEV_INFO},
+	{"GET", "/v1/containers/{containerId}/log", "container.log", SEV_INFO},
+	{"GET", "/v1/containers/{containerId}/logpath", "container.logpath", SEV_INFO},
+	{"GET", "/v1/containers/{containerId}/stats", "container.stats", SEV_INFO},
+	{"GET", "/v1/containers/stats", "container.stats.list", SEV_INFO},
 	{"POST", "/v1/containers", "container.create", SEV_MEDIUM},
 	{"POST", "/v1/containers/{containerId}/actions/start", "container.start", SEV_MEDIUM},
 	{"POST", "/v1/containers/{containerId}/actions/stop", "container.stop", SEV_MEDIUM},
 	{"POST", "/v1/containers/{containerId}/actions/exec", "container.exec", SEV_HIGH},
 	{"DELETE", "/v1/containers/{containerId}/actions/delete", "container.delete", SEV_HIGH},
+
+	// resource
+	{"POST", "/v1/resource/apply", "resource.apply", SEV_MEDIUM},
+	{"POST", "/v1/resource/delete", "resource.delete", SEV_HIGH},
+
+	// pod
+	{"GET", "/v1/pods", "pod.list", SEV_INFO},
+	{"POST", "/v1/pods", "pod.create", SEV_MEDIUM},
+	{"GET", "/v1/pods/{podId}", "pod.detail", SEV_INFO},
+	{"POST", "/v1/pods/{podId}/actions/start", "pod.start", SEV_MEDIUM},
+	{"POST", "/v1/pods/{podId}/actions/stop", "pod.stop", SEV_MEDIUM},
+	{"DELETE", "/v1/pods/{podId}", "pod.remove", SEV_HIGH},
+
+	// replicaset
+	{"GET", "/v1/replicasets", "replicaset.list", SEV_INFO},
+	{"GET", "/v1/replicasets/{replicaSetId}", "replicaset.detail", SEV_INFO},
+	{"POST", "/v1/replicasets/{replicaSetId}/actions/scale", "replicaset.scale", SEV_MEDIUM},
+	{"DELETE", "/v1/replicasets/{replicaSetId}", "replicaset.remove", SEV_HIGH},
 
 	// websocket
 	{"GET", "/v1/containers/{containerId}/attach", "ws.attach", SEV_HIGH},
@@ -122,6 +150,19 @@ var rules = []Rule{
 	{"POST", "/v1/images", "image.pull", SEV_MEDIUM},
 	{"POST", "/v1/images/build", "image.build", SEV_HIGH},
 	{"DELETE", "/v1/images", "image.remove", SEV_HIGH},
+	{"GET", "/v1/images/status", "image.status", SEV_INFO},
+	{"GET", "/v1/images/fs", "image.fs", SEV_INFO},
+
+	// service
+	{"GET", "/v1/services", "service.list", SEV_INFO},
+	{"POST", "/v1/services", "service.create", SEV_MEDIUM},
+	{"GET", "/v1/services/{serviceId}", "service.detail", SEV_INFO},
+	{"DELETE", "/v1/services/{serviceId}", "service.remove", SEV_HIGH},
+
+	// network
+	{"GET", "/v1/networks", "network.list", SEV_INFO},
+	{"POST", "/v1/networks", "network.create", SEV_MEDIUM},
+	{"DELETE", "/v1/networks/{bridge}/actions/delete", "network.delete", SEV_HIGH},
 
 	// policy
 	{"GET", "/v1/policies/{chain}", "policy.list", SEV_INFO},
@@ -133,6 +174,9 @@ var rules = []Rule{
 
 	// pki
 	{"POST", "/v1/pki/sign", "pki.sign", SEV_HIGH},
+
+	// logs
+	{"GET", "/v1/logs/netflow", "logs.netflow", SEV_INFO},
 }
 
 var actionSeverity = map[string]int{

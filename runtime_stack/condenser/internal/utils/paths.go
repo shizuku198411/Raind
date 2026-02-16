@@ -20,12 +20,17 @@ const (
 	CgroupSubtreeControlPath = "/sys/fs/cgroup/raind/cgroup.subtree_control"
 
 	CertDir                = "/etc/raind/cert"
+	WebCertDir             = "/etc/raind/cert/web"
 	PublicCertPath         = "/etc/raind/cert/raind.crt"
 	PrivateKeyPath         = "/etc/raind/cert/raind.key"
+	WebPublicCertPath      = "/etc/raind/cert/web/raindWeb.crt"
+	WebPrivateKeyPath      = "/etc/raind/cert/web/raindWeb.key"
 	ClientIssuerCACertPath = "/etc/raind/cert/raindClientCA.crt"
 	ClientIssuerCAKeyPath  = "/etc/raind/cert/raindClientCA.key"
 	ClientCertPath         = "/etc/raind/cert/raindClient.crt"
 	ClientKeyPath          = "/etc/raind/cert/raindClient.key"
+	WebClientCertPath      = "/etc/raind/cert/raindWebClient.crt"
+	WebClientKeyPath       = "/etc/raind/cert/raindWebClient.key"
 	HookClientCertPath     = "/etc/raind/cert/raindHookClient.crt"
 	HookClientKeyPath      = "/etc/raind/cert/raindHookClient.key"
 

@@ -1,182 +1,144 @@
 # Raind - Zero Trust Oriented Container Runtime
 <p>
-  <img src="assets/raind_icon.png" alt="Project Icon" width="190">
+  <img src="./docs/assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
-![version](https://img.shields.io/badge/version-v0.1.3-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
+![version](https://img.shields.io/badge/version-v0.2.0-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
 
-Raind is a container runtime built as a PoC (proof of concept) to evaluate whether **Zero Trust can be implemented at the container runtime layer**.  
-This repository is a meta-repo that places the three Raind components under `runtime_stack/` as git submodules.
+Zero Trust oriented container runtime for Linux.  
+Raind focuses on controlling and visualizing container networking at the runtime layer, not only at orchestration or app layer.
 
-**Components**
-- `Raind-CLI`: user-facing CLI (UI layer / REST & WebSocket client)
-- `Condenser`: high-level container runtime (control plane / API & state management)
-- `Droplet`: low-level container runtime (execution plane / OCI-compliant)
+## Concept
 
-Each component is placed as a submodule at the following locations:
-- `runtime_stack/raind-cli` (Raind-CLI)
-- `runtime_stack/condenser` (Condenser)
-- `runtime_stack/droplet` (Droplet)
+Raind provides:
 
-For detailed design and responsibility boundaries, see the [Design Document](docs/en/design.md).
+- Runtime-level network policy enforcement (East-West / North-South)
+- Runtime-level traffic visibility (traffic/DNS/audit logs)
+- Unified operations for container lifecycle and grouped workloads
+- Localhost-restricted control plane with UDS gateway pattern for WebUI
 
-## Key Features
-- Zero Trust-oriented container control
-- East-West traffic is default deny by policy
-- North-South traffic switches between `observe`/`enforce` modes
-- Idempotent policy application by fully rebuilding iptables management chains
-- Log enrichment with NFLOG + ulogd2 + Condenser
-- Container operations and policy management from the CLI
-- Container/image/orchestration management by Condenser
-- OCI-compliant container execution by Droplet
+## What Is Included
 
-Raind separates "Operate (CLI)", "Control (Condenser)", and "Execute (Droplet)"  
-into a runtime stack with clear API boundaries.
+Raind is composed of the following components under `runtime_stack/`:
 
-### Zero Trust-Oriented Container Control
-In Raind, East-West traffic (container-to-container) is denied by default.  
-Traffic is allowed only when **explicitly** permitted by policy at container start, which blocks lateral movement and recon during compromise. Combined with the log enrichment described below, this helps detect suspicious containers.  
-When creating a Bottle (docker-compose-like), you can also define policies explicitly.
+- `raind-cli`: user-facing CLI
+- `condenser`: high-level runtime daemon (API, state, policy, resource orchestration)
+- `droplet`: low-level OCI runtime executor
+- `raind-ui-gateway`: UDS gateway to Condenser (mTLS upstream)
+- `raind-webui`: Vue + Vite based Web UI
 
-```yaml
-# bottle.yaml
-bottle:
-  name: wordpress
-services:
-  wp:
-    image: wordpress
-    env:
-      - WORDPRESS_DB_HOST=db:3306
-      - WORDPRESS_DB_USER=wordpress
-      - WORDPRESS_DB_PASSWORD=wordpress
-      - WORDPRESS_DB_NAME=wordpress
-    ports:
-      - "8080:80"
-    depends_on:
-      - db
-  db:
-    image: mysql
-    env:
-      - MYSQL_ROOT_PASSWORD=wordpress
-      - MYSQL_DATABASE=wordpress
-      - MYSQL_USER=wordpress
-      - MYSQL_PASSWORD=wordpress
-# allowed traffic
-policies:
-  - type: east-west
-    source: wp
-    destination: db
-    protocol: tcp
-    dest_port: 3306
-    comment: "wp->db 3306/tcp: Allow Database Traffic"
+## Core Features
+
+- Container lifecycle: create/start/stop/delete, attach, exec, logs, stats
+- Image management: pull/build/list/remove
+- Orchestration:
+  - Bottle (Compose-style grouped multi-container operation)
+  - ReplicaSet / Pod / Service (desired-state management and selector-based service routing)
+- Resource management: ReplicaSet / Pod / Service apply/delete/list/show
+- Bottle management: grouped multi-container operation
+- OCI-compliant low-level runtime security (Droplet):
+  - Namespace and cgroup-based isolation/resource control
+  - Capability set controls
+  - Seccomp syscall filtering
+  - AppArmor profile integration
+  - OCI lifecycle hooks
+- Policy management:
+  - `RAIND-EW` (Inter Connect)
+  - `RAIND-NS-OBS` (External Observe)
+  - `RAIND-NS-ENF` (External Enforce)
+  - commit/revert workflow
+- Security-focused logging:
+  - Audit log (`/var/log/raind/raind_audit.jsonl`)
+  - Netflow log (`/var/log/raind/raind_netflow.jsonl`)
+  - DNS log (`/var/log/raind/raind_dns.jsonl`)
+- WebUI pages:
+  - Dashboard, Container, Resource, Bottle, Image, Policy, Audit Log, Network Log
+  - Filtering, pagination, relation views, overlays for actions/details/logs
+  - Terminal attach/exec UX via WebSocket
+
+## Architecture
+
+```text
+raind-cli
+  -> Condenser API (https://127.0.0.1:7755, mTLS)
+    -> Droplet (OCI runtime execution)
+
+Browser
+  -> raind-webui (HTTPS)
+    -> /run/raind/ui.sock (UDS)
+      -> raind-ui-gateway
+        -> Condenser API (https://127.0.0.1:7755, mTLS)
+          -> Droplet (OCI runtime execution)
 ```
 
-### Log Enrichment with NFLOG + ulogd2 + Condenser
-Raind provides built-in visibility into container traffic:
+## Quick Start
 
-- Traffic logs
-- DNS logs
-- Metrics
+### 1. Build and Install
 
-All logs map source/destination to container names for easier inspection.
-
-#### SIEM Integration
-Example visualization when using [Wazuh](https://wazuh.com/):
-
-- Traffic logs
-![netflow_timeline](assets/siem/netflow_timeline.png)
-![netflow](assets/siem/netflow.png)
-
-- DNS logs
-![dns](assets/siem/dns.png)
-
-- Metrics
-![metrics_timeline](assets/siem/metrics_timeline.png)
-![metrics](assets/siem/metrics.png)
-
-With SIEM integration, you can detect abnormal container behavior such as traffic spikes, resource saturation, or OOM.
-
-## Architecture Overview
-- `Raind-CLI` operates `Condenser` via REST/WebSocket
-- `Condenser` manages container state, networks, and policies as the SSOT
-- `Droplet` builds namespaces/cgroups/capabilities based on OCI config and executes containers
-
-Design diagrams and details are summarized in the [Design Document](docs/en/design.md).
-
-## Requirements
-- Linux (kernel with namespace/cgroup support)
-- Go 1.25+ (CLI can run with 1.24+)
-- `sudo` privileges
-- `iptables` available
-- `ulogd2` (for NFLOG collection)
-
-When verifying Droplet alone, Docker may be required for pulling images, etc.  
-Network log collection and enrichment assumes `ulogd2` is available.
-
-## Setup (Meta-Repo)
-1. Initialize submodules
-```
-git submodule update --init --recursive
-```
-2. Dependency check
-```
+```bash
+git clone https://github.com/shizuku198411/Raind.git
+cd Raind
 make bootstrap
-```
-3. Build
-```
 make build
-```
-4. Install (optional)
-```
 sudo make install
+sudo make enable-service
+sudo make enable-ui-gateway-service
 ```
-5. Install + systemd setup at once (optional)
-```
+
+Or:
+
+```bash
 sudo make all
 ```
 
-Additional package installation and ulogd2 setup are also required.  
-See [Raind Install](docs/en/install.md) for details.
+### 2. Verify
 
-## Example Run
-Start Condenser first, then use the CLI.
-```
-sudo ./runtime_stack/condenser/bin/condenser
-sudo ./runtime_stack/raind-cli/bin/raind container ls
+```bash
+raind container run -p 9988:80 nginx:latest
+raind container ls
 ```
 
-To run as a systemd service:
-```
-sudo make enable-service
-```
+### 3. Launch WebUI
 
-## CLI Usage
-For detailed commands, see the [Command List](docs/en/command_list.md).  
-Examples:
-```
-sudo raind container run -t alpine:latest
-sudo raind policy ls
-sudo raind logs netflow --json
+Build/deploy `runtime_stack/raind-webui` with its manifest:
+
+```bash
+cd runtime_stack/raind-webui
+raind image build -f . -t raind-webui:latest
+raind resource apply -f deploy/manifest.yaml
 ```
 
-## What You Can Do (Summary)
-Raind features are primarily provided by Condenser and operated via Raind-CLI.
-- Create/start/stop/remove/attach/exec containers and get logs
-- Image pull/build/list/remove
-- Network create/remove/list
-- Policy add/remove/commit/revert/change mode
-- Bottle (Compose-like) multi-container orchestration
-- Pod/ReplicaSet/Service (Kubernetes-like resources)
+## WebUI Overview
+### Dashboard
+![dashboard](./docs/assets/raind_webui_dashboard.png)
 
-## Documents
-- [Design Document](docs/en/design.md): Zero Trust design, iptables design, log design
-- [Command List](docs/en/command_list.md): CLI command list
-- [Bottle Usage](docs/en/bottle.md): Bottle orchestration usage
-- [Install](docs/en/install.md): Packages, ulogd2 config, initial setup
-- [Pod](docs/en/pod.md): Pod usage
-- [ReplicaSet](docs/en/replicaset.md): ReplicaSet usage
-- [Service](docs/en/service.md): Service usage
+### Container Page
+![container](./docs/assets/raind_webui_container.png)
 
-## Status
-Raind is under active development as a PoC.  
-APIs and behavior may change.
+![container_attach](./docs/assets/raind_webui_container_attach.png)
+
+### Resource Relations
+![resource](./docs/assets/raind_webui_resource.png)
+
+### Policy Page
+![policy](./docs/assets/raind_webui_policy.png)
+
+### Audit / Network Log Pages
+![audit](./docs/assets/raind_webui_audit.png)
+
+![network](./docs/assets/raind_webui_network.png)
+
+## Security Model (Summary)
+
+- Condenser control API is localhost/mTLS oriented.
+- WebUI does not directly call Condenser from containers.
+- `raind-ui-gateway` exposes controlled UDS for WebUI backend.
+- Policy is enforced at runtime networking path.
+- Runtime-level logs provide traceability for actions and traffic.
+
+## Documentation
+
+- Install: [EN](docs/en/install.md) / [JP](docs/jp/install.md)
+- WebUI: [EN](docs/en/webui.md) / [JP](docs/jp/webui.md)
+- UDS Gateway: [EN](docs/en/webui_gateway.md) / [JP](docs/jp/webui_gateway.md)
+- Command list: [EN](docs/en/command_list.md) / [JP](docs/jp/command_list.md)
