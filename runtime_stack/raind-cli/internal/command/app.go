@@ -1,6 +1,7 @@
 package command
 
 import (
+	"raind/internal/buildinfo"
 	bottlecommand "raind/internal/command/bottle"
 	completioncommand "raind/internal/command/completion"
 	containercommand "raind/internal/command/container"
@@ -15,8 +16,9 @@ import (
 
 func NewApp() *cli.App {
 	app := &cli.App{
-		Name:  "raind",
-		Usage: "raind container runtime",
+		Name:    "raind",
+		Usage:   "raind container runtime",
+		Version: buildinfo.Version,
 		Commands: []*cli.Command{
 			{
 				Name:  "container",

@@ -2,6 +2,7 @@ package main
 
 import (
 	httpapi "condenser/internal/api/http"
+	"condenser/internal/buildinfo"
 	"condenser/internal/core/cert"
 	"condenser/internal/core/pod"
 	"condenser/internal/core/service"
@@ -11,11 +12,20 @@ import (
 	"condenser/internal/monitor"
 	"condenser/internal/utils"
 	"crypto/tls"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "show version")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.String())
+		return
+	}
+
 	// == bootstrap ==
 	bootstrap := env.NewBootstrapManager()
 	if err := bootstrap.SetupRuntime(); err != nil {

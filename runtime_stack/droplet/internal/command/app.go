@@ -1,13 +1,15 @@
 package command
 
 import (
+	"droplet/internal/buildinfo"
 	"github.com/urfave/cli/v2"
 )
 
 func NewApp() *cli.App {
 	app := &cli.App{
-		Name:  "droplet",
-		Usage: "low-level container runtime",
+		Name:    "droplet",
+		Usage:   "low-level container runtime",
+		Version: buildinfo.Version,
 		Commands: []*cli.Command{
 			commandCreate(),
 			commandStart(),

@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
+VERSION_FILE="${ROOT_DIR}/VERSION"
 
 COMPONENTS=(
   "runtime_stack/raind-cli"
@@ -28,10 +29,28 @@ need_root() {
 }
 
 build_components() {
+  local build_version="dev"
+  local build_commit="unknown"
+  local build_date
+  build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  if [[ -f "${VERSION_FILE}" ]]; then
+    build_version="$(tr -d '[:space:]' < "${VERSION_FILE}")"
+  fi
+
+  if git -C "${ROOT_DIR}" rev-parse --short HEAD >/dev/null 2>&1; then
+    build_commit="$(git -C "${ROOT_DIR}" rev-parse --short HEAD)"
+  fi
+
+  echo "==> build metadata: version=${build_version} commit=${build_commit} built_at=${build_date}"
+
   for component in "${COMPONENTS[@]}"; do
     echo "==> build ${component}"
     (
       cd "${ROOT_DIR}/${component}"
+      BUILD_VERSION="${build_version}" \
+      BUILD_COMMIT="${build_commit}" \
+      BUILD_DATE="${build_date}" \
       bash ./scripts/build.sh
     )
   done

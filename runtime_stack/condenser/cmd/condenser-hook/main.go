@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"condenser/internal/buildinfo"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -25,8 +26,14 @@ func main() {
 		ca    = flag.String("ca", "", "CA certificate path (pem)")
 		cert  = flag.String("cert", "", "client certificate path (pem)")
 		key   = flag.String("key", "", "client private key path (pem)")
+		ver   = flag.Bool("version", false, "show version")
 	)
 	flag.Parse()
+
+	if *ver {
+		fmt.Println(buildinfo.String())
+		return
+	}
 
 	if *u == "" || *event == "" || *ca == "" || *cert == "" || *key == "" {
 		fmt.Fprintln(os.Stderr, "required flags: --url --event --ca --cert --key")
