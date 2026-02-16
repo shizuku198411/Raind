@@ -36,6 +36,7 @@ make bootstrap
 make build
 sudo make install
 sudo make enable-service
+sudo make enable-ui-gateway-service
 # または install と service 設定をまとめて実行
 sudo make all
 ```

@@ -2,6 +2,8 @@ package image
 
 import (
 	"condenser/internal/core/image"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,7 +67,18 @@ func (h *RequestHandler) RemoveImage(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req RemoveImageRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+		// Some clients/proxies may drop DELETE body; allow query fallback.
+		if !errors.Is(err, io.EOF) {
+			apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+			return
+		}
+	}
+	if req.Image == "" {
+		req.Image = r.URL.Query().Get("image")
+	}
+	if req.Image == "" {
+		apimodel.RespondFail(w, http.StatusBadRequest, "missing image", nil)
+		return
 	}
 
 	// service
