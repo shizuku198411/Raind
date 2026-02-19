@@ -37,6 +37,11 @@ export default defineConfig({
     port: 5173,
     https: httpsOptions,
     proxy: {
+      '/auth': {
+        target: devApiTarget,
+        changeOrigin: true,
+        secure: false
+      },
       '/api': {
         target: devApiTarget,
         changeOrigin: true,

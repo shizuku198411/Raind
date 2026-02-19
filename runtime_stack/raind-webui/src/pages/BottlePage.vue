@@ -45,6 +45,21 @@
                   <div class="actions">
                     <button class="tiny-btn" @click="openContainerDetail(c.id)">Detail</button>
                     <button class="tiny-btn" @click="openContainerLog(c.id, c.name)">Log</button>
+                    <button class="tiny-btn" @click="openContainerSpec(c.id, c.name)">Config Spec</button>
+                    <button
+                      v-if="canAttachContainer({ id: c.id, name: c.name, tty: c.tty, status: c.state })"
+                      class="tiny-btn"
+                      @click="openAttachOverlay({ id: c.id, name: c.name, tty: c.tty, status: c.state })"
+                    >
+                      Attach
+                    </button>
+                    <button
+                      v-if="canExecContainer(c.state)"
+                      class="tiny-btn"
+                      @click="openExecOverlay({ id: c.id, name: c.name, status: c.state })"
+                    >
+                      Exec
+                    </button>
                   </div>
                 </div>
                 <div v-if="b.containers.length === 0" class="empty">No containers</div>
@@ -88,6 +103,11 @@ defineProps({
   openBottleActionConfirm: { type: Function, required: true },
   openContainerDetail: { type: Function, required: true },
   openContainerLog: { type: Function, required: true },
+  openContainerSpec: { type: Function, required: true },
+  openAttachOverlay: { type: Function, required: true },
+  openExecOverlay: { type: Function, required: true },
+  canAttachContainer: { type: Function, required: true },
+  canExecContainer: { type: Function, required: true },
   openBottleCreateOverlay: { type: Function, required: true }
 })
 </script>

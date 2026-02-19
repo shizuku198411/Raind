@@ -113,6 +113,7 @@ var rules = []Rule{
 	{"GET", "/v1/containers/{containerId}/log", "container.log", SEV_INFO},
 	{"GET", "/v1/containers/{containerId}/logpath", "container.logpath", SEV_INFO},
 	{"GET", "/v1/containers/{containerId}/stats", "container.stats", SEV_INFO},
+	{"GET", "/v1/containers/{containerId}/spec", "container.spec", SEV_INFO},
 	{"GET", "/v1/containers/stats", "container.stats.list", SEV_INFO},
 	{"POST", "/v1/containers", "container.create", SEV_MEDIUM},
 	{"POST", "/v1/containers/{containerId}/actions/start", "container.start", SEV_MEDIUM},

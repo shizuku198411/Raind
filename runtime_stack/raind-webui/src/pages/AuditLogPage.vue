@@ -14,6 +14,10 @@
 
     <div class="log-filter-grid">
       <input v-model.trim="filter.q" class="filter-input" placeholder="Filter: actor / path / correlation / code" />
+      <select v-model="filter.actor" class="filter-select">
+        <option value="">Actor: All</option>
+        <option v-for="actor in actorOptionsResolved" :key="actor" :value="actor">{{ actor }}</option>
+      </select>
       <select v-model="filter.severity" class="filter-select">
         <option value="">Severity: All</option>
         <option value="information">information</option>
@@ -32,12 +36,6 @@
         <option value="policy.commit">policy.commit</option>
         <option value="policy.revert">policy.revert</option>
         <option value="unknown">unknown</option>
-      </select>
-      <select v-model="filter.method" class="filter-select">
-        <option value="">Method: All</option>
-        <option value="GET">GET</option>
-        <option value="POST">POST</option>
-        <option value="DELETE">DELETE</option>
       </select>
       <select v-model="filter.result_status" class="filter-select">
         <option value="">Result: All</option>
@@ -112,6 +110,7 @@ const props = defineProps({
   totalPages: { type: Number, required: true },
   parseErrors: { type: Number, required: true },
   source: { type: String, required: true },
+  actorOptions: { type: Array, required: true },
   formatTime: { type: Function, required: true },
   changePage: { type: Function, required: true },
   setFilter: { type: Function, required: true }
@@ -119,17 +118,21 @@ const props = defineProps({
 
 const totalPagesLabel = computed(() => (props.totalPages > 0 ? props.totalPages : 1))
 const isLastPage = computed(() => props.totalPages > 0 && props.page >= props.totalPages)
+const actorOptionsResolved = computed(() =>
+  Array.isArray(props.actorOptions) ? props.actorOptions.filter(Boolean) : []
+)
+
 const filter = ref({
   q: '',
+  actor: '',
   severity: '',
   action: '',
-  method: '',
   result_status: ''
 })
 let filterTimer = null
 
 function clearFilter() {
-  filter.value = { q: '', severity: '', action: '', method: '', result_status: '' }
+  filter.value = { q: '', actor: '', severity: '', action: '', result_status: '' }
 }
 
 watch(
@@ -221,6 +224,10 @@ function severityClass(severity) {
   color: #f2f5fb;
   border-radius: 8px;
   padding: 7px 10px;
+}
+
+.table-scroller {
+  max-height: calc(100vh - 300px);
 }
 
 @media (max-width: 1300px) {

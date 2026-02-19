@@ -15,7 +15,10 @@
         </div>
         <div class="overview-item">
           <span class="overview-label">Connection</span>
-          <strong :class="connectionStatusClass">{{ connectionStatus }}</strong>
+          <span :class="connectionStatusClass">
+            <span class="status-lamp"></span>
+            {{ connectionStatus }}
+          </span>
         </div>
       </div>
     </article>

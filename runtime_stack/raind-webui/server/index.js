@@ -654,6 +654,7 @@ function serveAuditLogs(req, res) {
   const hours = 24
   const filters = {
     q: urlObj.searchParams.get('q') || '',
+    actor: urlObj.searchParams.get('actor') || '',
     severity: urlObj.searchParams.get('severity') || '',
     action: urlObj.searchParams.get('action') || '',
     method: urlObj.searchParams.get('method') || '',
@@ -685,16 +686,26 @@ function serveAuditLogs(req, res) {
     const nowMs = Date.now()
     const recentRows = filterLastHours(rows, nowMs, hours).map((entry) => entry.row)
     const severity = String(filters.severity || '').toLowerCase()
+    const actor = String(filters.actor || '')
     const action = String(filters.action || '').toLowerCase()
     const method = String(filters.method || '').toUpperCase()
     const resultStatus = String(filters.result_status || '').toLowerCase()
     const q = String(filters.q || '')
+    const actorOptions = Array.from(
+      new Set(
+        recentRows
+          .map((row) => String(row?.actor?.spiffe_id || row?.actor?.peer_ip || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b))
 
     const filtered = recentRows.filter((row) => {
+      const rowActor = String(row?.actor?.spiffe_id || row?.actor?.peer_ip || '').trim()
       const rowSeverity = String(row?.severity || '').toLowerCase()
       const rowAction = String(row?.action || '').toLowerCase()
       const rowMethod = String(row?.request?.method || '').toUpperCase()
       const rowResult = String(row?.result?.status || '').toLowerCase()
+      if (actor && rowActor !== actor) return false
       if (severity && rowSeverity !== severity) return false
       if (action && rowAction !== action) return false
       if (method && rowMethod !== method) return false
@@ -733,7 +744,51 @@ function serveAuditLogs(req, res) {
         total_pages: totalPages,
         parse_errors: parseErrors,
         source: AUDIT_LOG_PATH,
+        actor_options: actorOptions,
         applied_filters: filters
+      }
+    })
+  })
+}
+
+function serveAuditActors(req, res) {
+  const urlObj = new URL(req.url || '/api/audit/actors', 'http://localhost')
+  const hours = parsePositiveInt(urlObj.searchParams.get('hours'), 24, 1, 168)
+
+  fs.readFile(AUDIT_LOG_PATH, 'utf8', (err, text) => {
+    if (err) {
+      if (err.code === 'ENOENT') {
+        sendJson(res, 200, {
+          status: 'success',
+          data: {
+            items: [],
+            window_hours: hours,
+            source: AUDIT_LOG_PATH
+          }
+        })
+        return
+      }
+      sendJson(res, 500, { status: 'fail', message: `failed to read audit log: ${err.message}` })
+      return
+    }
+
+    const { rows } = loadAuditJsonl(text)
+    const nowMs = Date.now()
+    const recentRows = filterLastHours(rows, nowMs, hours).map((entry) => entry.row)
+    const items = Array.from(
+      new Set(
+        recentRows
+          .map((row) => String(row?.actor?.spiffe_id || row?.actor?.peer_ip || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b))
+
+    sendJson(res, 200, {
+      status: 'success',
+      data: {
+        items,
+        window_hours: hours,
+        source: AUDIT_LOG_PATH
       }
     })
   })
@@ -868,6 +923,12 @@ const server = https.createServer(tlsOptions, async (req, res) => {
   if (req.url.startsWith('/api/audit/logs')) {
     if (!requireAuth(req, res)) return
     serveAuditLogs(req, res)
+    return
+  }
+
+  if (req.url.startsWith('/api/audit/actors')) {
+    if (!requireAuth(req, res)) return
+    serveAuditActors(req, res)
     return
   }
 

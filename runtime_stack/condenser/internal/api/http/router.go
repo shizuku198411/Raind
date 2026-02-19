@@ -86,6 +86,7 @@ func NewApiRouter() *chi.Mux {
 	r.Get("/v1/containers/{containerId}/log", containerHandler.GetContainerLog)               // get container log
 	r.Get("/v1/containers/{containerId}/logpath", containerHandler.GetContainerLogPath)       // get container log path
 	r.Get("/v1/containers/{containerId}/stats", containerHandler.GetContainerStats)           // get container stats
+	r.Get("/v1/containers/{containerId}/spec", containerHandler.GetContainerSpec)             // get container config spec
 	r.Get("/v1/containers/stats", containerHandler.ListContainerStats)                        // get container stats list
 	r.Post("/v1/containers", containerHandler.CreateContainer)                                // create container
 	r.Post("/v1/containers/{containerId}/actions/start", containerHandler.StartContainer)     // start container
