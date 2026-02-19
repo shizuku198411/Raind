@@ -28,9 +28,21 @@ func CommandRun() *cli.Command {
 				Usage:   "publish a container's port(s) to the host",
 			},
 			&cli.StringSliceFlag{
+				Name:  "device",
+				Usage: "add a host device to the container (SRC[:DST[:rwm]])",
+			},
+			&cli.StringSliceFlag{
 				Name:    "env",
 				Aliases: []string{"e"},
 				Usage:   "environment variables",
+			},
+			&cli.StringSliceFlag{
+				Name:  "cap-add",
+				Usage: "add Linux capabilities (e.g. CAP_NET_ADMIN)",
+			},
+			&cli.StringSliceFlag{
+				Name:  "cap-drop",
+				Usage: "drop Linux capabilities (e.g. CAP_NET_RAW)",
 			},
 			&cli.BoolFlag{
 				Name:    "tty",
@@ -73,7 +85,13 @@ func runRun(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	opt_device, err := validateDeviceFlag(ctx.StringSlice("device"))
+	if err != nil {
+		return err
+	}
 	opt_env := ctx.StringSlice("env")
+	opt_capAdd := ctx.StringSlice("cap-add")
+	opt_capDrop := ctx.StringSlice("cap-drop")
 	opt_tty := ctx.Bool("tty")
 	opt_rm := ctx.Bool("rm")
 	opt_name := ctx.String("name")
@@ -86,7 +104,10 @@ func runRun(ctx *cli.Context) error {
 			Network: opt_network,
 			Volume:  opt_volume,
 			Publish: opt_publish,
+			Device:  opt_device,
 			Env:     opt_env,
+			CapAdd:  opt_capAdd,
+			CapDrop: opt_capDrop,
 			Tty:     opt_tty,
 			Rm:      opt_rm,
 			Name:    opt_name,
