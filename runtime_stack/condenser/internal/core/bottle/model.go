@@ -11,14 +11,20 @@ type BottleMeta struct {
 }
 
 type ServiceSpec struct {
-	Image     string   `yaml:"image"`
-	Command   []string `yaml:"command,omitempty"`
-	Env       []string `yaml:"env,omitempty"`
-	Ports     []string `yaml:"ports,omitempty"`
-	Mount     []string `yaml:"mount,omitempty"`
-	Network   string   `yaml:"network,omitempty"`
-	Tty       bool     `yaml:"tty,omitempty"`
-	DependsOn []string `yaml:"depends_on,omitempty"`
+	Image      string   `yaml:"image"`
+	Command    []string `yaml:"command,omitempty"`
+	Env        []string `yaml:"env,omitempty"`
+	Ports      []string `yaml:"ports,omitempty"`
+	Mount      []string `yaml:"mount,omitempty"`
+	Device     []string `yaml:"device,omitempty"`
+	DeviceAlt  []string `yaml:"devices,omitempty"`
+	CapAdd     []string `yaml:"capAdd,omitempty"`
+	CapAddAlt  []string `yaml:"cap-add,omitempty"`
+	CapDrop    []string `yaml:"capDrop,omitempty"`
+	CapDropAlt []string `yaml:"cap-drop,omitempty"`
+	Network    string   `yaml:"network,omitempty"`
+	Tty        bool     `yaml:"tty,omitempty"`
+	DependsOn  []string `yaml:"depends_on,omitempty"`
 }
 
 type PolicySpec struct {

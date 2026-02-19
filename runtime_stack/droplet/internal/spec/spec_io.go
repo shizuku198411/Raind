@@ -5,6 +5,7 @@ import (
 	"droplet/internal/utils"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -62,64 +63,87 @@ func buildProcessEnvSpec(specEnv []string) []string {
 }
 
 func buildProcessSpec(opts ConfigOptions) ProcessObject {
+	baseCaps := []string{
+		"CAP_CHOWN",
+		"CAP_DAC_OVERRIDE",
+		"CAP_FSETID",
+		"CAP_FOWNER",
+		"CAP_MKNOD",
+		"CAP_NET_RAW",
+		"CAP_SETGID",
+		"CAP_SETUID",
+		"CAP_SETFCAP",
+		"CAP_SETPCAP",
+		"CAP_NET_BIND_SERVICE",
+		"CAP_SYS_CHROOT",
+		"CAP_SYS_ADMIN",
+		"CAP_KILL",
+		"CAP_AUDIT_WRITE",
+	}
+	finalCaps := mergeCapabilities(baseCaps, opts.Process.CapAdd, opts.Process.CapDrop)
+
 	return ProcessObject{
 		Cwd:  opts.Process.Cwd,
 		Env:  buildProcessEnvSpec(opts.Process.Env),
 		Args: opts.Process.Args,
 		Capabilities: CapabilityObject{
-			Bounding: []string{
-				"CAP_CHOWN",
-				"CAP_DAC_OVERRIDE",
-				"CAP_FSETID",
-				"CAP_FOWNER",
-				"CAP_MKNOD",
-				"CAP_NET_RAW",
-				"CAP_SETGID",
-				"CAP_SETUID",
-				"CAP_SETFCAP",
-				"CAP_SETPCAP",
-				"CAP_NET_BIND_SERVICE",
-				"CAP_SYS_CHROOT",
-				"CAP_SYS_ADMIN",
-				"CAP_KILL",
-				"CAP_AUDIT_WRITE",
-			},
-			Effective: []string{
-				"CAP_CHOWN",
-				"CAP_DAC_OVERRIDE",
-				"CAP_FSETID",
-				"CAP_FOWNER",
-				"CAP_MKNOD",
-				"CAP_NET_RAW",
-				"CAP_SETGID",
-				"CAP_SETUID",
-				"CAP_SETFCAP",
-				"CAP_SETPCAP",
-				"CAP_NET_BIND_SERVICE",
-				"CAP_SYS_CHROOT",
-				"CAP_SYS_ADMIN",
-				"CAP_KILL",
-				"CAP_AUDIT_WRITE",
-			},
-			Permitted: []string{
-				"CAP_CHOWN",
-				"CAP_DAC_OVERRIDE",
-				"CAP_FSETID",
-				"CAP_FOWNER",
-				"CAP_MKNOD",
-				"CAP_NET_RAW",
-				"CAP_SETGID",
-				"CAP_SETUID",
-				"CAP_SETFCAP",
-				"CAP_SETPCAP",
-				"CAP_NET_BIND_SERVICE",
-				"CAP_SYS_CHROOT",
-				"CAP_SYS_ADMIN",
-				"CAP_KILL",
-				"CAP_AUDIT_WRITE",
-			},
+			Bounding:  slices.Clone(finalCaps),
+			Effective: slices.Clone(finalCaps),
+			Permitted: slices.Clone(finalCaps),
 		},
 	}
+}
+
+func normalizeCapabilityNames(caps []string) []string {
+	out := make([]string, 0, len(caps))
+	seen := map[string]struct{}{}
+	for _, c := range caps {
+		n := strings.TrimSpace(strings.ToUpper(c))
+		if n == "" {
+			continue
+		}
+		if !strings.HasPrefix(n, "CAP_") {
+			n = "CAP_" + n
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+func mergeCapabilities(base []string, capAdd []string, capDrop []string) []string {
+	final := normalizeCapabilityNames(base)
+	dropSet := map[string]struct{}{}
+	for _, c := range normalizeCapabilityNames(capDrop) {
+		dropSet[c] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(final))
+	for _, c := range final {
+		if _, dropped := dropSet[c]; dropped {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+
+	existing := map[string]struct{}{}
+	for _, c := range filtered {
+		existing[c] = struct{}{}
+	}
+	for _, c := range normalizeCapabilityNames(capAdd) {
+		if _, dropped := dropSet[c]; dropped {
+			continue
+		}
+		if _, ok := existing[c]; ok {
+			continue
+		}
+		existing[c] = struct{}{}
+		filtered = append(filtered, c)
+	}
+	return filtered
 }
 
 func buildLinuxSpec(opts ConfigOptions) LinuxSpecObject {

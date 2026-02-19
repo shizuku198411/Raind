@@ -34,6 +34,14 @@ func commandSpec() *cli.Command {
 				Name:  "env",
 				Usage: "environment variables (KEY=VALUE)",
 			},
+			&cli.StringSliceFlag{
+				Name:  "cap-add",
+				Usage: "add Linux capabilities (e.g. CAP_NET_ADMIN)",
+			},
+			&cli.StringSliceFlag{
+				Name:  "cap-drop",
+				Usage: "drop Linux capabilities (e.g. CAP_NET_RAW)",
+			},
 			&cli.StringFlag{
 				Name:  "command",
 				Usage: "container entrypoint",
@@ -196,6 +204,8 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	cwd := ctx.String("cwd")
 	// env
 	env := ctx.StringSlice("env")
+	capAdd := normalizeCapabilityFlag(ctx.StringSlice("cap-add"))
+	capDrop := normalizeCapabilityFlag(ctx.StringSlice("cap-drop"))
 	// args
 	args, err := parseCommandFlag(ctx.String("command"))
 	if err != nil {
@@ -273,9 +283,11 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 		Rootfs: rootfs,
 		Mounts: mounts,
 		Process: spec.ProcessOption{
-			Cwd:  cwd,
-			Env:  env,
-			Args: args,
+			Cwd:     cwd,
+			Env:     env,
+			Args:    args,
+			CapAdd:  capAdd,
+			CapDrop: capDrop,
 		},
 		Namespace: namespace,
 		Hostname:  hostname,
@@ -302,6 +314,26 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 			Poststop:        poststopHook,
 		},
 	}, nil
+}
+
+func normalizeCapabilityFlag(items []string) []string {
+	out := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		v := strings.TrimSpace(strings.ToUpper(item))
+		if v == "" {
+			continue
+		}
+		if !strings.HasPrefix(v, "CAP_") {
+			v = "CAP_" + v
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func parseMountFlag(mounts []string) ([]spec.MountOption, error) {

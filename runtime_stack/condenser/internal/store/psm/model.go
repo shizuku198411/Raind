@@ -41,6 +41,8 @@ type ContainerTemplateSpec struct {
 	Port    []string `json:"port,omitempty"`
 	Mount   []string `json:"mount,omitempty"`
 	Env     []string `json:"env,omitempty"`
+	CapAdd  []string `json:"capAdd,omitempty"`
+	CapDrop []string `json:"capDrop,omitempty"`
 	Network string   `json:"network,omitempty"`
 	Tty     bool     `json:"tty,omitempty"`
 }

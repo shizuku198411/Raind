@@ -27,7 +27,7 @@ func securePath(rootfs, dest string) (string, error) {
 	return fullPath, nil
 }
 
-func secureMount(source, target, fstype string, flags uintptr, data string) error {
+func secureMount(source, target, fstype string, flags uintptr, data string, allowDevice bool) error {
 	if fstype == "bind" {
 		// bind mount should use MS_BIND with empty fstype
 		fstype = ""
@@ -38,7 +38,10 @@ func secureMount(source, target, fstype string, flags uintptr, data string) erro
 	}
 	// force nosuid/nodev/noexec on bind mount
 	if fstype == "bind" || flags&syscall.MS_BIND != 0 {
-		remountFlags := syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_NOEXEC | syscall.MS_NOSUID | syscall.MS_NODEV
+		remountFlags := syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_NOEXEC | syscall.MS_NOSUID
+		if !allowDevice {
+			remountFlags |= syscall.MS_NODEV
+		}
 		if flags&syscall.MS_RDONLY != 0 {
 			remountFlags |= syscall.MS_RDONLY
 		}

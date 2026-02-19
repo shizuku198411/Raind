@@ -74,6 +74,8 @@ func (h *RequestHandler) CreatePod(w http.ResponseWriter, r *http.Request) {
 					Port:    c.Port,
 					Mount:   c.Mount,
 					Env:     c.Env,
+					CapAdd:  c.CapAdd,
+					CapDrop: c.CapDrop,
 					Network: c.Network,
 					Tty:     c.Tty,
 				})
@@ -222,6 +224,8 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 					Port:    c.Port,
 					Mount:   c.Mount,
 					Env:     c.Env,
+					CapAdd:  c.CapAdd,
+					CapDrop: c.CapDrop,
 					Network: c.Network,
 					Tty:     c.Tty,
 					Name:    c.Name,

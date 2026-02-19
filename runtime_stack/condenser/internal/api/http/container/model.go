@@ -6,7 +6,10 @@ type CreateContainerRequest struct {
 	Command []string `json:"command,omitempty" example:"/bin/sh,-c,echo hello; sleep 60"`
 	Port    []string `json:"port" example:"8080:80,4443:443"`
 	Mount   []string `json:"mount" example:"/host/dir:/container/dir,/src:/dst"`
+	Device  []string `json:"device,omitempty" example:"/dev/net/tun,/dev/kvm:/dev/kvm"`
 	Env     []string `json:"env" exampe:"key=value"`
+	CapAdd  []string `json:"capAdd,omitempty" example:"CAP_NET_ADMIN,CAP_SYS_TIME"`
+	CapDrop []string `json:"capDrop,omitempty" example:"CAP_NET_RAW,CAP_SYS_ADMIN"`
 	Network string   `json:"network" example:"raind0"`
 	Tty     bool     `json:"tty" example:"false"`
 	Name    string   `json:"name"  example:"my-container"`

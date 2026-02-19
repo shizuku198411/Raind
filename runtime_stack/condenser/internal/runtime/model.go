@@ -9,6 +9,8 @@ type SpecModel struct {
 	Hostname  string
 	Env       []string
 	Mount     []string
+	CapAdd    []string
+	CapDrop   []string
 
 	HostInterface          string
 	BridgeInterface        string
