@@ -3,7 +3,7 @@
   <img src="./docs/assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
-![version](https://img.shields.io/badge/version-v0.2.0-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
+![version](https://img.shields.io/badge/version-v0.2.1-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
 
 Zero Trust oriented container runtime for Linux.  
 Raind focuses on controlling and visualizing container networking at the runtime layer, not only at orchestration or app layer.
@@ -76,6 +76,9 @@ Browser
 ### 1. Build and Install
 
 ```bash
+# need go lang
+sudo snap install go --classic
+
 git clone https://github.com/shizuku198411/Raind.git
 cd Raind
 make bootstrap
