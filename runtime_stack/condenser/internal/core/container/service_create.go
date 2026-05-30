@@ -186,6 +186,8 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 			Port:    createParameter.Port,
 			Mount:   createParameter.Mount,
 			Env:     createParameter.Env,
+			CapAdd:  createParameter.CapAdd,
+			CapDrop: createParameter.CapDrop,
 			Network: createParameter.Network,
 			Tty:     createParameter.Tty,
 		}); err != nil {
@@ -448,7 +450,12 @@ func (s *ContainerService) createContainerSpec(
 	}
 
 	// mount
-	mount := createParameter.Mount
+	mount := append([]string{}, createParameter.Mount...)
+	deviceMount, err := s.buildDeviceMounts(createParameter.Device)
+	if err != nil {
+		return err
+	}
+	mount = append(mount, deviceMount...)
 
 	// host interface
 	hostInterface, err := s.ipamHandler.GetDefaultInterface()
@@ -558,6 +565,8 @@ func (s *ContainerService) createContainerSpec(
 		Hostname:               hostname,
 		Env:                    envs,
 		Mount:                  mount,
+		CapAdd:                 createParameter.CapAdd,
+		CapDrop:                createParameter.CapDrop,
 		HostInterface:          hostInterface,
 		BridgeInterface:        bridge,
 		ContainerInterface:     containerInterface,
@@ -764,6 +773,55 @@ func (s *ContainerService) parseImageRef(imageStr string) (repository, reference
 		repo = registry + "/" + repo
 	}
 	return repo, ref, nil
+}
+
+func (s *ContainerService) buildDeviceMounts(devices []string) ([]string, error) {
+	out := make([]string, 0, len(devices))
+	for _, raw := range devices {
+		spec := strings.TrimSpace(raw)
+		if spec == "" {
+			continue
+		}
+		parts := strings.Split(spec, ":")
+		var (
+			src  string
+			dst  string
+			perm string
+		)
+		switch len(parts) {
+		case 1:
+			src = strings.TrimSpace(parts[0])
+			dst = src
+		case 2:
+			src = strings.TrimSpace(parts[0])
+			dst = strings.TrimSpace(parts[1])
+		case 3:
+			src = strings.TrimSpace(parts[0])
+			dst = strings.TrimSpace(parts[1])
+			perm = strings.TrimSpace(parts[2])
+		default:
+			return nil, fmt.Errorf("invalid --device format: %q (expected SRC[:DST[:rwm]])", raw)
+		}
+		if src == "" || dst == "" {
+			return nil, fmt.Errorf("invalid --device format: %q (empty path)", raw)
+		}
+		if !strings.HasPrefix(src, "/") || !strings.HasPrefix(dst, "/") {
+			return nil, fmt.Errorf("invalid --device format: %q (absolute path required)", raw)
+		}
+
+		opts := []string{"bind", "rprivate", "dev"}
+		if perm != "" {
+			p := strings.ToLower(perm)
+			if !strings.ContainsAny(p, "rwm") {
+				return nil, fmt.Errorf("invalid --device permission: %q (use rwm)", raw)
+			}
+			if strings.Contains(p, "r") && !strings.Contains(p, "w") {
+				opts = append(opts, "ro")
+			}
+		}
+		out = append(out, strings.Join([]string{src, dst, strings.Join(opts, ",")}, ":"))
+	}
+	return out, nil
 }
 
 func (s *ContainerService) buildCommand(entrypoint, cmd []string) string {

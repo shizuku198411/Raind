@@ -8,15 +8,15 @@ type BottleState struct {
 }
 
 type BottleInfo struct {
-	BottleId   string                 `json:"bottleId"`
-	BottleName string                 `json:"bottleName"`
-	Services   map[string]ServiceSpec `json:"services"`
-	StartOrder []string               `json:"startOrder"`
-	Containers map[string]string      `json:"containers"`
-	Policies   []PolicyInfo           `json:"policies,omitempty"`
-	Network    string                 `json:"network,omitempty"`
-	NetworkAuto bool                  `json:"networkAuto,omitempty"`
-	CreatedAt  time.Time              `json:"createdAt"`
+	BottleId    string                 `json:"bottleId"`
+	BottleName  string                 `json:"bottleName"`
+	Services    map[string]ServiceSpec `json:"services"`
+	StartOrder  []string               `json:"startOrder"`
+	Containers  map[string]string      `json:"containers"`
+	Policies    []PolicyInfo           `json:"policies,omitempty"`
+	Network     string                 `json:"network,omitempty"`
+	NetworkAuto bool                   `json:"networkAuto,omitempty"`
+	CreatedAt   time.Time              `json:"createdAt"`
 }
 
 type ServiceSpec struct {
@@ -25,6 +25,9 @@ type ServiceSpec struct {
 	Env       []string `json:"env,omitempty"`
 	Ports     []string `json:"ports,omitempty"`
 	Mount     []string `json:"mount,omitempty"`
+	Device    []string `json:"device,omitempty"`
+	CapAdd    []string `json:"capAdd,omitempty"`
+	CapDrop   []string `json:"capDrop,omitempty"`
 	Network   string   `json:"network,omitempty"`
 	Tty       bool     `json:"tty,omitempty"`
 	DependsOn []string `json:"dependsOn,omitempty"`

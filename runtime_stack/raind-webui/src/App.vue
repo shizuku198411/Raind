@@ -1,25 +1,13 @@
 <template>
-  <div class="layout" :class="{ 'auth-locked': !isAuthenticated }">
-    <div v-if="!isAuthenticated" class="auth-overlay">
-      <section class="auth-card">
-        <h2>Raind WebUI Login</h2>
-        <p>Sign in to continue.</p>
-        <label class="auth-field">
-          <span>Username</span>
-          <input v-model.trim="loginForm.username" type="text" autocomplete="username" />
-        </label>
-        <label class="auth-field">
-          <span>Password</span>
-          <input v-model="loginForm.password" type="password" autocomplete="current-password" />
-        </label>
-        <p v-if="authError" class="error">{{ authError }}</p>
-        <div class="actions">
-          <button class="primary" :disabled="authSubmitting || !loginReady" @click="submitLogin">
-            {{ authSubmitting ? 'Signing in...' : 'Login' }}
-          </button>
-        </div>
-      </section>
-    </div>
+  <LoginPage
+    v-if="!isAuthenticated"
+    :auth-submitting="authSubmitting"
+    :login-form="loginForm"
+    :login-ready="loginReady"
+    :auth-error="authError"
+    :on-submit-login="submitLogin"
+  />
+  <div v-else class="layout">
     <aside class="sidebar">
       <div class="brand">
         <img src="/raind_icon.png" alt="Raind icon" class="brand-icon" />
@@ -29,37 +17,37 @@
       <nav class="menu">
         <section class="menu-group">
           <h4>Overview</h4>
-          <button :class="{ active: currentMenu === 'dashboard' }" @click="currentMenu = 'dashboard'">
+          <button :class="{ active: currentMenu === 'dashboard' }" @click="selectMenu('dashboard')">
             Dashboard
           </button>
         </section>
         <section class="menu-group">
           <h4>Runtime</h4>
-          <button :class="{ active: currentMenu === 'container' }" @click="currentMenu = 'container'">
+          <button :class="{ active: currentMenu === 'container' }" @click="selectMenu('container')">
             Container
           </button>
-          <button :class="{ active: currentMenu === 'resource' }" @click="currentMenu = 'resource'">
+          <button :class="{ active: currentMenu === 'resource' }" @click="selectMenu('resource')">
             Resource
           </button>
-          <button :class="{ active: currentMenu === 'bottle' }" @click="currentMenu = 'bottle'">
+          <button :class="{ active: currentMenu === 'bottle' }" @click="selectMenu('bottle')">
             Bottle
           </button>
-          <button :class="{ active: currentMenu === 'image' }" @click="currentMenu = 'image'">
+          <button :class="{ active: currentMenu === 'image' }" @click="selectMenu('image')">
             Image
           </button>
         </section>
         <section class="menu-group">
           <h4>Security</h4>
-          <button :class="{ active: currentMenu === 'policy' }" @click="currentMenu = 'policy'">
+          <button :class="{ active: currentMenu === 'policy' }" @click="selectMenu('policy')">
             Policy
           </button>
         </section>
         <section class="menu-group">
           <h4>Observability</h4>
-          <button :class="{ active: currentMenu === 'audit' }" @click="currentMenu = 'audit'">
+          <button :class="{ active: currentMenu === 'audit' }" @click="selectMenu('audit')">
             Audit Log
           </button>
-          <button :class="{ active: currentMenu === 'network' }" @click="currentMenu = 'network'">
+          <button :class="{ active: currentMenu === 'network' }" @click="selectMenu('network')">
             Network Log
           </button>
         </section>
@@ -120,6 +108,7 @@
         :open-create-container-overlay="openCreateContainerOverlay"
         :open-container-detail="openContainerDetail"
         :open-container-log="openContainerLog"
+        :open-container-spec="openContainerSpec"
         :open-attach-overlay="openAttachOverlay"
         :open-exec-overlay="openExecOverlay"
         :container-action="containerAction"
@@ -143,7 +132,12 @@
         :toggle-pod-expand="togglePodExpand"
         :open-resource-detail="openResourceDetail"
         :open-container-log="openContainerLog"
+        :open-container-spec="openContainerSpec"
         :open-container-detail="openContainerDetail"
+        :open-attach-overlay="openAttachOverlay"
+        :open-exec-overlay="openExecOverlay"
+        :can-attach-container="canAttachContainer"
+        :can-exec-container="canExecContainer"
         :toggle-resource-panel="toggleResourcePanel"
         :open-resource-create-overlay="openResourceCreateOverlay"
       />
@@ -169,6 +163,11 @@
         :open-bottle-action-confirm="openBottleActionConfirm"
         :open-container-detail="openContainerDetail"
         :open-container-log="openContainerLog"
+        :open-container-spec="openContainerSpec"
+        :open-attach-overlay="openAttachOverlay"
+        :open-exec-overlay="openExecOverlay"
+        :can-attach-container="canAttachContainer"
+        :can-exec-container="canExecContainer"
         :open-bottle-create-overlay="openBottleCreateOverlay"
       />
 
@@ -196,6 +195,7 @@
         :total-pages="auditTotalPages"
         :parse-errors="auditParseErrors"
         :source="auditSource"
+        :actor-options="auditActorOptions"
         :format-time="formatTime"
         :change-page="loadAuditLogs"
         :set-filter="setAuditFilter"
@@ -276,6 +276,15 @@
       :on-close="closeContainerLog"
     />
 
+    <ContainerSpecOverlay
+      :visible="specVisible"
+      :spec-target-id="specTargetId"
+      :spec-target-name="specTargetName"
+      :spec-loading="specLoading"
+      :spec-data="specData"
+      :on-close="closeContainerSpec"
+    />
+
     <AttachOverlay
       :visible="attachVisible"
       :attach-target-id="attachTargetId"
@@ -321,6 +330,8 @@
       :runtime-message="runtimeMessage"
       :format-percent="formatPercent"
       :format-bytes="formatBytes"
+      :on-open-pod-detail="openPodDetailFromContainerDetail"
+      :on-open-bottle-detail="openBottleDetail"
       :on-close="closeContainerDetail"
     />
 
@@ -337,6 +348,15 @@
       :service-ports-text="servicePortsText"
       :object-text="objectText"
       :on-close="closeResourceDetail"
+    />
+
+    <BottleDetailOverlay
+      :visible="bottleDetailVisible"
+      :bottle-detail-id="bottleDetailId"
+      :bottle-detail-loading="bottleDetailLoading"
+      :bottle-detail-data="bottleDetailData"
+      :format-time="formatTime"
+      :on-close="closeBottleDetail"
     />
 
     <PolicyCreateOverlay
@@ -421,15 +441,18 @@ import BottlePage from './pages/BottlePage.vue'
 import PolicyPage from './pages/PolicyPage.vue'
 import AuditLogPage from './pages/AuditLogPage.vue'
 import NetworkLogPage from './pages/NetworkLogPage.vue'
+import LoginPage from './pages/LoginPage.vue'
 import CreateContainerOverlay from './overlays/CreateContainerOverlay.vue'
 import PullImageOverlay from './overlays/PullImageOverlay.vue'
 import ImageDeleteOverlay from './overlays/ImageDeleteOverlay.vue'
 import ActionConfirmOverlay from './overlays/ActionConfirmOverlay.vue'
 import ContainerLogOverlay from './overlays/ContainerLogOverlay.vue'
+import ContainerSpecOverlay from './overlays/ContainerSpecOverlay.vue'
 import AttachOverlay from './overlays/AttachOverlay.vue'
 import ExecOverlay from './overlays/ExecOverlay.vue'
 import ContainerDetailOverlay from './overlays/ContainerDetailOverlay.vue'
 import ResourceDetailOverlay from './overlays/ResourceDetailOverlay.vue'
+import BottleDetailOverlay from './overlays/BottleDetailOverlay.vue'
 import PolicyCreateOverlay from './overlays/PolicyCreateOverlay.vue'
 import PolicyDeleteOverlay from './overlays/PolicyDeleteOverlay.vue'
 import PolicyCommitOverlay from './overlays/PolicyCommitOverlay.vue'
@@ -439,8 +462,12 @@ import YamlCreateOverlay from './overlays/YamlCreateOverlay.vue'
 
 const runtimeName = 'Raind'
 const runtimeVersion = import.meta.env.VITE_RAIND_VERSION || 'dev'
+const AUTH_MARKER_KEY = 'raind_webui_authenticated'
+const LAST_MENU_KEY = 'raind_webui_last_menu'
+const defaultMenu = 'dashboard'
+const protectedMenus = new Set(['dashboard', 'container', 'resource', 'bottle', 'image', 'policy', 'audit', 'network'])
 
-const currentMenu = ref('dashboard')
+const currentMenu = ref(defaultMenu)
 const isAuthenticated = ref(false)
 const authSubmitting = ref(false)
 const authError = ref('')
@@ -469,11 +496,12 @@ const auditTotal = ref(0)
 const auditTotalPages = ref(0)
 const auditParseErrors = ref(0)
 const auditSource = ref('')
+const auditActorOptions = ref([])
 const auditFilter = ref({
   q: '',
+  actor: '',
   severity: '',
   action: '',
-  method: '',
   result_status: ''
 })
 const logInsights = ref({
@@ -544,6 +572,11 @@ const logTargetId = ref('')
 const logTargetName = ref('')
 const logSourcePath = ref('')
 const logData = ref('')
+const specVisible = ref(false)
+const specLoading = ref(false)
+const specTargetId = ref('')
+const specTargetName = ref('')
+const specData = ref(null)
 const attachVisible = ref(false)
 const attachConnecting = ref(false)
 const attachConnected = ref(false)
@@ -576,6 +609,7 @@ let execResizeHandler = null
 let execTerm = null
 let execFit = null
 let execDisposeData = null
+let hashChangeHandler = null
 const actionConfirmVisible = ref(false)
 const actionConfirmSubmitting = ref(false)
 const actionConfirmType = ref('')
@@ -644,6 +678,10 @@ const resourceDetailLoading = ref(false)
 const resourceDetailType = ref('')
 const resourceDetailId = ref('')
 const resourceDetailData = ref(null)
+const bottleDetailVisible = ref(false)
+const bottleDetailLoading = ref(false)
+const bottleDetailId = ref('')
+const bottleDetailData = ref(null)
 
 const titleByMenu = {
   dashboard: 'Dashboard',
@@ -654,6 +692,74 @@ const titleByMenu = {
   policy: 'Policy',
   audit: 'Audit Log',
   network: 'Network Log'
+}
+
+function normalizeMenuName(input) {
+  const menu = String(input || '').toLowerCase()
+  return protectedMenus.has(menu) ? menu : defaultMenu
+}
+
+function getMenuFromHash() {
+  if (typeof window === 'undefined') return defaultMenu
+  const raw = String(window.location.hash || '').replace(/^#/, '')
+  return normalizeMenuName(raw)
+}
+
+function updateHashMenu(menu) {
+  if (typeof window === 'undefined') return
+  const normalized = normalizeMenuName(menu)
+  if (window.location.hash === `#${normalized}`) return
+  window.history.replaceState(null, '', `#${normalized}`)
+}
+
+function rememberLastMenu(menu) {
+  try {
+    localStorage.setItem(LAST_MENU_KEY, normalizeMenuName(menu))
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function getLastMenu() {
+  try {
+    return normalizeMenuName(localStorage.getItem(LAST_MENU_KEY) || defaultMenu)
+  } catch {
+    return defaultMenu
+  }
+}
+
+function setAuthMarker(enabled) {
+  try {
+    if (enabled) {
+      localStorage.setItem(AUTH_MARKER_KEY, '1')
+      return
+    }
+    localStorage.removeItem(AUTH_MARKER_KEY)
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function hasAuthMarker() {
+  try {
+    return localStorage.getItem(AUTH_MARKER_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function selectMenu(menu) {
+  const normalized = normalizeMenuName(menu)
+  currentMenu.value = normalized
+  updateHashMenu(normalized)
+  rememberLastMenu(normalized)
+}
+
+function redirectToLogin() {
+  currentMenu.value = 'login'
+  if (typeof window !== 'undefined' && window.location.hash !== '#login') {
+    window.history.replaceState(null, '', '#login')
+  }
 }
 
 async function authApi(path, options = {}) {
@@ -685,6 +791,8 @@ async function api(path, options = {}) {
   if (res.status === 401) {
     isAuthenticated.value = false
     currentUser.value = ''
+    setAuthMarker(false)
+    redirectToLogin()
     throw new Error('unauthorized')
   }
 
@@ -708,9 +816,14 @@ async function checkAuth() {
     isAuthenticated.value = true
     currentUser.value = String(res?.data?.username || '')
     authError.value = ''
+    setAuthMarker(true)
+    const menu = getMenuFromHash()
+    selectMenu(menu || getLastMenu())
   } catch {
     isAuthenticated.value = false
     currentUser.value = ''
+    setAuthMarker(false)
+    redirectToLogin()
   }
 }
 
@@ -733,10 +846,14 @@ async function submitLogin() {
     isAuthenticated.value = true
     currentUser.value = String(res?.data?.username || loginForm.value.username.trim())
     loginForm.value.password = ''
+    setAuthMarker(true)
+    selectMenu(getLastMenu())
     await refreshAll()
   } catch (e) {
     authError.value = e.message
     isAuthenticated.value = false
+    setAuthMarker(false)
+    redirectToLogin()
   } finally {
     authSubmitting.value = false
   }
@@ -751,6 +868,8 @@ async function logout() {
   isAuthenticated.value = false
   currentUser.value = ''
   loginForm.value.password = ''
+  setAuthMarker(false)
+  redirectToLogin()
 }
 
 function normalizeContainer(raw = {}) {
@@ -812,7 +931,7 @@ function imageNameShort(img = {}) {
 
 function policyChainLabel(chain) {
   const labels = {
-    'RAIND-EW': 'Inter Connect Policy',
+    'RAIND-EW': 'Inter Container Policy',
     'RAIND-NS-OBS': 'External Policy (Observe)',
     'RAIND-NS-ENF': 'External Policy (Enforce)'
   }
@@ -942,11 +1061,14 @@ async function loadBottles() {
         const detailRes = await api(`/v1/bottle/${encodeURIComponent(b.bottleId)}`)
         const bottle = detailRes.data?.bottle || {}
         const containersMap = bottle.containers || {}
+        const servicesMap = bottle.services || {}
         const containers = Object.entries(containersMap).map(([serviceName, c]) => ({
           serviceName,
           id: c.containerId || '-',
           name: c.name || serviceName || '-',
           state: String(c.state || '-').toLowerCase(),
+          // bottle container state does not include tty; derive from service spec
+          tty: Boolean(servicesMap?.[serviceName]?.tty),
           image: c.imageRepository && c.imageReference ? `${c.imageRepository}:${c.imageReference}` : '-'
         }))
         return { containers }
@@ -1045,12 +1167,18 @@ async function loadAuditLogs(page = auditPage.value) {
   }
 }
 
+async function loadAuditActorOptions() {
+  const res = await api('/audit/actors?hours=24')
+  const data = res.data || {}
+  auditActorOptions.value = Array.isArray(data.items) ? data.items : []
+}
+
 function setAuditFilter(filters = {}) {
   auditFilter.value = {
     q: String(filters.q || ''),
+    actor: String(filters.actor || ''),
     severity: String(filters.severity || ''),
     action: String(filters.action || ''),
-    method: String(filters.method || ''),
     result_status: String(filters.result_status || '')
   }
 }
@@ -1478,9 +1606,9 @@ const pendingPolicyChanges = computed(() => {
 
 const connectionStatusClass = computed(() => {
   const s = String(connectionStatus.value || '').toLowerCase()
-  if (s === 'connected') return 'ok'
-  if (s.startsWith('checking')) return 'checking'
-  return 'ng'
+  if (s === 'connected') return 'status-chip running'
+  if (s.startsWith('checking')) return 'status-chip creating'
+  return 'status-chip stopped'
 })
 
 async function refreshAll() {
@@ -1496,7 +1624,9 @@ async function refreshAll() {
       loadImages(),
       loadPolicies(),
       loadLogInsights(),
-      currentMenu.value === 'audit' ? loadAuditLogs(auditPage.value) : Promise.resolve(),
+      currentMenu.value === 'audit'
+        ? Promise.all([loadAuditActorOptions(), loadAuditLogs(auditPage.value)])
+        : Promise.resolve(),
       currentMenu.value === 'network' ? loadNetworkLogs() : Promise.resolve()
     ])
   } catch (e) {
@@ -1618,7 +1748,12 @@ function canStartContainer(status) {
 }
 
 function canAttachContainer(container) {
-  return !!container?.tty && String(container?.status || '').toLowerCase() === 'running'
+  const id = String(container?.id || '')
+  const matched = id ? containers.value.find((c) => String(c.id || '') === id) : null
+  const status = String(container?.status || container?.state || matched?.status || '').toLowerCase()
+  const ttyRaw = container?.tty ?? matched?.tty ?? false
+  const tty = ttyRaw === true || String(ttyRaw).toLowerCase() === 'true'
+  return tty && status === 'running'
 }
 
 function canExecContainer(status) {
@@ -1774,6 +1909,36 @@ async function openNetworkContainerDetailByRef(containerId, containerName) {
   await openContainerDetail(container.id)
 }
 
+function openPodDetailFromContainerDetail(podId) {
+  const id = String(podId || '').trim()
+  if (!id || id === '-') return
+  openResourceDetail('pod', id)
+}
+
+async function openBottleDetail(id) {
+  const bottleId = String(id || '').trim()
+  if (!bottleId || bottleId === '-') return
+  bottleDetailVisible.value = true
+  bottleDetailLoading.value = true
+  bottleDetailId.value = bottleId
+  bottleDetailData.value = null
+  try {
+    const res = await api(`/v1/bottle/${encodeURIComponent(bottleId)}`)
+    bottleDetailData.value = res.data?.bottle ?? res.data ?? res
+  } catch (e) {
+    bottleDetailData.value = { error: e.message }
+  } finally {
+    bottleDetailLoading.value = false
+  }
+}
+
+function closeBottleDetail() {
+  bottleDetailVisible.value = false
+  bottleDetailLoading.value = false
+  bottleDetailId.value = ''
+  bottleDetailData.value = null
+}
+
 function closeContainerDetail() {
   detailVisible.value = false
   detailLoading.value = false
@@ -1826,6 +1991,32 @@ function closeContainerLog() {
   logTargetName.value = ''
   logSourcePath.value = ''
   logData.value = ''
+}
+
+async function openContainerSpec(id, name) {
+  specVisible.value = true
+  specLoading.value = true
+  specTargetId.value = id
+  specTargetName.value = name || ''
+  specData.value = null
+  error.value = ''
+  try {
+    const res = await api(`/v1/containers/${id}/spec`)
+    specData.value = res.data ?? {}
+  } catch (e) {
+    specData.value = null
+    error.value = e.message
+  } finally {
+    specLoading.value = false
+  }
+}
+
+function closeContainerSpec() {
+  specVisible.value = false
+  specLoading.value = false
+  specTargetId.value = ''
+  specTargetName.value = ''
+  specData.value = null
 }
 
 function setAttachTerminalEl(el) {
@@ -2686,11 +2877,18 @@ function toggleResourcePanel(type) {
 }
 
 watch(currentMenu, async (menu) => {
+  if (!isAuthenticated.value) {
+    if (menu !== 'login') {
+      redirectToLogin()
+    }
+    return
+  }
+
   if (menu === 'audit') {
     if (auditLoading.value) return
     if (auditLogs.value.length > 0) return
     try {
-      await loadAuditLogs(1)
+      await Promise.all([loadAuditActorOptions(), loadAuditLogs(1)])
     } catch (e) {
       error.value = e.message
     }
@@ -2709,6 +2907,21 @@ watch(currentMenu, async (menu) => {
 })
 
 onMounted(async () => {
+  const initialMenu = getMenuFromHash()
+  rememberLastMenu(initialMenu)
+  if (!hasAuthMarker()) {
+    redirectToLogin()
+  }
+
+  hashChangeHandler = () => {
+    if (!isAuthenticated.value) {
+      redirectToLogin()
+      return
+    }
+    selectMenu(getMenuFromHash())
+  }
+  window.addEventListener('hashchange', hashChangeHandler)
+
   await checkAuth()
   if (isAuthenticated.value) {
     await refreshAll()
@@ -2716,6 +2929,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (hashChangeHandler) {
+    window.removeEventListener('hashchange', hashChangeHandler)
+    hashChangeHandler = null
+  }
   closeAttachOverlay()
   closeExecOverlay()
 })
@@ -2766,61 +2983,13 @@ body,
   --primary-2: #0f6fd3;
   --danger: #e34a4a;
   min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 260px 1fr;
   background: var(--bg-1);
   color: var(--text-1);
   font-family: 'Space Grotesk', 'Noto Sans JP', sans-serif;
-}
-
-.layout.auth-locked {
   overflow: hidden;
-}
-
-.auth-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(15, 18, 24, 0.92);
-  display: grid;
-  place-items: center;
-}
-
-.auth-card {
-  width: min(420px, 92vw);
-  border: 1px solid #3a4150;
-  border-radius: 12px;
-  background: #1f232b;
-  padding: 16px;
-  display: grid;
-  gap: 10px;
-}
-
-.auth-card h2 {
-  margin: 0;
-}
-
-.auth-card p {
-  margin: 0;
-  color: var(--text-2);
-}
-
-.auth-field {
-  display: grid;
-  gap: 6px;
-}
-
-.auth-field span {
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.auth-field input {
-  border: 1px solid #3a4150;
-  background: #232a35;
-  color: #f2f5fb;
-  border-radius: 8px;
-  padding: 8px 10px;
 }
 
 .sidebar {
@@ -2830,6 +2999,8 @@ body,
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: 100vh;
+  overflow: auto;
 }
 
 .brand {
@@ -2911,6 +3082,9 @@ body,
 
 .content {
   padding: 22px;
+  height: 100vh;
+  overflow: auto;
+  min-height: 0;
 }
 
 .topbar {
@@ -4171,11 +4345,20 @@ button.caution {
 @media (max-width: 840px) {
   .layout {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     border-right: none;
     border-bottom: 1px solid var(--line);
+    height: auto;
+    overflow: visible;
+  }
+
+  .content {
+    height: auto;
+    overflow: visible;
   }
 
   .menu {

@@ -22,6 +22,8 @@ type CreatePodContainerRequest struct {
 	Port    []string `json:"port"`
 	Mount   []string `json:"mount"`
 	Env     []string `json:"env"`
+	CapAdd  []string `json:"capAdd,omitempty"`
+	CapDrop []string `json:"capDrop,omitempty"`
 	Network string   `json:"network"`
 	Tty     bool     `json:"tty"`
 }

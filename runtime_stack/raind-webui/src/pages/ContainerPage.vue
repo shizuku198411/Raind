@@ -35,6 +35,7 @@
             <td class="actions">
               <button @click="openContainerDetail(c.id)">Detail</button>
               <button @click="openContainerLog(c.id, c.name)">Log</button>
+              <button @click="openContainerSpec(c.id, c.name)">Config Spec</button>
               <button v-if="canAttachContainer(c)" class="primary-outline" @click="openAttachOverlay(c)">Attach</button>
               <button v-if="canExecContainer(c.status)" class="primary-outline" @click="openExecOverlay(c)">Exec</button>
               <button v-if="canStartContainer(c.status)" class="success" @click="containerAction(c.id, 'start')">Start</button>
@@ -63,6 +64,7 @@ defineProps({
   openCreateContainerOverlay: { type: Function, required: true },
   openContainerDetail: { type: Function, required: true },
   openContainerLog: { type: Function, required: true },
+  openContainerSpec: { type: Function, required: true },
   openAttachOverlay: { type: Function, required: true },
   openExecOverlay: { type: Function, required: true },
   containerAction: { type: Function, required: true },

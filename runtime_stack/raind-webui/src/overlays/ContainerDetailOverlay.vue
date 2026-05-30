@@ -72,8 +72,28 @@
         <article class="detail-card">
           <h4>Meta</h4>
           <dl>
-            <dt>Pod ID</dt><dd class="mono">{{ detailData.pod_id || '-' }}</dd>
-            <dt>Bottle ID</dt><dd class="mono">{{ detailData.bottle_id || '-' }}</dd>
+            <dt>Pod ID</dt>
+            <dd class="mono">
+              <button
+                v-if="detailData.pod_id"
+                class="link-btn mono"
+                @click="onOpenPodDetail(detailData.pod_id)"
+              >
+                {{ detailData.pod_id }}
+              </button>
+              <span v-else>-</span>
+            </dd>
+            <dt>Bottle ID</dt>
+            <dd class="mono">
+              <button
+                v-if="detailData.bottle_id"
+                class="link-btn mono"
+                @click="onOpenBottleDetail(detailData.bottle_id)"
+              >
+                {{ detailData.bottle_id }}
+              </button>
+              <span v-else>-</span>
+            </dd>
             <dt>SPIFFE ID</dt><dd class="mono">{{ detailData.spiffe_id || '-' }}</dd>
             <dt>Cgroup</dt><dd class="mono">{{ detailData.cgroup_path || '-' }}</dd>
             <dt>Log Path</dt><dd class="mono">{{ detailData.log_path || '-' }}</dd>
@@ -100,6 +120,23 @@ defineProps({
   runtimeMessage: { type: Function, required: true },
   formatPercent: { type: Function, required: true },
   formatBytes: { type: Function, required: true },
+  onOpenPodDetail: { type: Function, required: true },
+  onOpenBottleDetail: { type: Function, required: true },
   onClose: { type: Function, required: true }
 })
 </script>
+
+<style scoped>
+.link-btn {
+  border: none;
+  background: transparent;
+  color: #9fd0ff;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.link-btn:hover {
+  color: #cfe8ff;
+}
+</style>

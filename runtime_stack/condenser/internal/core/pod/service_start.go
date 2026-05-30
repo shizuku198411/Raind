@@ -146,6 +146,8 @@ func (s *PodService) ensurePodTemplateContainers(podInfo psm.PodInfo) error {
 			Port:    spec.Port,
 			Mount:   spec.Mount,
 			Env:     spec.Env,
+			CapAdd:  spec.CapAdd,
+			CapDrop: spec.CapDrop,
 			Network: spec.Network,
 			Tty:     spec.Tty,
 			Name:    spec.Name,

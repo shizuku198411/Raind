@@ -66,8 +66,18 @@ type containerManifest struct {
 	Env          []manifestEnvVar      `yaml:"env"`
 	Ports        []manifestPort        `yaml:"ports"`
 	Mount        []string              `yaml:"mount"`
+	SecurityCtx  manifestSecurityCtx   `yaml:"securityContext"`
 	VolumeMounts []manifestVolumeMount `yaml:"volumeMounts"`
 	Tty          bool                  `yaml:"tty"`
+}
+
+type manifestSecurityCtx struct {
+	Capabilities manifestCapabilities `yaml:"capabilities"`
+}
+
+type manifestCapabilities struct {
+	Add  []string `yaml:"add"`
+	Drop []string `yaml:"drop"`
 }
 
 type manifestEnvVar struct {
@@ -229,6 +239,8 @@ func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes
 			Env:     envs,
 			Port:    ports,
 			Mount:   mounts,
+			CapAdd:  c.SecurityCtx.Capabilities.Add,
+			CapDrop: c.SecurityCtx.Capabilities.Drop,
 			Tty:     c.Tty,
 		})
 	}

@@ -10,7 +10,11 @@ Containerized WebUI for Raind.
 ## Local Dev
 ```bash
 npm install
-npm run dev
+# gateway
+./scripts/run.sh gateway
+
+# web-ui
+./scripts/run.sh vite
 ```
 
 ## Build Container

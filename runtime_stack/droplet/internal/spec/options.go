@@ -8,9 +8,11 @@ type MountOption struct {
 }
 
 type ProcessOption struct {
-	Cwd  string
-	Env  []string
-	Args []string
+	Cwd     string
+	Env     []string
+	Args    []string
+	CapAdd  []string
+	CapDrop []string
 }
 
 type NamespaceOption struct {

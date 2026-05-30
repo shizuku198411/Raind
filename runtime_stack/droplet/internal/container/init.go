@@ -622,10 +622,11 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 
 	for _, mountConfig := range prerequiredMounts {
 		var (
-			mountFlags uintptr
-			mountData  string
-			dataStrTmp []string
-			bindFlag   = false
+			mountFlags      uintptr
+			mountData       string
+			dataStrTmp      []string
+			bindFlag        = false
+			deviceMountFlag = false
 		)
 		if mountConfig.Options != nil {
 			for _, option := range mountConfig.Options {
@@ -636,6 +637,8 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 					mountFlags |= syscall.MS_NOEXEC
 				case "nodev":
 					mountFlags |= syscall.MS_NODEV
+				case "dev":
+					deviceMountFlag = true
 				case "ro":
 					mountFlags |= syscall.MS_RDONLY
 				case "rw":
@@ -740,6 +743,7 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 			mountConfig.Type,
 			mountFlags,
 			mountData,
+			deviceMountFlag,
 		); err != nil {
 			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
 		}

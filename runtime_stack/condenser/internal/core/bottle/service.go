@@ -39,6 +39,7 @@ func (s *BottleService) DecodeSpec(yamlBytes []byte) (*BottleSpec, error) {
 	if err := yaml.Unmarshal(yamlBytes, &spec); err != nil {
 		return nil, err
 	}
+	spec.Services = normalizeServiceSpec(spec.Services)
 	if spec.Bottle.Name == "" {
 		return nil, fmt.Errorf("bottle.name is required")
 	}
@@ -46,6 +47,43 @@ func (s *BottleService) DecodeSpec(yamlBytes []byte) (*BottleSpec, error) {
 		return nil, fmt.Errorf("services is required")
 	}
 	return &spec, nil
+}
+
+func normalizeServiceSpec(in map[string]ServiceSpec) map[string]ServiceSpec {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]ServiceSpec, len(in))
+	for name, svc := range in {
+		svc.CapAdd = mergeUniqueStrings(svc.CapAdd, svc.CapAddAlt)
+		svc.CapDrop = mergeUniqueStrings(svc.CapDrop, svc.CapDropAlt)
+		svc.Device = mergeUniqueStrings(svc.Device, svc.DeviceAlt)
+		svc.CapAddAlt = nil
+		svc.CapDropAlt = nil
+		svc.DeviceAlt = nil
+		out[name] = svc
+	}
+	return out
+}
+
+func mergeUniqueStrings(a []string, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range append(append([]string{}, a...), b...) {
+		v := strings.TrimSpace(s)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (s *BottleService) BuildStartOrder(spec *BottleSpec) ([]string, error) {
@@ -156,7 +194,10 @@ func (s *BottleService) Create(bottleIdOrName string) (string, error) {
 			Command:  spec.Command,
 			Port:     spec.Ports,
 			Mount:    spec.Mount,
+			Device:   spec.Device,
 			Env:      env,
+			CapAdd:   spec.CapAdd,
+			CapDrop:  spec.CapDrop,
 			Network:  networkName,
 			Tty:      spec.Tty,
 			Name:     buildContainerName(info.BottleName, serviceName),

@@ -44,7 +44,22 @@
                       <span class="selector">{{ c.image }}</span>
                       <span :class="statusClass(c.status)"><span class="status-lamp"></span>{{ c.status }}</span>
                       <button class="tiny-btn" @click="openContainerLog(c.id, c.name)">Log</button>
+                      <button class="tiny-btn" @click="openContainerSpec(c.id, c.name)">Config Spec</button>
                       <button class="tiny-btn" @click="openContainerDetail(c.id)">Detail</button>
+                      <button
+                        v-if="canAttachContainer(c)"
+                        class="tiny-btn"
+                        @click="openAttachOverlay(c)"
+                      >
+                        Attach
+                      </button>
+                      <button
+                        v-if="canExecContainer(c.status)"
+                        class="tiny-btn"
+                        @click="openExecOverlay(c)"
+                      >
+                        Exec
+                      </button>
                     </div>
                     <div v-if="podContainers(p.id).length === 0" class="empty">No container</div>
                   </div>
@@ -118,7 +133,22 @@
               <span class="selector">{{ c.image }}</span>
               <span :class="statusClass(c.status)"><span class="status-lamp"></span>{{ c.status }}</span>
               <button class="tiny-btn" @click="openContainerLog(c.id, c.name)">Log</button>
+              <button class="tiny-btn" @click="openContainerSpec(c.id, c.name)">Config Spec</button>
               <button class="tiny-btn" @click="openContainerDetail(c.id)">Detail</button>
+              <button
+                v-if="canAttachContainer(c)"
+                class="tiny-btn"
+                @click="openAttachOverlay(c)"
+              >
+                Attach
+              </button>
+              <button
+                v-if="canExecContainer(c.status)"
+                class="tiny-btn"
+                @click="openExecOverlay(c)"
+              >
+                Exec
+              </button>
             </div>
             <div v-if="podContainers(item.id).length === 0" class="empty">No container</div>
           </div>
@@ -164,7 +194,12 @@ defineProps({
   togglePodExpand: { type: Function, required: true },
   openResourceDetail: { type: Function, required: true },
   openContainerLog: { type: Function, required: true },
+  openContainerSpec: { type: Function, required: true },
   openContainerDetail: { type: Function, required: true },
+  openAttachOverlay: { type: Function, required: true },
+  openExecOverlay: { type: Function, required: true },
+  canAttachContainer: { type: Function, required: true },
+  canExecContainer: { type: Function, required: true },
   toggleResourcePanel: { type: Function, required: true },
   openResourceCreateOverlay: { type: Function, required: true }
 })

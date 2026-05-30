@@ -60,7 +60,10 @@ func (h *RequestHandler) CreateContainer(w http.ResponseWriter, r *http.Request)
 			Command: req.Command,
 			Port:    req.Port,
 			Mount:   req.Mount,
+			Device:  req.Device,
 			Env:     req.Env,
+			CapAdd:  req.CapAdd,
+			CapDrop: req.CapDrop,
 			Network: req.Network,
 			Tty:     req.Tty,
 			Name:    req.Name,
@@ -342,6 +345,36 @@ func (h *RequestHandler) GetContainerStats(w http.ResponseWriter, r *http.Reques
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "retrieve container stats success", stats)
+}
+
+// GetContainerSpec godoc
+// @Summary get container config spec
+// @Description get container config.json spec
+// @Tags containers
+// @Param containerId path string true "Container ID"
+// @Success 200 {object} apimodel.ApiResponse
+// @Router /v1/containers/{containerId}/spec [get]
+func (h *RequestHandler) GetContainerSpec(w http.ResponseWriter, r *http.Request) {
+	containerId := chi.URLParam(r, "containerId")
+	if containerId == "" {
+		apimodel.RespondFail(w, http.StatusBadRequest, "missing container Id", nil)
+		return
+	}
+
+	// set log: target
+	log_containerId, log_containerName, _ := h.csmHandler.GetContainerIdAndName(containerId)
+	logger.SetTarget(r.Context(), logger.Target{
+		ContainerId:   log_containerId,
+		ContainerName: log_containerName,
+	})
+
+	spec, err := h.serviceHandler.GetContainerSpec(containerId)
+	if err != nil {
+		apimodel.RespondFail(w, http.StatusInternalServerError, "retrieve container config spec failed: "+err.Error(), nil)
+		return
+	}
+
+	apimodel.RespondSuccess(w, http.StatusOK, "retrieve container config spec success", spec)
 }
 
 // ListContainerStats godoc

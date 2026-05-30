@@ -161,15 +161,15 @@ func (h *RequestHandler) GetBottleDetail(w http.ResponseWriter, r *http.Request)
 
 	apimodel.RespondSuccess(w, http.StatusOK, "bottle detail", GetBottleResponse{
 		Bottle: BottleDetail{
-			BottleId:   info.BottleId,
-			BottleName: info.BottleName,
-			Services:   toApiServices(info.Services, info.Network, info.NetworkAuto),
-			StartOrder: info.StartOrder,
-			Containers: containerStates,
-			Policies:   toApiPolicies(info.BottleName, info.Policies),
-			Network:    info.Network,
+			BottleId:    info.BottleId,
+			BottleName:  info.BottleName,
+			Services:    toApiServices(info.Services, info.Network, info.NetworkAuto),
+			StartOrder:  info.StartOrder,
+			Containers:  containerStates,
+			Policies:    toApiPolicies(info.BottleName, info.Policies),
+			Network:     info.Network,
 			NetworkAuto: info.NetworkAuto,
-			CreatedAt:  info.CreatedAt.Format(time.RFC3339Nano),
+			CreatedAt:   info.CreatedAt.Format(time.RFC3339Nano),
 		},
 	})
 }
@@ -220,6 +220,9 @@ func toStoreServices(services map[string]bottle.ServiceSpec) map[string]bsm.Serv
 			Env:       svc.Env,
 			Ports:     svc.Ports,
 			Mount:     svc.Mount,
+			Device:    svc.Device,
+			CapAdd:    svc.CapAdd,
+			CapDrop:   svc.CapDrop,
 			Network:   svc.Network,
 			Tty:       svc.Tty,
 			DependsOn: svc.DependsOn,
@@ -241,6 +244,9 @@ func toApiServices(services map[string]bsm.ServiceSpec, bottleNetwork string, au
 			Env:       svc.Env,
 			Ports:     svc.Ports,
 			Mount:     svc.Mount,
+			Device:    svc.Device,
+			CapAdd:    svc.CapAdd,
+			CapDrop:   svc.CapDrop,
 			Network:   networkName,
 			Tty:       svc.Tty,
 			DependsOn: svc.DependsOn,

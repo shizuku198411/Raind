@@ -111,6 +111,7 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.LayerRootDir,
 		utils.StoreDir,
 		utils.AuditLogDir,
+		utils.VarLogDir,
 		utils.CertDir,
 		utils.WebCertDir,
 	}

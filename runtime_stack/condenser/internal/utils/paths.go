@@ -6,6 +6,7 @@ const (
 	ContainerRootDir = "/etc/raind/container"
 	ImageRootDir     = "/etc/raind/image"
 	LayerRootDir     = "/etc/raind/image/layers"
+	VarLogDir        = "/var/log/raind"
 
 	StoreDir      = "/etc/raind/store"
 	IpamStorePath = "/etc/raind/store/ipam.json"
