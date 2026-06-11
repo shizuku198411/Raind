@@ -10,7 +10,7 @@ sudo make enable-ui-gateway-service
 
 ## Build and Run WebUI
 ```bash
-cd runtime_stack/raind-webui
+cd webui
 raind image build -f . -t raind-webui:latest
 raind resource apply -f deploy/manifest.yaml
 ```
