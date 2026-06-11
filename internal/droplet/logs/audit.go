@@ -51,7 +51,9 @@ func RecordAuditLog(auditRecord AuditRecord) error {
 	}
 
 	if auditRecord.Spec != nil {
-		rec.Oci.ProcessArg0 = auditRecord.Spec.Process.Args[0]
+		if len(auditRecord.Spec.Process.Args) > 0 {
+			rec.Oci.ProcessArg0 = auditRecord.Spec.Process.Args[0]
+		}
 		rec.Namespaces = mapNamespace(auditRecord.Spec.LinuxSpec)
 		rec.Capabilities = &CapsInfo{
 			Bounding:    auditRecord.Spec.Process.Capabilities.Bounding,
@@ -60,8 +62,10 @@ func RecordAuditLog(auditRecord AuditRecord) error {
 			Inheritable: auditRecord.Spec.Process.Capabilities.Inheritable,
 			Ambient:     auditRecord.Spec.Process.Capabilities.Ambient,
 		}
-		rec.Seccomp = &SeccompInfo{
-			DefaultAction: auditRecord.Spec.LinuxSpec.Seccomp.DefaultAction,
+		if auditRecord.Spec.LinuxSpec.Seccomp != nil {
+			rec.Seccomp = &SeccompInfo{
+				DefaultAction: auditRecord.Spec.LinuxSpec.Seccomp.DefaultAction,
+			}
 		}
 		rec.LSM = &LsmInfo{
 			AppArmor: &AppArmorInfo{
@@ -78,6 +82,9 @@ func RecordAuditLog(auditRecord AuditRecord) error {
 		}
 	}
 
+	if AuditLogger == nil {
+		return nil
+	}
 	if err := AuditLogger.WriteRecord(rec); err != nil {
 		log.Printf("audit log write failed: %v", err)
 	}
@@ -106,6 +113,9 @@ func RecordHookAuditLog(auditHookRecord AuditHookRecord) error {
 		Result: auditHookRecord.Result,
 	}
 
+	if AuditLogger == nil {
+		return nil
+	}
 	if err := AuditLogger.WriteRecord(rec); err != nil {
 		log.Printf("audit log write failed: %v", err)
 	}

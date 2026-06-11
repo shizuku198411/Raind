@@ -166,6 +166,9 @@ func TrimFileToLastNLines(path string, keep int) error {
 	}
 
 	idx := len(data)
+	if idx > 0 && data[idx-1] == '\n' {
+		idx--
+	}
 	for i := 0; i < keep; i++ {
 		p := bytes.LastIndexByte(data[:idx], '\n')
 		if p < 0 {

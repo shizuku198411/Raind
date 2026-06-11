@@ -99,7 +99,14 @@ raind container run -p 9988:80 nginx:latest
 raind container ls
 ```
 
-### 3. WebUI 起動
+### 3. テスト
+
+```bash
+make test-droplet
+workshop run raind-dev -- test-droplet
+```
+
+### 4. WebUI 起動
 
 `webui/` をビルドし、manifest でデプロイします。
 

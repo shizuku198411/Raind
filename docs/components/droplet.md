@@ -42,6 +42,13 @@ cd Raind
 ./scripts/build.sh
 ```
 
+## Test
+
+```bash
+make test-droplet
+workshop run raind-dev -- test-droplet
+```
+
 ## Usage
 Droplet is designed to be invoked by Condenser or the Raind CLI, but it can also be used directly for development and testing.
 

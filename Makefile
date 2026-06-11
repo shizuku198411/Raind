@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 SCRIPT := ./scripts/build.sh
 
-.PHONY: bootstrap build install enable-service enable-ui-gateway-service all
+.PHONY: bootstrap build install enable-service enable-ui-gateway-service test test-droplet all
 
 bootstrap:
 	@go mod download
@@ -18,6 +18,12 @@ enable-service:
 
 enable-ui-gateway-service:
 	@$(SCRIPT) enable-ui-gateway-service
+
+test:
+	@go test ./...
+
+test-droplet:
+	@./scripts/test/droplet.sh
 
 all:
 	@$(SCRIPT) all

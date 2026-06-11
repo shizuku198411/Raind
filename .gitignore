@@ -5,3 +5,4 @@ runtime_stack/raind-webui/dist/
 webui/node_modules/
 webui/dist/
 workspace/
+.workshop.lock

@@ -479,6 +479,9 @@ func parseHookFlag(command []string, env []string) ([]spec.HookOption, error) {
 		if v == "" {
 			continue
 		}
+		if i >= len(hooks) {
+			return []spec.HookOption{}, fmt.Errorf("hook env has no matching hook: %q", v)
+		}
 		parts := strings.SplitN(v, "=", 2)
 		if len(parts) != 2 {
 			return []spec.HookOption{}, fmt.Errorf("invalid hook env: %q", v)

@@ -1,0 +1,14 @@
+name: raind-dev
+base: ubuntu@24.04
+
+sdks:
+  - name: go
+    channel: latest/stable
+
+actions:
+  test-droplet: |
+    cd /project
+    ./scripts/test/droplet.sh "$@"
+  test: |
+    cd /project
+    ./scripts/test/droplet.sh "$@"
