@@ -19,13 +19,14 @@ Raind が提供する価値:
 
 ## 含まれるコンポーネント
 
-Raind は `runtime_stack/` 配下の以下コンポーネントで構成されます。
+Raind はモノレポとして以下の構成で管理されています。
 
-- `raind-cli`: ユーザー向け CLI
-- `condenser`: 高レベルランタイムデーモン（API・状態管理・ポリシー・リソース制御）
-- `droplet`: 低レベル OCI ランタイム実行層
-- `raind-ui-gateway`: Condenser への UDS Gateway（上流は mTLS）
-- `raind-webui`: Vue + Vite ベースの Web UI
+- `cmd/raind`: ユーザー向け CLI のエントリポイント
+- `cmd/condenser`: 高レベルランタイムデーモンのエントリポイント（API・状態管理・ポリシー・リソース制御）
+- `cmd/droplet`: 低レベル OCI ランタイム実行層のエントリポイント
+- `cmd/raind-ui-gateway`: Condenser への UDS Gateway エントリポイント（上流は mTLS）
+- `internal/`: `raind`, `condenser`, `droplet`, `raind-ui-gateway` ごとの実装
+- `webui/`: Vue + Vite ベースの Web UI
 
 ## 主な機能
 
@@ -98,12 +99,19 @@ raind container run -p 9988:80 nginx:latest
 raind container ls
 ```
 
-### 3. WebUI 起動
-
-`runtime_stack/raind-webui` をビルドし、manifest でデプロイします。
+### 3. テスト
 
 ```bash
-cd runtime_stack/raind-webui
+make test-droplet
+workshop run raind-dev -- test-droplet
+```
+
+### 4. WebUI 起動
+
+`webui/` をビルドし、manifest でデプロイします。
+
+```bash
+cd webui
 raind image build -f . -t raind-webui:latest
 raind resource apply -f deploy/manifest.yaml
 ```

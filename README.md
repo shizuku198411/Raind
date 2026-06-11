@@ -19,13 +19,14 @@ Raind provides:
 
 ## What Is Included
 
-Raind is composed of the following components under `runtime_stack/`:
+Raind is organized as a monorepo:
 
-- `raind-cli`: user-facing CLI
-- `condenser`: high-level runtime daemon (API, state, policy, resource orchestration)
-- `droplet`: low-level OCI runtime executor
-- `raind-ui-gateway`: UDS gateway to Condenser (mTLS upstream)
-- `raind-webui`: Vue + Vite based Web UI
+- `cmd/raind`: user-facing CLI entrypoint
+- `cmd/condenser`: high-level runtime daemon entrypoint (API, state, policy, resource orchestration)
+- `cmd/droplet`: low-level OCI runtime executor entrypoint
+- `cmd/raind-ui-gateway`: UDS gateway entrypoint to Condenser (mTLS upstream)
+- `internal/`: component implementations grouped by `raind`, `condenser`, `droplet`, and `raind-ui-gateway`
+- `webui/`: Vue + Vite based Web UI
 
 ## Core Features
 
@@ -101,12 +102,19 @@ raind container run -p 9988:80 nginx:latest
 raind container ls
 ```
 
-### 3. Launch WebUI
-
-Build/deploy `runtime_stack/raind-webui` with its manifest:
+### 3. Test
 
 ```bash
-cd runtime_stack/raind-webui
+make test-droplet
+workshop run raind-dev -- test-droplet
+```
+
+### 4. Launch WebUI
+
+Build/deploy `webui/` with its manifest:
+
+```bash
+cd webui
 raind image build -f . -t raind-webui:latest
 raind resource apply -f deploy/manifest.yaml
 ```

@@ -1,0 +1,71 @@
+package resourcecommand
+
+import (
+	"fmt"
+	"raind/internal/raind/core/resource"
+
+	"github.com/urfave/cli/v2"
+)
+
+func CommandRemove() *cli.Command {
+	return &cli.Command{
+		Name:  "rm",
+		Usage: "remove resources from yaml",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "file",
+				Aliases:  []string{"f"},
+				Usage:    "resource definition yaml file",
+				Required: true,
+			},
+		},
+		Action: runRemove,
+	}
+}
+
+func runRemove(ctx *cli.Context) error {
+	yamlPath := ctx.String("file")
+	if yamlPath == "" {
+		return fmt.Errorf("missing required flag: -f, --file (yaml file)")
+	}
+
+	svc := resource.NewServiceResourceDelete()
+	result, err := svc.Delete(
+		resource.ServiceResourceDeleteModel{
+			FilePath: yamlPath,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	printDeletedResources(result)
+	return nil
+}
+
+func printDeletedResources(result resource.DeleteResponseModel) {
+	for _, pod := range result.Pods {
+		id := pod.PodId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+		}
+		fmt.Printf("pod: %s removed\n", id)
+	}
+	for _, rs := range result.ReplicaSets {
+		id := rs.ReplicaSetId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", rs.Namespace, rs.Name)
+		}
+		fmt.Printf("replicaset: %s removed\n", id)
+	}
+	for _, svc := range result.Services {
+		id := svc.ServiceId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
+		}
+		fmt.Printf("service: %s removed\n", id)
+	}
+	if len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Services) == 0 {
+		fmt.Println("no resources removed")
+	}
+}

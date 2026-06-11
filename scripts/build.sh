@@ -9,19 +9,12 @@ SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
 VERSION_FILE="${ROOT_DIR}/VERSION"
 
-COMPONENTS=(
-  "runtime_stack/raind-cli"
-  "runtime_stack/condenser"
-  "runtime_stack/droplet"
-  "runtime_stack/raind-ui-gateway"
-)
-
 BINARIES=(
-  "runtime_stack/raind-cli/bin/raind"
-  "runtime_stack/condenser/bin/condenser"
-  "runtime_stack/condenser/bin/condenser-hook-agent"
-  "runtime_stack/droplet/bin/droplet"
-  "runtime_stack/raind-ui-gateway/bin/raind-ui-gateway"
+  "bin/raind"
+  "bin/condenser"
+  "bin/condenser-hook-agent"
+  "bin/droplet"
+  "bin/raind-ui-gateway"
 )
 
 need_root() {
@@ -47,16 +40,37 @@ build_components() {
 
   echo "==> build metadata: version=${build_version} commit=${build_commit} built_at=${build_date}"
 
-  for component in "${COMPONENTS[@]}"; do
-    echo "==> build ${component}"
-    (
-      cd "${ROOT_DIR}/${component}"
-      BUILD_VERSION="${build_version}" \
-      BUILD_COMMIT="${build_commit}" \
-      BUILD_DATE="${build_date}" \
-      bash ./scripts/build.sh
-    )
-  done
+  mkdir -p "${ROOT_DIR}/bin"
+
+  echo "==> build cmd/raind"
+  go build \
+    -ldflags "-X raind/internal/raind/buildinfo.Version=${build_version} -X raind/internal/raind/buildinfo.Commit=${build_commit} -X raind/internal/raind/buildinfo.BuiltAt=${build_date}" \
+    -o "${ROOT_DIR}/bin/raind" \
+    "${ROOT_DIR}/cmd/raind"
+
+  echo "==> build cmd/condenser"
+  go build \
+    -ldflags "-X raind/internal/condenser/buildinfo.Version=${build_version} -X raind/internal/condenser/buildinfo.Commit=${build_commit} -X raind/internal/condenser/buildinfo.BuiltAt=${build_date}" \
+    -o "${ROOT_DIR}/bin/condenser" \
+    "${ROOT_DIR}/cmd/condenser"
+
+  echo "==> build cmd/condenser-hook"
+  go build \
+    -ldflags "-X raind/internal/condenser/buildinfo.Version=${build_version} -X raind/internal/condenser/buildinfo.Commit=${build_commit} -X raind/internal/condenser/buildinfo.BuiltAt=${build_date}" \
+    -o "${ROOT_DIR}/bin/condenser-hook-agent" \
+    "${ROOT_DIR}/cmd/condenser-hook"
+
+  echo "==> build cmd/droplet"
+  go build \
+    -ldflags "-X raind/internal/droplet/buildinfo.Version=${build_version} -X raind/internal/droplet/buildinfo.Commit=${build_commit} -X raind/internal/droplet/buildinfo.BuiltAt=${build_date}" \
+    -o "${ROOT_DIR}/bin/droplet" \
+    "${ROOT_DIR}/cmd/droplet"
+
+  echo "==> build cmd/raind-ui-gateway"
+  go build \
+    -ldflags "-X raind/internal/raind-ui-gateway/buildinfo.Version=${build_version} -X raind/internal/raind-ui-gateway/buildinfo.Commit=${build_commit} -X raind/internal/raind-ui-gateway/buildinfo.BuiltAt=${build_date}" \
+    -o "${ROOT_DIR}/bin/raind-ui-gateway" \
+    "${ROOT_DIR}/cmd/raind-ui-gateway"
 }
 
 install_binaries() {
