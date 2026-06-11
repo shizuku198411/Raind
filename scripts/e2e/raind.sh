@@ -145,6 +145,28 @@ run_raind() {
   [[ -s "${out}" ]] || fail "raind $* produced no output"
 }
 
+run_raind_allow_empty() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.out"
+
+  log "raind $*"
+  sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
+}
+
+assert_raind_fails() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.err"
+
+  log "raind $* fails"
+  if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    cat "${out}" >&2 || true
+    fail "expected raind $* to fail"
+  fi
+  [[ -s "${out}" ]] || fail "raind $* failed without output"
+}
+
 assert_output_contains() {
   local name="$1"
   local pattern="$2"
@@ -155,6 +177,11 @@ assert_output_contains() {
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
   fi
+}
+
+extract_created_id() {
+  local name="$1"
+  awk '/: .* (created|applied)$/ { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
 }
 
 run_cli_checks() {
@@ -180,6 +207,118 @@ run_cli_checks() {
 
   run_raind bottle-ls bottle ls
   assert_output_contains bottle-ls "BOTTLE ID"
+
+  run_raind help --help
+  assert_output_contains help "container"
+  assert_output_contains help "image"
+  assert_output_contains help "network"
+  assert_output_contains help "resource"
+  assert_output_contains help "policy"
+  assert_output_contains help "logs"
+
+  run_raind completion-bash completion bash
+  assert_output_contains completion-bash "_raind_complete"
+
+  run_raind completion-zsh completion zsh
+  assert_output_contains completion-zsh "#compdef raind"
+
+  run_raind policy-ls-ew policy ls --type ew
+  assert_output_contains policy-ls-ew "POLICY TYPE"
+
+  run_raind policy-ls-ns-obs policy ls --type ns-obs
+  assert_output_contains policy-ls-ns-obs "POLICY TYPE"
+
+  run_raind policy-ls-ns-enf policy ls --type ns-enf
+  assert_output_contains policy-ls-ns-enf "POLICY TYPE"
+
+  run_raind resource-replicaset-ls resource replicaset ls
+  assert_output_contains resource-replicaset-ls "REPLICASET ID"
+
+  run_raind_allow_empty logs-netflow logs netflow --line 5
+
+  assert_raind_fails invalid-top-level definitely-not-a-command
+  assert_raind_fails invalid-subcommand container definitely-not-a-subcommand
+  assert_raind_fails invalid-policy-type policy ls --type invalid
+  assert_raind_fails unknown-container-stop container stop unknown-e2e-container
+  assert_raind_fails unknown-container-rm container rm unknown-e2e-container
+  assert_raind_fails image-status-missing image rm ""
+}
+
+run_cli_write_checks() {
+  local bridge="rcli$$"
+  local pod_name="e2e-cli-pod-$$"
+  local svc_name="e2e-cli-svc-$$"
+  local resource_svc_name="e2e-cli-apply-svc-$$"
+  local pod_id
+  local service_id
+
+  log "run raind write-path checks"
+
+  run_raind network-create network create "${bridge}"
+  assert_output_contains network-create "created"
+  run_raind network-ls-after-create network ls
+  assert_output_contains network-ls-after-create "${bridge}"
+  assert_raind_fails network-create-duplicate network create "${bridge}"
+  run_raind network-rm network rm "${bridge}"
+  assert_output_contains network-rm "delete network"
+
+  run_raind pod-create resource pod create --name "${pod_name}" --namespace default --label app=e2e --annotation suite=raind
+  assert_output_contains pod-create "pod:"
+  pod_id="$(extract_created_id pod-create)"
+  [[ -n "${pod_id}" ]] || fail "pod create did not print pod id"
+  run_raind pod-ls-after-create resource pod ls
+  assert_output_contains pod-ls-after-create "${pod_name}"
+  run_raind_allow_empty pod-start resource pod start "${pod_id}"
+  run_raind_allow_empty pod-stop resource pod stop "${pod_id}"
+
+  cat >"${E2E_WORK_DIR}/service.yaml" <<YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${svc_name}
+  namespace: default
+spec:
+  selector:
+    app: e2e
+  ports:
+    - port: 8080
+      targetPort: 80
+      protocol: TCP
+YAML
+  run_raind service-create resource service create -f "${E2E_WORK_DIR}/service.yaml"
+  assert_output_contains service-create "service:"
+  service_id="$(extract_created_id service-create)"
+  [[ -n "${service_id}" ]] || fail "service create did not print service id"
+  run_raind service-ls-after-create resource service ls
+  assert_output_contains service-ls-after-create "${svc_name}"
+  run_raind service-show resource service show "${service_id}"
+  assert_output_contains service-show "${svc_name}"
+  run_raind service-rm resource service rm "${service_id}"
+  assert_output_contains service-rm "removed"
+
+  cat >"${E2E_WORK_DIR}/resource-service.yaml" <<YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${resource_svc_name}
+  namespace: default
+spec:
+  selector:
+    app: e2e-resource
+  ports:
+    - port: 9090
+      targetPort: 90
+      protocol: TCP
+YAML
+  run_raind resource-apply resource apply -f "${E2E_WORK_DIR}/resource-service.yaml"
+  assert_output_contains resource-apply "resource"
+  run_raind resource-rm resource rm -f "${E2E_WORK_DIR}/resource-service.yaml"
+  assert_output_contains resource-rm "service:"
+
+  run_raind_allow_empty pod-rm resource pod rm "${pod_id}"
+
+  assert_raind_fails service-create-invalid resource service create -f "${E2E_WORK_DIR}/missing-service.yaml"
+  assert_raind_fails container-create-missing-image container create raind/e2e-missing:latest --name "e2e-cli-missing-$$"
 }
 
 main() {
@@ -188,10 +327,13 @@ main() {
 
   build_components
   prepare_runtime
+  cleanup_stale_condenser
+  assert_raind_fails condenser-down image ls
   start_condenser
   trap stop_condenser EXIT
   wait_ready
   run_cli_checks
+  run_cli_write_checks
 
   log "raind e2e completed"
 }

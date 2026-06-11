@@ -42,6 +42,55 @@ sudo_droplet() {
   sudo_cmd env PATH="${PATH}" "${DROPLET_BIN}" "$@"
 }
 
+assert_command_fails() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.err"
+
+  if "$@" >"${out}" 2>&1; then
+    cat "${out}" >&2 || true
+    fail "expected command to fail: $*"
+  fi
+}
+
+assert_sudo_file_exists() {
+  local path="$1"
+  sudo_cmd test -f "${path}" || fail "expected file to exist: ${path}"
+}
+
+assert_sudo_path_exists() {
+  local path="$1"
+  sudo_cmd test -e "${path}" || fail "expected path to exist: ${path}"
+}
+
+assert_sudo_fifo_exists() {
+  local path="$1"
+  sudo_cmd test -p "${path}" || fail "expected fifo to exist: ${path}"
+}
+
+assert_sudo_path_absent() {
+  local path="$1"
+  sudo_cmd test ! -e "${path}" || fail "expected path to be absent: ${path}"
+}
+
+assert_audit_event() {
+  local cid="$1"
+  local event="$2"
+
+  sudo_cmd jq -e --arg cid "${cid}" --arg event "${event}" \
+    'select(.container_id == $cid and .event == $event and .result == "success")' \
+    /etc/raind/log/droplet_audit.log >/dev/null ||
+    fail "missing successful audit event=${event} container=${cid}"
+}
+
+assert_cgroup_file_exists() {
+  local cid="$1"
+  local file="$2"
+  local path="/sys/fs/cgroup/raind/${cid}/${file}"
+
+  sudo_cmd test -e "${path}" || fail "expected cgroup file: ${path}"
+}
+
 build_droplet() {
   log "build all raind components"
   cd "${ROOT_DIR}"
@@ -66,6 +115,7 @@ run_smoke_e2e() {
   local smoke_dir="${E2E_WORK_DIR}/smoke"
   local root_dir="${smoke_dir}/state-root"
   local bundle_dir="${root_dir}/smoke-1"
+  local dead_bundle_dir="${root_dir}/smoke-dead"
   local rootfs="${smoke_dir}/rootfs"
   local layer="${smoke_dir}/layer"
   local upper="${smoke_dir}/upper"
@@ -73,7 +123,7 @@ run_smoke_e2e() {
 
   log "run droplet cli smoke e2e"
   rm -rf "${smoke_dir}"
-  mkdir -p "${bundle_dir}" "${rootfs}" "${layer}" "${upper}" "${work}"
+  mkdir -p "${bundle_dir}" "${dead_bundle_dir}" "${rootfs}" "${layer}" "${upper}" "${work}"
 
   droplet --version >/dev/null
 
@@ -109,6 +159,25 @@ STATE_JSON
 
   RAIND_ROOT_DIR="${root_dir}" droplet list --format json | jq -e 'map(select(.id == "smoke-1" and .status == "created")) | length == 1' >/dev/null
   RAIND_ROOT_DIR="${root_dir}" droplet state smoke-1 | jq -e '.id == "smoke-1" and .status == "created"' >/dev/null
+  RAIND_ROOT_DIR="${root_dir}" droplet list | grep -q "ID.*STATUS.*PID.*BUNDLE"
+
+  cat > "${dead_bundle_dir}/state.json" <<STATE_JSON
+{
+  "ociVersion": "1.0.2",
+  "id": "smoke-dead",
+  "status": "running",
+  "exit_code": 0,
+  "reason": "",
+  "message": "",
+  "pid": 999999,
+  "shimPid": 0,
+  "rootfs": "${rootfs}",
+  "bundle": "${bundle_dir}",
+  "annotations": {}
+}
+STATE_JSON
+  RAIND_ROOT_DIR="${root_dir}" droplet state smoke-dead | jq -e '.status == "stopped"' >/dev/null
+  assert_command_fails droplet-state-unknown env RAIND_ROOT_DIR="${root_dir}" "${DROPLET_BIN}" state unknown-container
 }
 
 runtime_prerequisites_available() {
@@ -210,6 +279,29 @@ assert_runtime_state() {
   sudo_droplet state "${cid}" | jq -e --arg expected "${expected}" '.status == $expected' >/dev/null
 }
 
+assert_runtime_state_contract() {
+  local cid="$1"
+
+  sudo_droplet state "${cid}" | jq -e '
+    .ociVersion and
+    .id and
+    .status and
+    (.pid | type == "number") and
+    .bundle and
+    .rootfs and
+    (.annotations | type == "object")
+  ' >/dev/null
+}
+
+assert_runtime_list_contains() {
+  local cid="$1"
+  local expected="$2"
+
+  sudo_droplet list --format json |
+    jq -e --arg cid "${cid}" --arg expected "${expected}" \
+      'map(select(.id == $cid and .status == $expected)) | length == 1' >/dev/null
+}
+
 run_runtime_lifecycle_e2e() {
   local cid="${RUNTIME_CID}"
   local pid
@@ -229,22 +321,50 @@ run_runtime_lifecycle_e2e() {
   log "droplet create"
   sudo_droplet create "${cid}"
   assert_runtime_state "${cid}" "created"
+  assert_runtime_state_contract "${cid}"
+  assert_runtime_list_contains "${cid}" "created"
+  assert_sudo_fifo_exists "/etc/raind/container/${cid}/exec.fifo"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/config_hash.json"
+  assert_cgroup_file_exists "${cid}" "memory.max"
+  assert_cgroup_file_exists "${cid}" "cpu.max"
+  assert_cgroup_file_exists "${cid}" "pids.max"
+  assert_cgroup_file_exists "${cid}" "cgroup.procs"
+  assert_audit_event "${cid}" "create"
 
   log "droplet start"
   sudo_droplet start "${cid}"
   assert_runtime_state "${cid}" "running"
+  assert_runtime_state_contract "${cid}"
+  assert_runtime_list_contains "${cid}" "running"
   pid="$(sudo_droplet state "${cid}" | jq -r '.pid')"
   sudo_cmd test -d "/proc/${pid}"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/exec.fifo"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/config_hash.json"
+  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/init.log"
+  assert_audit_event "${cid}" "start"
+  assert_command_fails droplet-start-twice sudo_droplet start "${cid}"
+  assert_command_fails droplet-delete-running sudo_droplet delete "${cid}"
+
+  log "droplet exec"
+  sudo_droplet exec "${cid}" /bin/sh -c "echo exec-ok"
+  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/exec.log"
+  assert_audit_event "${cid}" "exec"
 
   log "droplet kill"
   sudo_droplet kill "${cid}" TERM
   assert_runtime_state "${cid}" "stopped"
+  assert_runtime_state_contract "${cid}"
+  assert_audit_event "${cid}" "kill"
+  assert_command_fails droplet-kill-stopped sudo_droplet kill "${cid}" TERM
+  assert_command_fails droplet-exec-stopped sudo_droplet exec "${cid}" /bin/sh -c "true"
 
   log "droplet delete"
   sudo_droplet delete "${cid}"
-  sudo_cmd test ! -e "/etc/raind/container/${cid}/state.json"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/state.json"
+  assert_audit_event "${cid}" "delete"
 
   cleanup_runtime_fixture "${cid}"
+  assert_sudo_path_absent "/etc/raind/container/${cid}"
   trap - EXIT
 }
 
