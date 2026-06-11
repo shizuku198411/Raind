@@ -43,17 +43,17 @@ func (s *ServiceResourceDelete) Delete(param ServiceResourceDeleteModel) (Delete
 	}
 	defer resp.Body.Close()
 
-	var respModel DeleteResponseModel
+	var respModel DeleteApiResponseModel
 	if !httpClient.IsStatusOk(resp) {
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&respModel); decodeErr != nil {
 			return DeleteResponseModel{}, fmt.Errorf("decode response: %w", decodeErr)
 		}
-		return DeleteResponseModel{}, fmt.Errorf("unexpected status: %s", resp.Status)
+		return DeleteResponseModel{}, fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
 		return DeleteResponseModel{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	return respModel, nil
+	return respModel.Data, nil
 }

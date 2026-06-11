@@ -214,6 +214,7 @@ func TestRootContainerEnvPreparerSetupOverlayBuildsMountData(t *testing.T) {
 	// == assert ==
 	require.NoError(t, err)
 	assert.Equal(t, []initMountCall{
+		{source: "", target: "/", fstype: "", flags: syscall.MS_PRIVATE | syscall.MS_REC, data: ""},
 		{source: "overlay", target: "/rootfs", fstype: "overlay", flags: 0, data: "lowerdir=/l1:/l2,upperdir=/upper,workdir=/work"},
 		{source: "", target: "/rootfs", fstype: "", flags: syscall.MS_PRIVATE | syscall.MS_REC, data: ""},
 	}, syscalls.mounts)

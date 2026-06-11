@@ -24,6 +24,12 @@ type DeleteResponseModel struct {
 	Services    []DeletedServiceModel    `json:"services,omitempty"`
 }
 
+type DeleteApiResponseModel struct {
+	Status  string              `json:"status"`
+	Message string              `json:"message"`
+	Data    DeleteResponseModel `json:"data,omitempty"`
+}
+
 type ServiceResourceDeleteModel struct {
 	FilePath string
 }
