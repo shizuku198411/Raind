@@ -116,7 +116,7 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.WebCertDir,
 	}
 	for _, dir := range dirs {
-		if err := m.filesystemHandler.MkdirAll(dir, 0o644); err != nil {
+		if err := m.filesystemHandler.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
@@ -156,6 +156,10 @@ func (m *BootstrapManager) enableCgroupControllers() error {
 	if err != nil {
 		return nil
 	}
+	available, err := m.readCgroupAvailableControllers()
+	if err != nil {
+		return nil
+	}
 
 	controllers := []string{
 		"cpu",
@@ -164,6 +168,9 @@ func (m *BootstrapManager) enableCgroupControllers() error {
 		"io",
 	}
 	for _, c := range controllers {
+		if !available[c] {
+			continue
+		}
 		if enabled[c] {
 			continue
 		}
@@ -173,6 +180,28 @@ func (m *BootstrapManager) enableCgroupControllers() error {
 	}
 
 	return nil
+}
+
+func (m *BootstrapManager) readCgroupAvailableControllers() (map[string]bool, error) {
+	controllersPath := filepath.Join(utils.CgroupRuntimeDir, "cgroup.controllers")
+	f, err := m.filesystemHandler.Open(controllersPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	available := make(map[string]bool)
+
+	for scanner.Scan() {
+		for _, name := range strings.Fields(scanner.Text()) {
+			available[name] = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return available, nil
 }
 
 func (m *BootstrapManager) createContainerCgroup() error {

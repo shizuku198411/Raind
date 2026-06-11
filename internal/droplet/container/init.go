@@ -267,61 +267,61 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	// 0. join existing namespaces (net/ipc/uts) if specified in spec
 	err = joinExistingNamespaces(spec)
 	if err != nil {
-		return err
+		return fmt.Errorf("join namespaces: %w", err)
 	}
 	// 1. change uid=0(root) inside container
 	err = p.switchToUserNamespaceRoot()
 	if err != nil {
-		return err
+		return fmt.Errorf("switch to user namespace root: %w", err)
 	}
 	// 2. set hostname
 	err = p.setHostnameToContainerId(spec.Hostname)
 	if err != nil {
-		return err
+		return fmt.Errorf("set hostname: %w", err)
 	}
 	// 3. set env
 	err = p.setEnv(spec.Process.Env)
 	if err != nil {
-		return err
+		return fmt.Errorf("set env: %w", err)
 	}
 	// 4. setup overlay
 	if err := p.setupOverlay(spec.Root.Path, spec.Annotations.Image); err != nil {
-		return err
+		return fmt.Errorf("setup overlay: %w", err)
 	}
 	// 5. mount filesystem
 	err = p.mountFilesystem(containerId, spec.Root.Path, spec.Mounts)
 	if err != nil {
-		return err
+		return fmt.Errorf("mount filesystem: %w", err)
 	}
 	// 6. mount standard device
 	err = p.mountStdDevice(spec.Root.Path)
 	if err != nil {
-		return err
+		return fmt.Errorf("mount std device: %w", err)
 	}
 	// 7. create symbolic link
 	err = p.createSymbolicLink(spec.Root.Path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create symbolic link: %w", err)
 	}
 	// 8. pivot_root
 	err = p.pivotRoot(spec.Root.Path)
 	if err != nil {
-		return err
+		return fmt.Errorf("pivot root: %w", err)
 	}
 	// 9. set capability
 	err = p.setCapability(spec.Process.Capabilities)
 	if err != nil {
-		return err
+		return fmt.Errorf("set capability: %w", err)
 	}
 	// 10. install seccomp (NO_NEW_PRIVS + filter)
 	err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
 	if err != nil {
-		return err
+		return fmt.Errorf("install seccomp: %w", err)
 	}
 	// 12. change current dir
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)
 	if err != nil {
-		return err
+		return fmt.Errorf("chdir: %w", err)
 	}
 
 	return nil
@@ -380,6 +380,13 @@ func (p *rootContainerEnvPreparer) setupOverlay(rootfs string, imageAnnotation s
 	var imageConfig spec.ImageConfigObject
 	if err := utils.StringToJson(imageAnnotation, &imageConfig); err != nil {
 		return err
+	}
+
+	// pivot_root requires mount propagation to be private in container mount
+	// namespaces. Keep this before mounting the overlay so the whole namespace
+	// is isolated from the parent mount tree.
+	if err := p.syscallHandler.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("make root private failed: target=%q flags=0x%x: %w", "/", syscall.MS_PRIVATE|syscall.MS_REC, err)
 	}
 
 	// mount parameter
