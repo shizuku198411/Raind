@@ -36,17 +36,46 @@ func (h *RequestHandler) PullImage(w http.ResponseWriter, r *http.Request) {
 	var req PullImageRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+		return
 	}
+	stream := r.URL.Query().Get("stream") == "1"
 
 	// service
+	progress := image.ProgressFunc(nil)
+	if stream {
+		progress = func(e image.PullProgressEvent) {
+			apimodel.StreamJson(w, apimodel.StreamEvent{
+				Status:  e.Status,
+				ID:      e.ID,
+				Detail:  e.Detail,
+				Current: e.Current,
+				Total:   e.Total,
+				Error:   e.Error,
+			})
+		}
+	}
 	if err := h.serviceHandler.Pull(
 		image.ServicePullModel{
-			Image: req.Image,
-			Os:    req.Os,
-			Arch:  req.Arch,
+			Image:    req.Image,
+			Os:       req.Os,
+			Arch:     req.Arch,
+			Progress: progress,
 		},
 	); err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "pull failed: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusInternalServerError, "pull failed: "+err.Error(), nil)
+		return
+	}
+
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "success",
+			Detail: "pull completed",
+			Data:   req,
+		})
 		return
 	}
 

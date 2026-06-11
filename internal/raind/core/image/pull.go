@@ -32,7 +32,7 @@ func (s *ServiceImagePull) Pull(param ServiceImagePullModel) error {
 	}
 	httpClient.NewRequest(
 		http.MethodPost,
-		"/v1/images",
+		"/v1/images?stream=1",
 		requestBody,
 	)
 	resp, err := httpClient.Client.Do(httpClient.Request)
@@ -49,6 +49,13 @@ func (s *ServiceImagePull) Pull(param ServiceImagePullModel) error {
 			return fmt.Errorf("decode response: %w", decodeErr)
 		}
 		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
+	}
+
+	if resp.Header.Get("Content-Type") == "application/x-ndjson" {
+		if _, err := httpclient.ReadStreamEvents(resp.Body); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {

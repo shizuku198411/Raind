@@ -1,6 +1,9 @@
 package container
 
-import "time"
+import (
+	"raind/internal/condenser/core/image"
+	"time"
+)
 
 type ServiceCreateModel struct {
 	Image      string
@@ -19,6 +22,7 @@ type ServiceCreateModel struct {
 	BottleId   string
 	PodId      string
 	IsPodInfra bool
+	Progress   image.ProgressFunc
 }
 
 type ServiceStartModel struct {

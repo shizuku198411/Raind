@@ -3,6 +3,7 @@ package container
 import (
 	"net/http"
 	"raind/internal/condenser/core/container"
+	"raind/internal/condenser/core/image"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/utils"
 	"strconv"
@@ -52,26 +53,60 @@ func (h *RequestHandler) CreateContainer(w http.ResponseWriter, r *http.Request)
 		Network:       req.Network,
 		Tty:           req.Tty,
 	})
+	stream := r.URL.Query().Get("stream") == "1"
+	progress := image.ProgressFunc(nil)
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "creating",
+			ID:     req.Image,
+			Detail: "creating container",
+		})
+		progress = func(e image.PullProgressEvent) {
+			apimodel.StreamJson(w, apimodel.StreamEvent{
+				Status:  e.Status,
+				ID:      e.ID,
+				Detail:  e.Detail,
+				Current: e.Current,
+				Total:   e.Total,
+				Error:   e.Error,
+			})
+		}
+	}
 
 	// service: create
 	result, err := h.serviceHandler.Create(
 		container.ServiceCreateModel{
-			Image:   req.Image,
-			Command: req.Command,
-			Port:    req.Port,
-			Mount:   req.Mount,
-			Device:  req.Device,
-			Env:     req.Env,
-			CapAdd:  req.CapAdd,
-			CapDrop: req.CapDrop,
-			Network: req.Network,
-			Tty:     req.Tty,
-			Name:    req.Name,
-			PodId:   req.PodId,
+			Image:    req.Image,
+			Command:  req.Command,
+			Port:     req.Port,
+			Mount:    req.Mount,
+			Device:   req.Device,
+			Env:      req.Env,
+			CapAdd:   req.CapAdd,
+			CapDrop:  req.CapDrop,
+			Network:  req.Network,
+			Tty:      req.Tty,
+			Name:     req.Name,
+			PodId:    req.PodId,
+			Progress: progress,
 		},
 	)
 	if err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "service failed: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusInternalServerError, "service failed: "+err.Error(), CreateContainerResponse{Id: ""})
+		return
+	}
+
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "success",
+			ID:     result,
+			Detail: "container created",
+			Data:   CreateContainerResponse{Id: result},
+		})
 		return
 	}
 

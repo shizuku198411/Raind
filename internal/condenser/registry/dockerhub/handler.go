@@ -30,12 +30,63 @@ func NewRegistryDockerHub() *RegistryDockerHub {
 
 type RegistryDockerHub struct{}
 
+type progressReader struct {
+	reader   io.Reader
+	total    int64
+	current  int64
+	lastEmit int64
+	emit     func(current, total int64)
+}
+
+func newProgressReader(reader io.Reader, total int64, emit func(current, total int64)) *progressReader {
+	return &progressReader{
+		reader: reader,
+		total:  total,
+		emit:   emit,
+	}
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.current += int64(n)
+		if r.current-r.lastEmit >= 512*1024 || r.current == r.total {
+			r.lastEmit = r.current
+			r.emit(r.current, r.total)
+		}
+	}
+	return n, err
+}
+
+func shortDigest(digest string) string {
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) <= 12 {
+		return digest
+	}
+	return digest[:12]
+}
+
 func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) (repository, reference, bundlePath, configPath, rootfsPath string, err error) {
+	emit := func(status, id, detail string, current, total int64) {
+		if pullParameter.Progress == nil {
+			return
+		}
+		pullParameter.Progress(registry.ProgressEvent{
+			Status:  status,
+			ID:      id,
+			Detail:  detail,
+			Current: current,
+			Total:   total,
+		})
+	}
+
 	// 1. parse Image Reference
 	imageRef, err := s.parseImageRef(pullParameter.Image)
 	if err != nil {
 		return "", "", "", "", "", err
 	}
+	imageID := imageRef.repository + ":" + imageRef.reference
+	emit("resolving", imageID, "resolving image reference", 0, 0)
 
 	// 2. create output directory
 	storeRepo := s.storeRepository(imageRef)
@@ -48,6 +99,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 
 	// 3. get Bearer Challenge
+	emit("auth", imageRef.registry, "requesting registry authentication challenge", 0, 0)
 	realm, service, err := s.getBearerChallenge(ctx, httpClient, imageRef.registry)
 	if err != nil {
 		if err := s.removeOutputDirectory(repoOut); err != nil {
@@ -59,6 +111,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	// 4. get token
 	token := ""
 	if realm != "" && service != "" {
+		emit("auth", imageRef.registry, "requesting pull token", 0, 0)
 		scope := fmt.Sprintf("repository:%s:pull", imageRef.repository)
 		token, err = s.fetchToken(ctx, httpClient, realm, service, scope)
 		if err != nil {
@@ -70,6 +123,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	}
 
 	// 5. get manifest (manifest list) and store .json
+	emit("manifest", imageID, "fetching manifest", 0, 0)
 	manifestBytes, mediaType, err := s.fetchManifest(ctx, httpClient, imageRef, token)
 	if err != nil {
 		if err := s.removeOutputDirectory(repoOut); err != nil {
@@ -86,6 +140,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 
 	// 6. get manifest if the mediaType is list
 	if s.isManifestListMediaType(mediaType) {
+		emit("manifest", imageID, "selecting platform manifest "+pullParameter.Os+"/"+pullParameter.Arch, 0, 0)
 		// pick digest from manifest list
 		dgst, err := s.pickFromManifestList(manifestBytes, pullParameter.Os, pullParameter.Arch)
 		if err != nil {
@@ -96,6 +151,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 		}
 		imageRef2 := imageRef
 		imageRef2.reference = dgst // set digest to reference
+		emit("manifest", dgst, "fetching selected manifest", 0, 0)
 		manifestBytes, mediaType, err = s.fetchManifest(ctx, httpClient, imageRef2, token)
 		if err != nil {
 			if err := s.removeOutputDirectory(repoOut); err != nil {
@@ -112,6 +168,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	}
 
 	// 7. parse manifest
+	emit("manifest", imageID, "parsing manifest", 0, 0)
 	m, err := s.parseSingleManifest(manifestBytes)
 	if err != nil {
 		if err := s.removeOutputDirectory(repoOut); err != nil {
@@ -121,9 +178,11 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	}
 
 	// 8. download blob
+	emit("config", m.Config.Digest, "downloading image config", 0, m.Config.Size)
 	if err := s.downloadBlobVerified(
 		ctx, httpClient, imageRef, token,
 		m.Config.Digest, filepath.Join(repoOut, "blobs", s.digestToFilename(m.Config.Digest)),
+		pullParameter.Progress,
 	); err != nil {
 		if err := s.removeOutputDirectory(repoOut); err != nil {
 			return "", "", "", "", "", err
@@ -132,10 +191,12 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	}
 
 	// 9. download layers
-	for _, l := range m.Layers {
+	for i, l := range m.Layers {
+		emit("layer", shortDigest(l.Digest), fmt.Sprintf("downloading layer %d/%d", i+1, len(m.Layers)), 0, l.Size)
 		if err := s.downloadBlobVerified(
 			ctx, httpClient, imageRef, token,
 			l.Digest, filepath.Join(repoOut, "blobs", s.digestToFilename(l.Digest)),
+			pullParameter.Progress,
 		); err != nil {
 			if err := s.removeOutputDirectory(repoOut); err != nil {
 				return "", "", "", "", "", err
@@ -145,6 +206,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 	}
 
 	// 10. create config.json
+	emit("config", m.Config.Digest, "writing image config", 0, 0)
 	configPath = filepath.Join(repoOut, "config.json")
 	if err := s.copyFile(
 		filepath.Join(repoOut, "blobs", s.digestToFilename(m.Config.Digest)),
@@ -163,7 +225,7 @@ func (s *RegistryDockerHub) PullImage(pullParameter registry.RegistryPullModel) 
 		p := filepath.Join(repoOut, "blobs", s.digestToFilename(l.Digest))
 		layerPaths = append(layerPaths, p)
 	}
-	if err := s.applyLayers(rootfsPath, layerPaths); err != nil {
+	if err := s.applyLayers(rootfsPath, layerPaths, m.Layers, pullParameter.Progress); err != nil {
 		if err := s.removeOutputDirectory(repoOut); err != nil {
 			return "", "", "", "", "", err
 		}
@@ -433,7 +495,7 @@ func (s *RegistryDockerHub) digestToFilename(d string) string {
 	return strings.ReplaceAll(d, ":", "_")
 }
 
-func (s *RegistryDockerHub) downloadBlobVerified(ctx context.Context, client *http.Client, ref imageRefParts, token, digest, dest string) error {
+func (s *RegistryDockerHub) downloadBlobVerified(ctx context.Context, client *http.Client, ref imageRefParts, token, digest, dest string, progress registry.ProgressFunc) error {
 	if !strings.HasPrefix(digest, "sha256:") {
 		return fmt.Errorf("only sha256 digest supported: %s", digest)
 	}
@@ -465,7 +527,25 @@ func (s *RegistryDockerHub) downloadBlobVerified(ctx context.Context, client *ht
 	defer f.Close()
 
 	h := sha256.New()
-	tee := io.TeeReader(resp.Body, h)
+	reader := io.Reader(resp.Body)
+	if progress != nil {
+		progress(registry.ProgressEvent{
+			Status: "downloading",
+			ID:     shortDigest(digest),
+			Detail: "downloading",
+			Total:  resp.ContentLength,
+		})
+		reader = newProgressReader(resp.Body, resp.ContentLength, func(current, total int64) {
+			progress(registry.ProgressEvent{
+				Status:  "downloading",
+				ID:      shortDigest(digest),
+				Detail:  "downloading",
+				Current: current,
+				Total:   total,
+			})
+		})
+	}
+	tee := io.TeeReader(reader, h)
 
 	if _, err := io.Copy(f, tee); err != nil {
 		return err
@@ -475,6 +555,15 @@ func (s *RegistryDockerHub) downloadBlobVerified(ctx context.Context, client *ht
 	want := strings.TrimPrefix(digest, "sha256:")
 	if sum != want {
 		return fmt.Errorf("digest mismatch: want %s got %s", want, sum)
+	}
+	if progress != nil {
+		progress(registry.ProgressEvent{
+			Status:  "complete",
+			ID:      shortDigest(digest),
+			Detail:  "download complete",
+			Current: resp.ContentLength,
+			Total:   resp.ContentLength,
+		})
 	}
 	return nil
 }
@@ -498,11 +587,32 @@ func (s *RegistryDockerHub) copyFile(src, dst string) error {
 	return out.Close()
 }
 
-func (s *RegistryDockerHub) applyLayers(rootfs string, layerBlobPaths []string) error {
+func (s *RegistryDockerHub) applyLayers(rootfs string, layerBlobPaths []string, layers []struct {
+	MediaType string `json:"mediaType"`
+	Size      int64  `json:"size"`
+	Digest    string `json:"digest"`
+}, progress registry.ProgressFunc) error {
 	for i, p := range layerBlobPaths {
+		if progress != nil {
+			progress(registry.ProgressEvent{
+				Status:  "extracting",
+				ID:      shortDigest(layers[i].Digest),
+				Detail:  fmt.Sprintf("extracting layer %d/%d", i+1, len(layerBlobPaths)),
+				Current: int64(i),
+				Total:   int64(len(layerBlobPaths)),
+			})
+		}
 		if err := s.applyOneLayer(rootfs, p); err != nil {
 			return fmt.Errorf("apply layer %d (%s): %w", i, p, err)
 		}
+	}
+	if progress != nil {
+		progress(registry.ProgressEvent{
+			Status:  "extracting",
+			Detail:  "extract complete",
+			Current: int64(len(layerBlobPaths)),
+			Total:   int64(len(layerBlobPaths)),
+		})
 	}
 	return nil
 }

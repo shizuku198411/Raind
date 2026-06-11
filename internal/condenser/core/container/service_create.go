@@ -65,7 +65,14 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 
 	// 3. if the image not exist in local, pull image
 	if !s.ilmHandler.IsImageExist(imageRepo, imageRef) {
-		if err := s.pullImage(createParameter.Image, createParameter.Os, createParameter.Arch); err != nil {
+		if createParameter.Progress != nil {
+			createParameter.Progress(image.PullProgressEvent{
+				Status: "pulling",
+				ID:     createParameter.Image,
+				Detail: "image not found locally",
+			})
+		}
+		if err := s.pullImage(createParameter.Image, createParameter.Os, createParameter.Arch, createParameter.Progress); err != nil {
 			return "", err
 		}
 	}
@@ -272,13 +279,15 @@ func (s *ContainerService) generateContainerName() (string, error) {
 	}
 }
 
-func (s *ContainerService) pullImage(targetImage string, os string, arch string) error {
+func (s *ContainerService) pullImage(targetImage string, os string, arch string, progress ...image.ProgressFunc) error {
 	var (
 		targetOs   string
 		targetArch string
 	)
 	if os == "" {
 		targetOs = utils.HostOs()
+	} else {
+		targetOs = os
 	}
 	if arch == "" {
 		hostArch, err := utils.HostArch()
@@ -286,11 +295,18 @@ func (s *ContainerService) pullImage(targetImage string, os string, arch string)
 			return err
 		}
 		targetArch = hostArch
+	} else {
+		targetArch = arch
+	}
+	var progressFunc image.ProgressFunc
+	if len(progress) > 0 {
+		progressFunc = progress[0]
 	}
 	if err := s.imageServiceHandler.Pull(image.ServicePullModel{
-		Image: targetImage,
-		Os:    targetOs,
-		Arch:  targetArch,
+		Image:    targetImage,
+		Os:       targetOs,
+		Arch:     targetArch,
+		Progress: progressFunc,
 	}); err != nil {
 		return err
 	}

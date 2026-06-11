@@ -41,7 +41,7 @@ func (s *ServiceContainerCreate) Create(param ServiceCreateModel) (string, error
 	}
 	httpClient.NewRequest(
 		http.MethodPost,
-		"/v1/containers",
+		"/v1/containers?stream=1",
 		requestBody,
 	)
 	resp, err := httpClient.Client.Do(httpClient.Request)
@@ -58,6 +58,26 @@ func (s *ServiceContainerCreate) Create(param ServiceCreateModel) (string, error
 			return "", fmt.Errorf("decode response: %w", decodeErr)
 		}
 		return "", fmt.Errorf("%s", respModel.Message)
+	}
+
+	if resp.Header.Get("Content-Type") == "application/x-ndjson" {
+		event, err := httpclient.ReadStreamEvents(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		if len(event.Data) > 0 {
+			if err := json.Unmarshal(event.Data, &respModel.Data); err != nil {
+				var createResp CreateResponseDataModel
+				if decodeErr := json.Unmarshal(event.Data, &createResp); decodeErr != nil {
+					return "", fmt.Errorf("decode stream response: %w", decodeErr)
+				}
+				respModel.Data = createResp
+			}
+		}
+		if respModel.Data.Id == "" {
+			respModel.Data.Id = event.ID
+		}
+		return respModel.Data.Id, nil
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {

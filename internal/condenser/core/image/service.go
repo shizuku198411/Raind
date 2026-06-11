@@ -64,6 +64,19 @@ func (s *ImageService) Pull(pullParameter ServicePullModel) error {
 			Image: pullParameter.Image,
 			Os:    targetOs,
 			Arch:  targetArch,
+			Progress: func(e registry.ProgressEvent) {
+				if pullParameter.Progress == nil {
+					return
+				}
+				pullParameter.Progress(PullProgressEvent{
+					Status:  e.Status,
+					ID:      e.ID,
+					Detail:  e.Detail,
+					Current: e.Current,
+					Total:   e.Total,
+					Error:   e.Error,
+				})
+			},
 		},
 	)
 	if err != nil {
@@ -76,6 +89,13 @@ func (s *ImageService) Pull(pullParameter ServicePullModel) error {
 		bundlePath, configPath, rootfsPath,
 	); err != nil {
 		return err
+	}
+	if pullParameter.Progress != nil {
+		pullParameter.Progress(PullProgressEvent{
+			Status: "done",
+			ID:     repository + ":" + reference,
+			Detail: "pull complete",
+		})
 	}
 
 	return nil
