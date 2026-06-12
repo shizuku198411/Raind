@@ -109,7 +109,25 @@ raind container ls
 workshop run raind-dev -- test-droplet
 ```
 
-### 4. Launch WebUI
+### 4. Workshop Manual Runtime
+
+Use an isolated Workshop runtime when you want to manually try raind changes
+without touching containers or services already running on your host.
+
+```bash
+workshop run raind-dev -- dev-install
+workshop run raind-dev -- dev-start
+workshop shell raind-dev
+sudo raind image ls
+```
+
+Clean up the Workshop runtime after manual testing:
+
+```bash
+workshop run raind-dev -- dev-cleanup
+```
+
+### 5. Launch WebUI
 
 Build/deploy `webui/` with its manifest:
 

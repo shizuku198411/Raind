@@ -24,6 +24,19 @@ actions:
   all: |
     cd /project
     ./scripts/build.sh all "$@"
+  dev-install: |
+    cd /project
+    ./scripts/workshop/install.sh "$@"
+  dev-start: |
+    cd /project
+    ./scripts/workshop/start.sh "$@"
+  dev-cleanup: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+  dev-reset: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+    ./scripts/workshop/start.sh "$@"
   test-droplet: |
     cd /project
     ./scripts/test/droplet.sh "$@"
