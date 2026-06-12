@@ -6,6 +6,24 @@ sdks:
     channel: latest/stable
 
 actions:
+  bootstrap: |
+    cd /project
+    ./scripts/build.sh bootstrap "$@"
+  build: |
+    cd /project
+    ./scripts/build.sh build "$@"
+  install: |
+    cd /project
+    ./scripts/build.sh install "$@"
+  enable-service: |
+    cd /project
+    ./scripts/build.sh enable-service "$@"
+  enable-ui-gateway-service: |
+    cd /project
+    ./scripts/build.sh enable-ui-gateway-service "$@"
+  all: |
+    cd /project
+    ./scripts/build.sh all "$@"
   test-droplet: |
     cd /project
     ./scripts/test/droplet.sh "$@"

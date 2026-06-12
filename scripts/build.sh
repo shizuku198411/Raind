@@ -17,6 +17,11 @@ BINARIES=(
   "bin/raind-ui-gateway"
 )
 
+bootstrap() {
+  echo "==> download go modules"
+  go mod download
+}
+
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     echo "error: root privileges are required. run with sudo." >&2
@@ -171,8 +176,9 @@ enable_ui_gateway_service() {
 
 usage() {
   cat <<USAGE
-Usage: $0 [build|install|enable-service|enable-ui-gateway-service|all]
+Usage: $0 [bootstrap|build|install|enable-service|enable-ui-gateway-service|all]
 
+  bootstrap       Download Go modules
   build           Build all components
   install         Install built binaries to ${INSTALL_DIR}
   enable-service  Create and start ${SERVICE_NAME}
@@ -185,6 +191,9 @@ main() {
   local target="${1:-all}"
 
   case "${target}" in
+    bootstrap)
+      bootstrap
+      ;;
     build)
       build_components
       ;;

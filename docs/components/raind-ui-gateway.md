@@ -4,7 +4,7 @@
 
 ## Build
 ```bash
-./scripts/build.sh
+workshop run raind-dev -- build
 ```
 
 ## Run

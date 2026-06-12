@@ -77,22 +77,23 @@ Browser
 ### 1. Build and Install
 
 ```bash
-# need go lang
-sudo snap install go --classic
+# need Workshop
+# https://ubuntu.com/workshop/docs/
 
 git clone https://github.com/shizuku198411/Raind.git
 cd Raind
-make bootstrap
-make build
-sudo make install
-sudo make enable-service
-sudo make enable-ui-gateway-service
+workshop run raind-dev -- bootstrap
+workshop run raind-dev -- build
+sudo ./scripts/build.sh install
+sudo ./scripts/build.sh enable-service
+sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 Or:
 
 ```bash
-sudo make all
+workshop run raind-dev -- build
+sudo ./scripts/build.sh all
 ```
 
 ### 2. Verify
@@ -105,7 +106,6 @@ raind container ls
 ### 3. Test
 
 ```bash
-make test-droplet
 workshop run raind-dev -- test-droplet
 ```
 
