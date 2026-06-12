@@ -11,6 +11,9 @@ func (s *PodService) Remove(podId string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := s.psmHandler.UpdatePodStoppedByUser(podId, true); err != nil {
+		return "", err
+	}
 
 	containers, err := s.containerHandler.GetContainersByPodId(podId)
 	if err != nil {

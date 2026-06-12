@@ -71,6 +71,7 @@ prepare_runtime_dirs() {
   ensure_raind_group
   sudo_cmd mkdir -p \
     /etc/raind/log \
+    /etc/raind/cert \
     /etc/raind/store \
     /etc/raind/container \
     /etc/raind/image/layers \

@@ -7,6 +7,7 @@ import (
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/utils"
+	"strings"
 )
 
 func NewHookService() *HookService {
@@ -66,7 +67,9 @@ func (s *HookService) HookAction(stateParameter ServiceStateModel, eventType str
 		}
 	case "poststop":
 		if err := s.csmHandler.RemoveContainer(stateParameter.Id); err != nil {
-			return fmt.Errorf("csm remove failed: %w", err)
+			if !strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("csm remove failed: %w", err)
+			}
 		}
 		// commit policy
 		if err := s.policyHandler.CommitPolicy(); err != nil {
