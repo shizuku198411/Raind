@@ -6,4 +6,4 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 cd "${ROOT_DIR}"
 
-go test ./internal/droplet/... "$@"
+go test -count=1 ./internal/droplet/... "$@"

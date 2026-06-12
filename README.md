@@ -82,11 +82,7 @@ Browser
 
 git clone https://github.com/shizuku198411/Raind.git
 cd Raind
-workshop run raind-dev -- bootstrap
-workshop run raind-dev -- build
-sudo ./scripts/build.sh install
-sudo ./scripts/build.sh enable-service
-sudo ./scripts/build.sh enable-ui-gateway-service
+sudo ./scripts/build.sh
 sudo usermod -aG raind "$USER"
 ```
 
@@ -110,7 +106,8 @@ raind container ls
 ### 3. Test
 
 ```bash
-workshop run raind-dev -- test-droplet
+workshop run raind-dev -- test-unit
+workshop run raind-dev -- e2e
 ```
 
 ### 4. Workshop Manual Runtime
