@@ -17,6 +17,12 @@ type PsmHandler interface {
 	IsTemplateReferenced(templateId string) (bool, error)
 	UpdateReplicaSetReplicas(replicaSetId string, replicas int) error
 	RemoveReplicaSet(replicaSetId string) error
+	StoreDeployment(deploymentId string, spec DeploymentSpec) error
+	GetDeployment(deploymentId string) (DeploymentInfo, error)
+	GetDeploymentList() ([]DeploymentInfo, error)
+	UpdateDeploymentReplicas(deploymentId string, replicas int) error
+	UpdateDeploymentReplicaSet(deploymentId, replicaSetId string) error
+	RemoveDeployment(deploymentId string) error
 	RemovePod(podId string) error
 	UpdatePod(podId string, state string) error
 	UpdatePodStoppedByUser(podId string, stopped bool) error

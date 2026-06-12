@@ -74,6 +74,7 @@ raind network rm appnet
 raind resource apply -f examples/app.yaml
 raind resource pod ls
 raind resource replicaset ls
+raind resource deployment ls
 raind resource service ls
 ```
 
@@ -89,6 +90,14 @@ raind resource rm -f examples/app.yaml
 raind resource replicaset ls
 raind resource replicaset scale --replicas 3 <replicaset-id>
 raind resource replicaset show <replicaset-id>
+```
+
+## Scale a Deployment
+
+```sh
+raind resource deployment ls
+raind resource deployment scale --replicas 3 <deployment-id>
+raind resource deployment show <deployment-id>
 ```
 
 ## Work with Policies

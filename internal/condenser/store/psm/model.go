@@ -67,9 +67,26 @@ type ReplicaSetInfo struct {
 	CreatedAt    time.Time      `json:"createdAt"`
 }
 
+type DeploymentSpec struct {
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Replicas     int               `json:"replicas"`
+	TemplateId   string            `json:"templateId"`
+	Selector     map[string]string `json:"selector,omitempty"`
+	ReplicaSetId string            `json:"replicaSetId,omitempty"`
+}
+
+type DeploymentInfo struct {
+	DeploymentId string         `json:"deploymentId"`
+	Spec         DeploymentSpec `json:"spec"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+}
+
 type PodState struct {
 	Version      string                     `json:"version"`
 	Pods         map[string]PodInfo         `json:"pods"`
 	PodTemplates map[string]PodTemplateInfo `json:"podTemplates"`
 	ReplicaSets  map[string]ReplicaSetInfo  `json:"replicaSets"`
+	Deployments  map[string]DeploymentInfo  `json:"deployments"`
 }

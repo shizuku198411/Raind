@@ -33,8 +33,10 @@ type CreatePodResponse struct {
 }
 
 type ApplyPodResponse struct {
-	Pods     []ApplyPodResult     `json:"pods"`
-	Services []ApplyServiceResult `json:"services"`
+	Pods        []ApplyPodResult        `json:"pods"`
+	ReplicaSets []ApplyReplicaSetResult `json:"replicasets"`
+	Deployments []ApplyDeploymentResult `json:"deployments"`
+	Services    []ApplyServiceResult    `json:"services"`
 }
 
 type ApplyPodResult struct {
@@ -51,9 +53,23 @@ type ApplyServiceResult struct {
 	Namespace string `json:"namespace"`
 }
 
+type ApplyReplicaSetResult struct {
+	ReplicaSetId string `json:"replicaSetId"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+}
+
+type ApplyDeploymentResult struct {
+	DeploymentId string `json:"deploymentId"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	Replicas     int    `json:"replicas"`
+}
+
 type DeleteResourcesResponse struct {
 	Pods        []DeletePodResult        `json:"pods"`
 	ReplicaSets []DeleteReplicaSetResult `json:"replicasets"`
+	Deployments []DeleteDeploymentResult `json:"deployments"`
 	Services    []DeleteServiceResult    `json:"services"`
 }
 
@@ -73,6 +89,51 @@ type DeleteServiceResult struct {
 	ServiceId string `json:"serviceId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+}
+
+type DeleteDeploymentResult struct {
+	DeploymentId string `json:"deploymentId"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+}
+
+type ScaleDeploymentRequest struct {
+	Replicas int `json:"replicas"`
+}
+
+type ScaleDeploymentResponse struct {
+	DeploymentId string `json:"deploymentId"`
+	Replicas     int    `json:"replicas"`
+}
+
+type DeploymentSummary struct {
+	DeploymentId string            `json:"deploymentId"`
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Replicas     int               `json:"replicas"`
+	Desired      int               `json:"desired"`
+	Current      int               `json:"current"`
+	Ready        int               `json:"ready"`
+	ReplicaSetId string            `json:"replicaSetId,omitempty"`
+	TemplateId   string            `json:"templateId,omitempty"`
+	Selector     map[string]string `json:"selector,omitempty"`
+	CreatedAt    string            `json:"createdAt"`
+	UpdatedAt    string            `json:"updatedAt"`
+}
+
+type DeploymentDetail struct {
+	DeploymentId string              `json:"deploymentId"`
+	Name         string              `json:"name"`
+	Namespace    string              `json:"namespace"`
+	Replicas     int                 `json:"replicas"`
+	Desired      int                 `json:"desired"`
+	Current      int                 `json:"current"`
+	Ready        int                 `json:"ready"`
+	ReplicaSetId string              `json:"replicaSetId,omitempty"`
+	Selector     map[string]string   `json:"selector,omitempty"`
+	Template     psm.PodTemplateSpec `json:"template"`
+	CreatedAt    string              `json:"createdAt"`
+	UpdatedAt    string              `json:"updatedAt"`
 }
 
 type ScaleReplicaSetRequest struct {

@@ -111,6 +111,21 @@ The short alias `rs` can be used for `replicaset`:
 raind resource rs ls
 ```
 
+Deployment commands:
+
+```sh
+raind resource deployment ls
+raind resource deployment show <deployment-id>
+raind resource deployment scale --replicas <n> <deployment-id>
+raind resource deployment rm <deployment-id>
+```
+
+The short alias `deploy` can be used for `deployment`:
+
+```sh
+raind resource deploy ls
+```
+
 Service commands:
 
 ```sh

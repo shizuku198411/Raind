@@ -58,6 +58,13 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 		}
 		fmt.Printf("replicaset: %s removed\n", id)
 	}
+	for _, deploy := range result.Deployments {
+		id := deploy.DeploymentId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", deploy.Namespace, deploy.Name)
+		}
+		fmt.Printf("deployment: %s removed\n", id)
+	}
 	for _, svc := range result.Services {
 		id := svc.ServiceId
 		if id == "" {
@@ -65,7 +72,7 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 		}
 		fmt.Printf("service: %s removed\n", id)
 	}
-	if len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Services) == 0 {
+	if len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
 		fmt.Println("no resources removed")
 	}
 }

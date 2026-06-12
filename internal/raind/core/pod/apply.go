@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	httpclient "raind/internal/raind/core/client"
-	"strings"
 )
 
 func NewServicePodApply() *ServicePodApply {
@@ -16,31 +15,31 @@ func NewServicePodApply() *ServicePodApply {
 
 type ServicePodApply struct{}
 
-func (s *ServicePodApply) Apply(param ServicePodApplyModel) (string, error) {
+func (s *ServicePodApply) Apply(param ServicePodApplyModel) (ApplyResponseDataModel, error) {
 	if param.FilePath == "" {
-		return "", fmt.Errorf("yaml file path is required")
+		return ApplyResponseDataModel{}, fmt.Errorf("yaml file path is required")
 	}
 
 	yamlBytes, err := os.ReadFile(param.FilePath)
 	if err != nil {
-		return "", fmt.Errorf("read yaml file: %w", err)
+		return ApplyResponseDataModel{}, fmt.Errorf("read yaml file: %w", err)
 	}
 
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
-		return "", err
+		return ApplyResponseDataModel{}, err
 	}
 
 	endpoint := httpClient.BaseUrl + "/v1/resource/apply"
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(yamlBytes))
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return ApplyResponseDataModel{}, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/yaml")
 
 	resp, err := httpClient.Client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
+		return ApplyResponseDataModel{}, fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
 	}
 	defer resp.Body.Close()
 
@@ -48,19 +47,14 @@ func (s *ServicePodApply) Apply(param ServicePodApplyModel) (string, error) {
 
 	if !httpClient.IsStatusOk(resp) {
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&respModel); decodeErr != nil {
-			return "", fmt.Errorf("decode response: %w", decodeErr)
+			return ApplyResponseDataModel{}, fmt.Errorf("decode response: %w", decodeErr)
 		}
-		return "", fmt.Errorf("%s", respModel.Message)
+		return ApplyResponseDataModel{}, fmt.Errorf("%s", respModel.Message)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+		return ApplyResponseDataModel{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	var podIds []string
-	for _, p := range respModel.Data.Pods {
-		podIds = append(podIds, p.PodId)
-	}
-
-	return strings.Join(podIds, ","), nil
+	return respModel.Data, nil
 }
