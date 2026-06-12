@@ -81,6 +81,11 @@ func (c *PodController) reconcileOnce() error {
 					}
 					if _, err := c.podHandler.Start(podId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", podId, err)
+						if podInfo, getErr := c.psmHandler.GetPodById(podId); getErr == nil {
+							if delErr := c.deletePod(podInfo); delErr != nil {
+								log.Printf("pod controller cleanup failed: podId=%s err=%v", podId, delErr)
+							}
+						}
 					}
 				}
 			} else if current > rs.Spec.Replicas {
@@ -118,6 +123,15 @@ func (c *PodController) reconcileOnce() error {
 				if p.State == "stopped" {
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+					}
+					continue
+				}
+				if p.State == "created" {
+					if _, err := c.podHandler.Start(p.PodId); err != nil {
+						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+						if err := c.recreatePod(p); err != nil {
+							log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
+						}
 					}
 				}
 			}
@@ -226,6 +240,9 @@ func (c *PodController) reconcileDeployments() error {
 				return err
 			}
 			if err := c.psmHandler.UpdateDeploymentReplicaSet(deploy.DeploymentId, replicaSetId); err != nil {
+				if rbErr := c.psmHandler.RemoveReplicaSet(replicaSetId); rbErr != nil {
+					log.Printf("deployment replicasets rollback failed: replicaSetId=%s err=%v", replicaSetId, rbErr)
+				}
 				return err
 			}
 			continue

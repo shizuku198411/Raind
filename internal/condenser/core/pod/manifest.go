@@ -53,7 +53,7 @@ type replicaSetManifest struct {
 		Selector struct {
 			MatchLabels map[string]string `yaml:"matchLabels"`
 		} `yaml:"selector"`
-		Replicas int        `yaml:"replicas"`
+		Replicas *int       `yaml:"replicas"`
 		Template rsTemplate `yaml:"template"`
 	} `yaml:"spec"`
 }
@@ -66,7 +66,7 @@ type deploymentManifest struct {
 		Selector struct {
 			MatchLabels map[string]string `yaml:"matchLabels"`
 		} `yaml:"selector"`
-		Replicas int        `yaml:"replicas"`
+		Replicas *int       `yaml:"replicas"`
 		Template rsTemplate `yaml:"template"`
 	} `yaml:"spec"`
 }
@@ -172,14 +172,23 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 				return nil, err
 			}
 			manifest.Kind = "ReplicaSet"
-			manifest.Replicas = rs.Spec.Replicas
-			if manifest.Replicas == 0 {
+			manifest.Replicas = 1
+			if rs.Spec.Replicas != nil {
+				manifest.Replicas = *rs.Spec.Replicas
+			}
+			if manifest.Replicas < 0 {
+				return nil, fmt.Errorf("replicas must be >= 0")
+			}
+			if manifest.Replicas == 0 && rs.Spec.Replicas == nil {
 				manifest.Replicas = 1
 			}
 			if rs.Spec.Selector.MatchLabels != nil {
 				manifest.Selector = rs.Spec.Selector.MatchLabels
 			} else {
 				manifest.Selector = manifest.Labels
+			}
+			if !selectorMatchesLabels(manifest.Selector, manifest.Labels) {
+				return nil, fmt.Errorf("replicaset selector must match template labels")
 			}
 			if manifest.Name == "" {
 				return nil, fmt.Errorf("replicaset template name is required")
@@ -199,8 +208,14 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 				return nil, err
 			}
 			manifest.Kind = "Deployment"
-			manifest.Replicas = deploy.Spec.Replicas
-			if manifest.Replicas == 0 {
+			manifest.Replicas = 1
+			if deploy.Spec.Replicas != nil {
+				manifest.Replicas = *deploy.Spec.Replicas
+			}
+			if manifest.Replicas < 0 {
+				return nil, fmt.Errorf("replicas must be >= 0")
+			}
+			if manifest.Replicas == 0 && deploy.Spec.Replicas == nil {
 				manifest.Replicas = 1
 			}
 			if deploy.Spec.Selector.MatchLabels != nil {
@@ -213,11 +228,8 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 			if manifest.Namespace == "" {
 				manifest.Namespace = "default"
 			}
-			if manifest.Labels == nil {
-				manifest.Labels = map[string]string{}
-			}
-			for k, v := range manifest.Selector {
-				manifest.Labels[k] = v
+			if !selectorMatchesLabels(manifest.Selector, manifest.Labels) {
+				return nil, fmt.Errorf("deployment selector must match template labels")
 			}
 			if manifest.Name == "" {
 				return nil, fmt.Errorf("deployment name is required")
@@ -229,6 +241,18 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 	}
 
 	return result, nil
+}
+
+func selectorMatchesLabels(selector, labels map[string]string) bool {
+	if len(selector) == 0 {
+		return true
+	}
+	for k, v := range selector {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes []manifestVolume) (PodManifest, error) {

@@ -180,6 +180,7 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 			return "", fmt.Errorf("create container failed: %w", err)
 		}
 	}
+	rollbackFlag.Runtime = true
 
 	if createParameter.PodId != "" && !createParameter.IsPodInfra {
 		templateName := baseName
@@ -211,9 +212,17 @@ type RollbackFlag struct {
 	DirectoryEnv bool
 	CgroupEntry  bool
 	ForwardRule  bool
+	Runtime      bool
 }
 
 func (s *ContainerService) rollback(rollbackFlag RollbackFlag, containerId string) error {
+	if rollbackFlag.Runtime {
+		if err := s.deleteContainer(containerId); err != nil {
+			if !isNotFoundErr(err) {
+				return err
+			}
+		}
+	}
 	if rollbackFlag.AllocateAddr {
 		if err := s.releaseAddress(containerId); err != nil {
 			return err
@@ -454,7 +463,7 @@ func (s *ContainerService) createContainerSpec(
 	if podId == "" {
 		hostname = containerId
 	} else {
-		hostname = podId[:12]
+		hostname = shortId(podId, 12)
 	}
 
 	// env
@@ -924,6 +933,13 @@ func isRegistryHost(host string) bool {
 		return true
 	}
 	return strings.Contains(host, ".") || strings.Contains(host, ":")
+}
+
+func shortId(id string, length int) string {
+	if len(id) <= length {
+		return id
+	}
+	return id[:length]
 }
 
 func normalizeRegistry(reg string) string {

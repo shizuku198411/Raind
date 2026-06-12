@@ -102,6 +102,7 @@ spec:
   template:
     metadata:
       labels:
+        app: web
         tier: frontend
     spec:
       containers:
@@ -124,6 +125,60 @@ spec:
 	assert.Equal(t, "frontend", got[0].Labels["tier"])
 	require.Len(t, got[0].Containers, 1)
 	assert.Equal(t, "nginx:latest", got[0].Containers[0].Image)
+}
+
+func TestDecodeK8sManifestsPreservesExplicitZeroReplicas(t *testing.T) {
+	body := []byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: app
+          image: nginx:latest
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, 0, got[0].Replicas)
+}
+
+func TestDecodeK8sManifestsRejectsSelectorMismatch(t *testing.T) {
+	body := []byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: app
+          image: nginx:latest
+`)
+
+	_, err := DecodeK8sManifests(body)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "selector must match template labels")
 }
 
 func TestDecodeK8sManifestsRejectsUnsupportedKind(t *testing.T) {

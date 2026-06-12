@@ -139,7 +139,8 @@ func (h *EnrichedLogHandler) EnrichedLogger() {
 	}
 	_, subnet, err := net.ParseCIDR(runtimeSubnet)
 	if err != nil {
-		panic(err)
+		log.Printf("enriched logger disabled: invalid runtime subnet %q: %v", runtimeSubnet, err)
+		return
 	}
 
 	resolver := NewResolver(
@@ -162,7 +163,8 @@ func (h *EnrichedLogHandler) EnrichedLogger() {
 		Resolver:      resolver,
 	}
 	if err := enricher.OpenOutput(); err != nil {
-		panic(err)
+		log.Printf("enriched logger disabled: open output failed: %v", err)
+		return
 	}
 	defer enricher.CloseOutput()
 
@@ -175,7 +177,7 @@ func (h *EnrichedLogHandler) EnrichedLogger() {
 	}
 
 	if err := tailer.Follow(ctx, enricher.HandleRawLine); err != nil && !errors.Is(err, context.Canceled) {
-		panic(err)
+		log.Printf("enriched logger stopped: %v", err)
 	}
 }
 

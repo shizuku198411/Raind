@@ -311,7 +311,8 @@ spec:
       protocol: TCP
 YAML
   run_raind resource-apply resource apply -f "${E2E_WORK_DIR}/resource-service.yaml"
-  assert_output_contains resource-apply "resource"
+  assert_output_contains resource-apply "service:"
+  assert_output_contains resource-apply "applied"
   run_raind resource-rm resource rm -f "${E2E_WORK_DIR}/resource-service.yaml"
   assert_output_contains resource-rm "service:"
 
