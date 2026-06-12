@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"raind/internal/droplet/spec"
 	"strings"
 	"syscall"
 
@@ -90,23 +91,55 @@ func hasDeniedDestination(destination string) bool {
 }
 
 func isAllowedType(fstype string, options []string) bool {
-	if fstype == "bind" {
-		if len(options) != 2 {
+	if fstype != "" && fstype != "bind" {
+		return false
+	}
+
+	hasBind := fstype == "bind"
+	for _, o := range options {
+		switch o {
+		case "bind", "rbind":
+			hasBind = true
+		case "rprivate", "private", "ro", "rw", "nosuid", "nodev", "noexec", "relatime", "noatime", "strictatime", "dev":
+			// allowed mount option
+		case "z", "Z":
+			// Docker-compatible SELinux relabel hints. Raind does not relabel, but accepting them
+			// keeps common volume declarations from failing before the bind mount is made.
+		default:
 			return false
-		} else {
-			for _, o := range options {
-				if o != "rbind" && o != "rprivate" {
-					return false
-				}
-			}
 		}
-		return true
-	} else if fstype == "" {
-		if len(options) == 1 && options[0] == "bind" {
+	}
+	return hasBind || len(options) == 0
+}
+
+func validateUserMount(m spec.MountObject) error {
+	if !isAllowedType(m.Type, m.Options) {
+		return fmt.Errorf("invalid mount type/options: type=%q options=%q", m.Type, strings.Join(m.Options, ","))
+	}
+
+	allowDevice := hasMountOption(m.Options, "dev")
+	if hasDeniedSource(m.Source) && !(allowDevice && isUnderPath(m.Source, "/dev")) {
+		return fmt.Errorf("invalid mount source: %s", m.Source)
+	}
+	if hasDeniedDestination(m.Destination) && !(allowDevice && isUnderPath(m.Destination, "/dev")) {
+		return fmt.Errorf("invalid mount destination: %s", m.Destination)
+	}
+	return nil
+}
+
+func hasMountOption(options []string, want string) bool {
+	for _, o := range options {
+		if o == want {
 			return true
 		}
 	}
 	return false
+}
+
+func isUnderPath(path string, base string) bool {
+	p := filepath.Clean(path)
+	b := filepath.Clean(base)
+	return p == b || strings.HasPrefix(p, b+string(os.PathSeparator))
 }
 
 func isSymlink(source string) (bool, error) {
