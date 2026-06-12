@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 SCRIPT := ./scripts/build.sh
 
-.PHONY: bootstrap build install enable-service enable-ui-gateway-service test test-droplet test-droplet-e2e test-condenser-e2e test-raind-e2e e2e all
+.PHONY: bootstrap build install enable-service enable-ui-gateway-service test test-droplet test-condenser test-raind test-unit test-droplet-e2e test-condenser-e2e test-raind-e2e e2e all
 
 bootstrap:
 	@go mod download
@@ -24,6 +24,15 @@ test:
 
 test-droplet:
 	@./scripts/test/droplet.sh
+
+test-condenser:
+	@workshop run raind-dev -- test-condenser
+
+test-raind:
+	@workshop run raind-dev -- test-raind
+
+test-unit:
+	@workshop run raind-dev -- test-unit
 
 test-droplet-e2e:
 	@workshop run raind-dev -- test-droplet-e2e

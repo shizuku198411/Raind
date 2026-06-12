@@ -9,6 +9,15 @@ actions:
   test-droplet: |
     cd /project
     ./scripts/test/droplet.sh "$@"
+  test-condenser: |
+    cd /project
+    ./scripts/test/condenser.sh "$@"
+  test-raind: |
+    cd /project
+    ./scripts/test/raind.sh "$@"
+  test-unit: |
+    cd /project
+    ./scripts/test/unit.sh "$@"
   test-droplet-e2e: |
     cd /project
     ./scripts/e2e/droplet.sh "$@"
@@ -25,4 +34,4 @@ actions:
     ./scripts/e2e/raind.sh "$@"
   test: |
     cd /project
-    ./scripts/test/droplet.sh "$@"
+    ./scripts/test/unit.sh "$@"

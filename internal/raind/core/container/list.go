@@ -106,7 +106,7 @@ func (s *ServiceContainerList) printContainerList(containerList []ContainerState
 	// data
 	for _, c := range containerList {
 		containerId := c.ContainerId
-		image := strings.Split(c.Repository, "/")[1] + ":" + c.Reference
+		image := formatContainerImage(c.Repository, c.Reference)
 		command := formatCommand(c.Command)
 		created := formatTime(c.CreatedAt)
 		status := c.State
@@ -116,4 +116,15 @@ func (s *ServiceContainerList) printContainerList(containerList []ContainerState
 	}
 
 	w.Flush()
+}
+
+func formatContainerImage(repository string, reference string) string {
+	if repository == "" {
+		return ":" + reference
+	}
+	parts := strings.SplitN(repository, "/", 2)
+	if len(parts) == 2 && parts[0] == "library" {
+		return parts[1] + ":" + reference
+	}
+	return repository + ":" + reference
 }

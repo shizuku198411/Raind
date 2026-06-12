@@ -51,6 +51,10 @@ func (s *ContainerService) Delete(deleteParameter ServiceDeleteModel) (string, e
 		if err := s.deleteCgroupSubtree(containerId); err != nil {
 			return "", fmt.Errorf("delete cgroup subtree failed: %w", err)
 		}
+
+		if err := s.csmHandler.RemoveContainer(containerId); err != nil {
+			return "", fmt.Errorf("remove container state failed: %w", err)
+		}
 	default:
 		return "", fmt.Errorf("delete operation not allowed to current container status: %s", containerInfo.State)
 	}
