@@ -24,19 +24,6 @@ actions:
   all: |
     cd /project
     ./scripts/build.sh all "$@"
-  dev-install: |
-    cd /project
-    ./scripts/workshop/install.sh "$@"
-  dev-start: |
-    cd /project
-    ./scripts/workshop/start.sh "$@"
-  dev-cleanup: |
-    cd /project
-    ./scripts/workshop/cleanup.sh "$@"
-  dev-reset: |
-    cd /project
-    ./scripts/workshop/cleanup.sh "$@"
-    ./scripts/workshop/start.sh "$@"
   test-droplet: |
     cd /project
     ./scripts/test/droplet.sh "$@"
@@ -58,11 +45,26 @@ actions:
   test-raind-e2e: |
     cd /project
     ./scripts/e2e/raind.sh "$@"
-  e2e: |
+  test-e2e: |
     cd /project
     ./scripts/e2e/droplet.sh "$@"
     ./scripts/e2e/condenser.sh "$@"
     ./scripts/e2e/raind.sh "$@"
-  test: |
+
+  dev-install: |
     cd /project
-    ./scripts/test/unit.sh "$@"
+    ./scripts/workshop/install.sh "$@"
+  dev-start: |
+    cd /project
+    ./scripts/workshop/start.sh "$@"
+  dev-setup: |
+    cd /project
+    ./scripts/workshop/install.sh "$@"
+    ./scripts/workshop/start.sh "$@"
+  dev-cleanup: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+  dev-reset: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+    ./scripts/workshop/start.sh "$@"
