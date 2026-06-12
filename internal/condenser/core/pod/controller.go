@@ -322,6 +322,9 @@ func (c *PodController) recreatePod(podInfo psm.PodInfo) error {
 }
 
 func (c *PodController) deletePod(podInfo psm.PodInfo) error {
+	if err := c.psmHandler.UpdatePodStoppedByUser(podInfo.PodId, true); err != nil {
+		return err
+	}
 	containers, err := c.containerHandler.GetContainersByPodId(podInfo.PodId)
 	if err != nil {
 		return err

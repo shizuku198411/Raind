@@ -71,7 +71,7 @@ func (h *RequestHandler) ApplyHook(w http.ResponseWriter, r *http.Request) {
 		ContainerId: st.Id,
 	})
 
-	if ok, err := h.validateSpiffe(r, st); !ok {
+	if ok, err := h.validateSpiffe(r, st, eventType); !ok {
 		apimodel.RespondFail(w, http.StatusForbidden, "validate failed: "+err.Error(), nil)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *RequestHandler) ApplyHook(w http.ResponseWriter, r *http.Request) {
 	apimodel.RespondSuccess(w, http.StatusOK, "hook applied", nil)
 }
 
-func (h *RequestHandler) validateSpiffe(r *http.Request, state hook.ServiceStateModel) (bool, error) {
+func (h *RequestHandler) validateSpiffe(r *http.Request, state hook.ServiceStateModel, eventType string) (bool, error) {
 	cert := r.TLS.PeerCertificates[0]
 	for _, uri := range cert.URIs {
 		u, err := url.Parse(uri.String())
@@ -116,6 +116,9 @@ func (h *RequestHandler) validateSpiffe(r *http.Request, state hook.ServiceState
 		// validate container id
 		// check if the spiffe's id exist
 		if ok := h.csmHandler.IsContainerExist(containerId); !ok {
+			if eventType == "poststop" && containerId == state.Id {
+				return true, nil
+			}
 			return false, fmt.Errorf("container: %s not found", containerId)
 		}
 		// check if the spiffe's id and state's id is same

@@ -572,13 +572,13 @@ func (h *RequestHandler) removeDeploymentById(deploymentId string) error {
 	if err != nil {
 		return err
 	}
+	if err := h.psmHandler.RemoveDeployment(deploymentId); err != nil {
+		return err
+	}
 	if deploy.Spec.ReplicaSetId != "" {
 		if err := h.removeReplicaSetById(deploy.Spec.ReplicaSetId); err != nil && !strings.Contains(err.Error(), "not found") {
 			return err
 		}
-	}
-	if err := h.psmHandler.RemoveDeployment(deploymentId); err != nil {
-		return err
 	}
 	inUse, err := h.psmHandler.IsTemplateReferenced(deploy.Spec.TemplateId)
 	if err == nil && !inUse {
@@ -592,10 +592,10 @@ func (h *RequestHandler) removeReplicaSetById(replicaSetId string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
+	if err := h.psmHandler.RemoveReplicaSet(replicaSetId); err != nil {
 		return err
 	}
-	if err := h.psmHandler.RemoveReplicaSet(replicaSetId); err != nil {
+	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
 		return err
 	}
 	inUse, err := h.psmHandler.IsTemplateReferenced(rs.Spec.TemplateId)
@@ -813,22 +813,9 @@ func (h *RequestHandler) RemoveReplicaSet(w http.ResponseWriter, r *http.Request
 		apimodel.RespondFail(w, http.StatusBadRequest, "missing replicaSetId", nil)
 		return
 	}
-	rs, err := h.psmHandler.GetReplicaSet(replicaSetId)
-	if err != nil {
-		apimodel.RespondFail(w, http.StatusInternalServerError, "get failed: "+err.Error(), nil)
-		return
-	}
-	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
-		apimodel.RespondFail(w, http.StatusInternalServerError, "remove pods failed: "+err.Error(), nil)
-		return
-	}
-	if err := h.psmHandler.RemoveReplicaSet(replicaSetId); err != nil {
+	if err := h.removeReplicaSetById(replicaSetId); err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "remove failed: "+err.Error(), nil)
 		return
-	}
-	inUse, err := h.psmHandler.IsTemplateReferenced(rs.Spec.TemplateId)
-	if err == nil && !inUse {
-		_ = h.psmHandler.RemovePodTemplate(rs.Spec.TemplateId)
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "replicaset removed", map[string]string{"replicaSetId": replicaSetId})
