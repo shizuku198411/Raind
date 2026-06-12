@@ -1,5 +1,5 @@
 # Raind - Command List
-Raind is expected to be run with `sudo`.
+Raind CLI is expected to run as a non-root user in the `raind` group.
 
 ## Container
 

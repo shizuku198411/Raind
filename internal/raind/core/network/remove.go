@@ -14,9 +14,9 @@ func NewServiceNetworkRemove() *ServiceNetworkRemove {
 type ServiceNetworkRemove struct{}
 
 func (s *ServiceNetworkRemove) Remove(param ServiceNetworkRemoveModel) (string, error) {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return "", fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return "", err
 	}
 
 	if err := httpClient.NewRequest(

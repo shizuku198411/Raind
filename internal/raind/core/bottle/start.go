@@ -14,9 +14,9 @@ func NewServiceBottleStart() *ServiceBottleStart {
 type ServiceBottleStart struct{}
 
 func (s *ServiceBottleStart) Start(param ServiceBottleStartModel) error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	httpClient.NewRequest(
 		http.MethodPost,

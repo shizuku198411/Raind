@@ -50,8 +50,8 @@ main() {
 
   log "ready. examples:"
   log "  workshop shell raind-dev"
-  log "  sudo raind image ls"
-  log "  sudo raind container run -p 9988:80 nginx:latest"
+  log "  raind image ls"
+  log "  raind container run -p 9988:80 nginx:latest"
   log "cleanup: workshop run raind-dev -- dev-cleanup"
 }
 

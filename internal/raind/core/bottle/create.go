@@ -14,9 +14,9 @@ func NewServiceBottleCreate() *ServiceBottleCreate {
 type ServiceBottleCreate struct{}
 
 func (s *ServiceBottleCreate) Create(param ServiceBottleCreateModel) (CreateResponseDataModel, error) {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return CreateResponseDataModel{}, fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return CreateResponseDataModel{}, err
 	}
 
 	if err := httpClient.NewRequest(

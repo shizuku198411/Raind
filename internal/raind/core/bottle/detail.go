@@ -21,9 +21,9 @@ func NewServiceBottleDetail() *ServiceBottleDetail {
 type ServiceBottleDetail struct{}
 
 func (s *ServiceBottleDetail) Detail(target string) error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	httpClient.NewRequest(
 		http.MethodGet,

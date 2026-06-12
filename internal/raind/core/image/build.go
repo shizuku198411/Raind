@@ -56,9 +56,9 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 	}
 	defer tarFile.Close()
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 
 	query := url.Values{}

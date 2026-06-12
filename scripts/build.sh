@@ -7,6 +7,7 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
+RAIND_GROUP="${RAIND_GROUP:-raind}"
 VERSION_FILE="${ROOT_DIR}/VERSION"
 
 BINARIES=(
@@ -27,6 +28,14 @@ need_root() {
     echo "error: root privileges are required. run with sudo." >&2
     exit 1
   fi
+}
+
+ensure_raind_group() {
+  if getent group "${RAIND_GROUP}" >/dev/null 2>&1; then
+    return
+  fi
+  echo "==> create ${RAIND_GROUP} group"
+  groupadd --system "${RAIND_GROUP}"
 }
 
 build_components() {
@@ -80,6 +89,7 @@ build_components() {
 
 install_binaries() {
   need_root
+  ensure_raind_group
 
   for bin_path in "${BINARIES[@]}"; do
     local src="${ROOT_DIR}/${bin_path}"

@@ -22,9 +22,9 @@ func (s *ServiceReplicaSetDetail) Detail(id string) error {
 		return fmt.Errorf("replicaset id is required")
 	}
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	if err := httpClient.NewRequest(
 		http.MethodGet,

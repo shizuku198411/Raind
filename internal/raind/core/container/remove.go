@@ -14,9 +14,9 @@ func NewServiceContainerRemove() *ServiceContainerRemove {
 type ServiceContainerRemove struct{}
 
 func (s *ServiceContainerRemove) Remove(param ServiceRemoveModel) error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	httpClient.NewRequest(
 		http.MethodDelete,

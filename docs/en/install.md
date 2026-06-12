@@ -35,10 +35,14 @@ workshop run raind-dev -- build
 sudo ./scripts/build.sh install
 sudo ./scripts/build.sh enable-service
 sudo ./scripts/build.sh enable-ui-gateway-service
+sudo usermod -aG raind "$USER"
 # or run install + service setup together
 workshop run raind-dev -- build
 sudo ./scripts/build.sh all
+sudo usermod -aG raind "$USER"
 ```
+
+Log out and back in, or run `newgrp raind`, before using `raind` as a non-root CLI.
 
 ## Verification
 ```

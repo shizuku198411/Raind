@@ -14,9 +14,9 @@ func NewServicePolicyRevert() *ServicePolicyRevert {
 type ServicePolicyRevert struct{}
 
 func (s *ServicePolicyRevert) Revert() error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	httpClient.NewRequest(
 		http.MethodPost,

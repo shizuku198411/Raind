@@ -27,9 +27,9 @@ func (s *ServiceReplicaSetScale) Scale(param ServiceReplicaSetScaleModel) (Scale
 		return ScaleResponseDataModel{}, err
 	}
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return ScaleResponseDataModel{}, fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return ScaleResponseDataModel{}, err
 	}
 	if err := httpClient.NewRequest(
 		http.MethodPost,

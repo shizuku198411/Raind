@@ -15,20 +15,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func NewHttpClient() *HttpClient {
+func NewHttpClient() (*HttpClient, error) {
+	paths := utils.ResolveClientCertPaths()
 	certPool := x509.NewCertPool()
-	pemBytes, err := os.ReadFile(utils.PublicCertPath)
+	pemBytes, err := os.ReadFile(paths.CA)
 	if err != nil {
-		return nil
+		return nil, certAccessError("read CA certificate", paths.CA, err, paths.Legacy)
 	}
 
 	if ok := certPool.AppendCertsFromPEM(pemBytes); !ok {
-		return nil
+		return nil, fmt.Errorf("append CA certificate failed: %s", paths.CA)
 	}
 
-	clientCert, err := tls.LoadX509KeyPair(utils.ClientCertPath, utils.ClientKeyPath)
+	clientCert, err := tls.LoadX509KeyPair(paths.Cert, paths.Key)
 	if err != nil {
-		return nil
+		return nil, certAccessError("load client certificate", paths.Cert+" / "+paths.Key, err, paths.Legacy)
 	}
 	return &HttpClient{
 		BaseUrl: "https://localhost:7755",
@@ -40,7 +41,7 @@ func NewHttpClient() *HttpClient {
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 type HttpClient struct {
@@ -226,4 +227,15 @@ func (c *HttpClient) NewMTLSDialer(caPath, clientCertPath, clientKeyPath string)
 	}
 
 	return &d, nil
+}
+
+func certAccessError(action string, path string, err error, legacy bool) error {
+	msg := fmt.Sprintf("%s: %s: %v", action, path, err)
+	if os.IsPermission(err) {
+		return fmt.Errorf("%s. raind CLI does not require root; add your user to the raind group or set %s/%s/%s to readable client credentials", msg, utils.EnvCACertPath, utils.EnvClientCertPath, utils.EnvClientKeyPath)
+	}
+	if legacy {
+		return fmt.Errorf("%s. CLI credentials were not found under /etc/raind/cli; start condenser once as root to bootstrap them, or set %s/%s/%s", msg, utils.EnvCACertPath, utils.EnvClientCertPath, utils.EnvClientKeyPath)
+	}
+	return errors.New(msg)
 }

@@ -1,5 +1,5 @@
 # Raind - Command List
-Raindは `sudo` による実行が前提となります。
+Raind CLI は `raind` グループに所属する非rootユーザーでの実行が前提となります。
 
 ## Container
 

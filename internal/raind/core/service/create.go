@@ -25,9 +25,9 @@ func (s *ServiceServiceCreate) Create(param ServiceServiceCreateModel) (string, 
 		return "", fmt.Errorf("read yaml file: %w", err)
 	}
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return "", fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return "", err
 	}
 
 	endpoint := httpClient.BaseUrl + "/v1/services"

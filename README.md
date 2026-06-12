@@ -87,13 +87,17 @@ workshop run raind-dev -- build
 sudo ./scripts/build.sh install
 sudo ./scripts/build.sh enable-service
 sudo ./scripts/build.sh enable-ui-gateway-service
+sudo usermod -aG raind "$USER"
 ```
+
+Log out and back in, or run `newgrp raind`, before using `raind` as a non-root CLI.
 
 Or:
 
 ```bash
 workshop run raind-dev -- build
 sudo ./scripts/build.sh all
+sudo usermod -aG raind "$USER"
 ```
 
 ### 2. Verify
@@ -118,7 +122,7 @@ without touching containers or services already running on your host.
 workshop run raind-dev -- dev-install
 workshop run raind-dev -- dev-start
 workshop shell raind-dev
-sudo raind image ls
+raind image ls
 ```
 
 Clean up the Workshop runtime after manual testing:

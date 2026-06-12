@@ -28,9 +28,9 @@ func (s *ServiceContainerLog) GetLog(param ServiceLogsModel) error {
 	} else {
 		tailLaine = param.TailLine
 	}
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 
 	reqUrl := fmt.Sprintf("/v1/containers/%s/log?tail_lines=%d", param.ContainerId, tailLaine)

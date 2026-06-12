@@ -9,6 +9,7 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
+RAIND_GROUP="${RAIND_GROUP:-raind}"
 
 BINARIES=(
   "raind"
@@ -53,8 +54,23 @@ systemd_available() {
   have_cmd systemctl && sudo_cmd systemctl list-units >/dev/null 2>&1
 }
 
+ensure_raind_group() {
+  if ! getent group "${RAIND_GROUP}" >/dev/null 2>&1; then
+    log "create ${RAIND_GROUP} group"
+    sudo_cmd groupadd --system "${RAIND_GROUP}"
+  fi
+
+  local current_user
+  current_user="$(id -un)"
+  if [[ "${current_user}" != "root" ]] && ! id -nG "${current_user}" | tr ' ' '\n' | grep -qx "${RAIND_GROUP}"; then
+    log "add ${current_user} to ${RAIND_GROUP} group"
+    sudo_cmd usermod -aG "${RAIND_GROUP}" "${current_user}"
+  fi
+}
+
 prepare_runtime_dirs() {
   log "prepare raind runtime directories"
+  ensure_raind_group
   sudo_cmd mkdir -p \
     /etc/raind/log \
     /etc/raind/cert/web \
