@@ -53,7 +53,12 @@ func (s *ContainerService) Delete(deleteParameter ServiceDeleteModel) (string, e
 		}
 
 		if err := s.csmHandler.RemoveContainer(containerId); err != nil {
-			return "", fmt.Errorf("remove container state failed: %w", err)
+			// droplet delete runs the OCI poststop hook before returning.
+			// condenser poststop hook may already have removed the CSM entry.
+			// so treat that case as success and keep delete idempotent.
+			if !isNotFoundErr(err) {
+				return "", fmt.Errorf("remove container state failed: %w", err)
+			}
 		}
 	default:
 		return "", fmt.Errorf("delete operation not allowed to current container status: %s", containerInfo.State)

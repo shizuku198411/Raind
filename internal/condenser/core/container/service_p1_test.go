@@ -112,6 +112,21 @@ func TestContainerServiceDeleteRemovesCSMEntryAfterRuntimeDelete(t *testing.T) {
 	assert.Empty(t, deps.csm.containers)
 }
 
+func TestContainerServiceDeleteIgnoresCSMEntryAlreadyRemovedByPoststopHook(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	deps.csm.storeInfo("cid-1", csm.ContainerInfo{ContainerId: "cid-1", ContainerName: "web", State: "created"})
+	deps.runtime.deleteHook = func(containerId string) {
+		_ = deps.csm.RemoveContainer(containerId)
+	}
+
+	id, err := deps.service.Delete(ServiceDeleteModel{ContainerId: "web"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "cid-1", id)
+	assert.True(t, deps.runtime.deleteCalled)
+	assert.Empty(t, deps.csm.containers)
+}
+
 func TestContainerServiceExecResolvesNameAndPassesCommand(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	deps.csm.storeInfo("cid-1", csm.ContainerInfo{ContainerId: "cid-1", ContainerName: "web", State: "running"})
@@ -165,6 +180,7 @@ type fakeRuntimeHandler struct {
 	execModel    runtime.ExecModel
 	specErr      error
 	createErr    error
+	deleteHook   func(containerId string)
 }
 
 func (f *fakeRuntimeHandler) Spec(runtime.SpecModel) error {
@@ -179,8 +195,11 @@ func (f *fakeRuntimeHandler) Start(m runtime.StartModel) error {
 	f.startedID = m.ContainerId
 	return nil
 }
-func (f *fakeRuntimeHandler) Delete(runtime.DeleteModel) error {
+func (f *fakeRuntimeHandler) Delete(m runtime.DeleteModel) error {
 	f.deleteCalled = true
+	if f.deleteHook != nil {
+		f.deleteHook(m.ContainerId)
+	}
 	return nil
 }
 func (f *fakeRuntimeHandler) Stop(runtime.StopModel) error { return nil }
