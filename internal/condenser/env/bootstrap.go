@@ -121,7 +121,6 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.VarLogDir,
 		utils.CertDir,
 		utils.CliCertDir,
-		utils.WebCertDir,
 	}
 	for _, dir := range dirs {
 		if err := m.filesystemHandler.MkdirAll(dir, 0o755); err != nil {
@@ -477,25 +476,6 @@ func (m *BootstrapManager) setupCertificate() error {
 	if err := m.installCliCACert(); err != nil {
 		return err
 	}
-	// server cert for web ui
-	err = m.certHandler.EnsureSelfSignedCert(
-		utils.WebPublicCertPath,
-		utils.WebPrivateKeyPath,
-		cert.CertConfig{
-			CommonName: "raind web console",
-			DNSNames: []string{
-				"localhost",
-			},
-			IPAddresses: []net.IP{
-				net.ParseIP("127.0.0.1"),
-				net.ParseIP(hostaddr),
-			},
-			ValidFor: 5 * 365 * 24 * time.Hour, // 5 years
-		},
-	)
-	if err != nil {
-		return err
-	}
 
 	// 2. client CA
 	err = m.certHandler.EnsureClientCACert(
@@ -538,22 +518,6 @@ func (m *BootstrapManager) setupCertificate() error {
 		cert.ClientCertConfig{
 			CommonName: "raind-client",
 			SpiiffeId:  "spiffe://raind/cli/admin",
-			ValidFor:   1 * 365 * 24 * time.Hour, // 1 year
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	// 4. client cert for web ui
-	err = m.certHandler.IssueClientCert(
-		utils.WebClientCertPath,
-		utils.WebClientKeyPath,
-		utils.ClientIssuerCACertPath,
-		utils.ClientIssuerCAKeyPath,
-		cert.ClientCertConfig{
-			CommonName: "raind-client",
-			SpiiffeId:  "spiffe://raind/cli/web-admin",
 			ValidFor:   1 * 365 * 24 * time.Hour, // 1 year
 		},
 	)

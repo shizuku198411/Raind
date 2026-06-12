@@ -10,23 +10,18 @@ stop_systemd_services() {
   fi
 
   log "stop systemd services if present"
-  sudo_cmd systemctl stop "${UI_GATEWAY_SERVICE_NAME}" 2>/dev/null || true
   sudo_cmd systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-  sudo_cmd systemctl disable "${UI_GATEWAY_SERVICE_NAME}" 2>/dev/null || true
   sudo_cmd systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-  sudo_cmd rm -f "${SYSTEMD_DIR}/${UI_GATEWAY_SERVICE_NAME}" "${SYSTEMD_DIR}/${SERVICE_NAME}"
+  sudo_cmd rm -f "${SYSTEMD_DIR}/${SERVICE_NAME}"
   sudo_cmd systemctl daemon-reload 2>/dev/null || true
 }
 
 stop_direct_services() {
   log "stop direct workshop services"
-  stop_pid_file raind-ui-gateway
   stop_pid_file condenser
 
-  sudo_cmd pkill -TERM -f "^${INSTALL_DIR}/raind-ui-gateway$" 2>/dev/null || true
   sudo_cmd pkill -TERM -f "^${INSTALL_DIR}/condenser$" 2>/dev/null || true
   sleep 0.3
-  sudo_cmd pkill -KILL -f "^${INSTALL_DIR}/raind-ui-gateway$" 2>/dev/null || true
   sudo_cmd pkill -KILL -f "^${INSTALL_DIR}/condenser$" 2>/dev/null || true
 }
 
@@ -59,8 +54,7 @@ cleanup_files() {
     /etc/raind \
     /run/raind \
     "${WORKSHOP_RUN_DIR}" \
-    "${WORKSHOP_LOG_DIR}/workshop-condenser.log" \
-    "${WORKSHOP_LOG_DIR}/workshop-ui-gateway.log"
+    "${WORKSHOP_LOG_DIR}/workshop-condenser.log"
 
   for bin in "${BINARIES[@]}"; do
     sudo_cmd rm -f "${INSTALL_DIR}/${bin}"

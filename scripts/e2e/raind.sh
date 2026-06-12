@@ -56,13 +56,13 @@ prepare_runtime() {
   log "prepare runtime prerequisites"
   sudo_cmd mkdir -p \
     /etc/raind/log \
-    /etc/raind/cert/web \
+    /etc/raind/cert \
     /etc/raind/store \
     /etc/raind/container \
     /etc/raind/image/layers \
     /var/log/raind \
     /sys/fs/cgroup/raind
-  sudo_cmd chmod 0755 /etc/raind /etc/raind/log /etc/raind/cert /etc/raind/cert/web /etc/raind/store /var/log/raind
+  sudo_cmd chmod 0755 /etc/raind /etc/raind/log /etc/raind/cert /etc/raind/store /var/log/raind
 
   for controller in cpu memory pids io; do
     if sudo_cmd grep -qw "${controller}" /sys/fs/cgroup/raind/cgroup.controllers; then

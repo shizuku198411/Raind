@@ -12,14 +12,13 @@ raind is an experimental container runtime stack written in Go. It is split into
 - `condenser`: root daemon that exposes the management API and coordinates runtime operations.
 - `droplet`: low-level runtime component for container lifecycle operations.
 - `condenser-hook-agent`: hook-side helper used by condenser and droplet workflows.
-- `raind-ui-gateway`: gateway process for UI access.
 
 ## Highlights
 
 - Docker-style image pull flow with manifest and layer progress reporting.
 - mTLS between CLI and daemon components.
 - Non-root `raind` CLI access through the `raind` Unix group.
-- Root-only daemon operations are handled by `condenser`, `droplet`, and the UI gateway service.
+- Root-only daemon operations are handled by `condenser` and `droplet`.
 - Runtime security policy management for east-west and north-south traffic control.
 - Workshop-based test and manual verification environment.
 - Container, image, network, pod, ReplicaSet, service, policy, bottle, and netflow log command groups.
@@ -152,7 +151,6 @@ Built binaries are written to `bin/`:
 - `bin/condenser`
 - `bin/condenser-hook-agent`
 - `bin/droplet`
-- `bin/raind-ui-gateway`
 
 ## Install Locally
 
@@ -166,12 +164,6 @@ Create and start the condenser daemon service:
 
 ```sh
 sudo ./scripts/build.sh enable-service
-```
-
-Optionally create and start the UI gateway service:
-
-```sh
-sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 Add your user to the `raind` group so the CLI can read the client certificate without running as root:
@@ -190,12 +182,6 @@ You can also build, install, and enable the main condenser service in one comman
 
 ```sh
 sudo ./scripts/build.sh all
-```
-
-Enable the UI gateway separately if needed:
-
-```sh
-sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 ## First Checks
