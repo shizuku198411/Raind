@@ -12,20 +12,20 @@ When no build file is specified, Raind searches in this order:
 Build with the default file lookup:
 
 ```sh
-raind image build -f ./app -t local/app:latest
+raind image build -t local/app:latest .
 ```
 
 Build with an explicit Dockerfile path inside the context:
 
 ```sh
-raind image build -f ./app -t local/app:latest --dockerfile Dockerfile
-raind image build -f ./app -t local/app:latest -D build/Dockerfile
+raind image build -t local/app:latest -f Dockerfile .
+raind image build -t local/app:latest -f build/Dockerfile .
 ```
 
 Build with an explicit Dripfile path:
 
 ```sh
-raind image build -f ./app -t local/app:latest --dripfile Dripfile
+raind image build -t local/app:latest --dripfile Dripfile .
 ```
 
 The build context is uploaded to condenser as a tar archive. Condenser currently applies these limits:
@@ -159,7 +159,7 @@ EXPOSE 80
 Build:
 
 ```sh
-raind image build -f ./site -t local/site:latest
+raind image build -t local/site:latest .
 ```
 
 ### Shell Form `RUN`, `ENV`, and `CMD`
@@ -176,7 +176,7 @@ CMD ["cat", "/app/data/name.txt"]
 Build:
 
 ```sh
-raind image build -f ./sample -t local/sample:latest
+raind image build -t local/sample:latest .
 ```
 
 ### Multi-Stage Build
@@ -197,7 +197,7 @@ ENTRYPOINT ["/usr/local/bin/app"]
 Build:
 
 ```sh
-raind image build -f ./go-app -t local/go-app:latest --dockerfile Dockerfile
+raind image build -t local/go-app:latest -f Dockerfile .
 ```
 
 ### Scratch Final Image
@@ -253,7 +253,7 @@ ENTRYPOINT ["/usr/local/bin/main"]
 Build:
 
 ```sh
-raind image build -f ./app -t local/app:prod -D docker/production.Dockerfile
+raind image build -t local/app:prod -f docker/production.Dockerfile ./app
 ```
 
 ## Current Compatibility Notes

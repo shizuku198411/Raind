@@ -63,6 +63,7 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 	query := url.Values{}
 	query.Set("tag", param.Tag)
 	query.Set("dripfile", param.Dripfile)
+	query.Set("stream", "1")
 	endpoint := httpClient.BaseUrl + "/v1/images/build?" + query.Encode()
 
 	req, err := http.NewRequest(http.MethodPost, endpoint, tarFile)
@@ -83,6 +84,13 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 			return fmt.Errorf("decode response: %w", decodeErr)
 		}
 		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
+	}
+
+	if resp.Header.Get("Content-Type") == "application/x-ndjson" {
+		if _, err := httpclient.ReadStreamEvents(resp.Body); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	if err := jsonDecode(resp.Body, &respModel); err != nil {

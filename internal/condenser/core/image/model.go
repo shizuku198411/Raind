@@ -29,6 +29,7 @@ type ServiceBuildModel struct {
 	ContextDir   string
 	DripfilePath string
 	Network      string
+	Progress     ProgressFunc
 }
 
 // image bundle object

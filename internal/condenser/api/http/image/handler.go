@@ -136,6 +136,7 @@ func (h *RequestHandler) RemoveImage(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/images/build [post]
 func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
+	stream := r.URL.Query().Get("stream") == "1"
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		apimodel.RespondFail(w, http.StatusBadRequest, "missing tag query", nil)
@@ -155,33 +156,87 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(tmpDir)
 
 	if err := image.ExtractTarToDir(r.Body, tmpDir); err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "invalid build context: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid build context: "+err.Error(), nil)
 		return
+	}
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "extracted",
+			ID:     "context",
+			Detail: "build context extracted",
+		})
 	}
 
 	if dripfile == "" {
 		dripfile, err = resolveBuildFile(tmpDir)
 		if err != nil {
+			if stream {
+				apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "build file not found"})
+				return
+			}
 			apimodel.RespondFail(w, http.StatusBadRequest, "build file not found", nil)
 			return
 		}
+	}
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "building",
+			ID:     dripfile,
+			Detail: "build file selected",
+		})
 	}
 
 	dfPath := filepath.Join(tmpDir, filepath.Clean(dripfile))
 	rel, err := filepath.Rel(tmpDir, dfPath)
 	if err != nil || strings.HasPrefix(rel, "..") {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "invalid dripfile path"})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid dripfile path", nil)
 		return
 	}
 
+	progress := image.ProgressFunc(nil)
+	if stream {
+		progress = func(e image.PullProgressEvent) {
+			apimodel.StreamJson(w, apimodel.StreamEvent{
+				Status:  e.Status,
+				ID:      e.ID,
+				Detail:  e.Detail,
+				Current: e.Current,
+				Total:   e.Total,
+				Error:   e.Error,
+			})
+		}
+	}
 	result, err := h.serviceHandler.Build(image.ServiceBuildModel{
 		Image:        tag,
 		ContextDir:   tmpDir,
 		DripfilePath: dfPath,
 		Network:      network,
+		Progress:     progress,
 	})
 	if err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "build failed: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusInternalServerError, "build failed: "+err.Error(), nil)
+		return
+	}
+
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "success",
+			ID:     result,
+			Detail: "build completed",
+			Data:   BuildImageResponse{Image: result},
+		})
 		return
 	}
 

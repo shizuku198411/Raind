@@ -22,7 +22,7 @@ raind completion zsh
 ```sh
 raind image pull <image:tag>
 raind image pull --os linux --arch amd64 <image:tag>
-raind image build -f <context-dir> -t <repo/name:tag>
+raind image build -t <repo/name:tag> <context-path>
 raind image ls
 raind image rm <image:tag>
 ```

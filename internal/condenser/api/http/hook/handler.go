@@ -1,8 +1,10 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"raind/internal/condenser/core/hook"
@@ -54,7 +56,7 @@ func (h *RequestHandler) ApplyHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var st hook.ServiceStateModel
-	if err := apimodel.DecodeRequestBody(r, &st); err != nil {
+	if err := decodeHookState(r.Body, &st); err != nil {
 		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 		return
 	}
@@ -120,4 +122,16 @@ func (h *RequestHandler) validateSpiffe(r *http.Request, state hook.ServiceState
 		}
 	}
 	return true, nil
+}
+
+func decodeHookState(r io.Reader, v any) error {
+	lr := &io.LimitedReader{R: r, N: apimodel.MaxJSONBodyBytes + 1}
+	dec := json.NewDecoder(lr)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if lr.N == 0 {
+		return apimodel.ErrRequestBodyTooLarge
+	}
+	return nil
 }

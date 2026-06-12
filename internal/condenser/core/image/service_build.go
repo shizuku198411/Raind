@@ -76,10 +76,12 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 	}
 
 	// parse and validate dripfile
+	reportBuildProgress(buildParameter.Progress, "parsing", "buildfile", "parsing build file")
 	instructions, err := parseDripfile(buildParameter.DripfilePath)
 	if err != nil {
 		return "", err
 	}
+	reportBuildProgress(buildParameter.Progress, "parsed", "buildfile", fmt.Sprintf("parsed %d instructions", len(instructions)))
 
 	var stages []buildStage
 	stageByName := map[string]buildStage{}
@@ -112,50 +114,63 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 			}
 			state = newBuildState()
 			state.alias = from.alias
-			if err := s.applyFrom(&state, from.image); err != nil {
+			reportBuildProgress(buildParameter.Progress, "loading", from.image, "loading base image")
+			if err := s.applyFrom(&state, from.image, buildParameter.Progress); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "loaded", from.image, "base image ready")
 			cleanupRootfs = append(cleanupRootfs, state.rootfsPath)
 		case "WORKDIR":
 			if err := s.applyWorkdir(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "workdir", state.workdir, "set workdir")
 		case "ENV":
 			if err := s.applyEnv(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "env", "ENV", "set environment")
 		case "COPY", "ADD":
 			if err := s.flushRunScript(&state, bridge); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "copying", ins.op, truncateBuildDetail(ins.args))
 			if err := s.applyCopy(&state, buildParameter.ContextDir, stages, stageByName, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "copied", ins.op, truncateBuildDetail(ins.args))
 		case "RUN":
 			if err := s.applyRun(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "running", "RUN", truncateBuildDetail(ins.args))
 			if err := s.flushRunScript(&state, bridge); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "complete", "RUN", "run completed")
 		case "CMD":
 			if err := s.applyCmd(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "cmd", "CMD", "set default command")
 		case "ENTRYPOINT":
 			if err := s.applyEntrypoint(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "entrypoint", "ENTRYPOINT", "set entrypoint")
 		case "USER":
 			if err := s.applyUser(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "user", state.user, "set user")
 		case "SHELL":
 			if err := s.applyShell(&state, ins.args); err != nil {
 				return "", err
 			}
+			reportBuildProgress(buildParameter.Progress, "shell", "SHELL", "set shell")
 		case "ARG", "LABEL", "EXPOSE", "VOLUME", "STOPSIGNAL", "HEALTHCHECK", "ONBUILD", "MAINTAINER":
 			// Parsed for Dockerfile compatibility. Raind does not persist these metadata fields yet.
+			reportBuildProgress(buildParameter.Progress, "metadata", ins.op, truncateBuildDetail(ins.args))
 		default:
 			return "", fmt.Errorf("unsupported instruction: %s", ins.op)
 		}
@@ -174,9 +189,11 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 		return "", err
 	}
 
+	reportBuildProgress(buildParameter.Progress, "storing", buildParameter.Image, "storing image")
 	if err := s.storeBuiltImage(imageRepo, imageRef, state); err != nil {
 		return "", err
 	}
+	reportBuildProgress(buildParameter.Progress, "done", imageRepo+":"+imageRef, "build complete")
 	return imageRepo + ":" + imageRef, nil
 }
 
@@ -187,7 +204,27 @@ func newBuildState() buildState {
 	}
 }
 
-func (s *ImageService) applyFrom(state *buildState, image string) error {
+func reportBuildProgress(progress ProgressFunc, status string, id string, detail string) {
+	if progress == nil {
+		return
+	}
+	progress(PullProgressEvent{
+		Status: status,
+		ID:     id,
+		Detail: detail,
+	})
+}
+
+func truncateBuildDetail(detail string) string {
+	const max = 120
+	detail = strings.Join(strings.Fields(detail), " ")
+	if len(detail) <= max {
+		return detail
+	}
+	return detail[:max-3] + "..."
+}
+
+func (s *ImageService) applyFrom(state *buildState, image string, progress ProgressFunc) error {
 	image = strings.TrimSpace(strings.Fields(image)[0])
 	if image == "" {
 		return errors.New("FROM requires image")
@@ -214,7 +251,7 @@ func (s *ImageService) applyFrom(state *buildState, image string) error {
 	}
 
 	if !s.ilmHandler.IsImageExist(imageRepo, imageRef) {
-		if err := s.Pull(ServicePullModel{Image: image}); err != nil {
+		if err := s.Pull(ServicePullModel{Image: image, Progress: progress}); err != nil {
 			return err
 		}
 	}
@@ -313,7 +350,7 @@ func (s *ImageService) applyCopy(state *buildState, contextDir string, stages []
 				return err
 			}
 			external := newBuildState()
-			if fromErr := s.applyFrom(&external, spec.from); fromErr != nil {
+			if fromErr := s.applyFrom(&external, spec.from, nil); fromErr != nil {
 				return fmt.Errorf("%w; also failed to use %q as external image: %v", err, spec.from, fromErr)
 			}
 			defer os.RemoveAll(external.rootfsPath)
@@ -597,7 +634,7 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 		Rootfs:    mergedDir,
 		Cwd:       state.workdir,
 		Command:   buildCommand([]string{"/bin/sh", "-e"}, []string{runScriptPath}),
-		Namespace: []string{"mount", "network", "uts", "pid", "ipc", "user", "cgroup"},
+		Namespace: []string{"mount", "network", "uts", "pid", "ipc", "cgroup"},
 		Hostname:  containerId,
 		Env:       cloneSlice(state.env),
 		Mount:     []string{},
