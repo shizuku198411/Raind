@@ -83,6 +83,57 @@ assert_audit_event() {
     fail "missing successful audit event=${event} container=${cid}"
 }
 
+dump_runtime_debug() {
+  local cid="$1"
+  local container_dir="/etc/raind/container/${cid}"
+  local pid=""
+
+  echo "===== droplet runtime debug: ${cid} =====" >&2
+
+  echo "----- command/tool info -----" >&2
+  {
+    echo "DROPLET_BIN=${DROPLET_BIN}"
+    echo "E2E_WORK_DIR=${E2E_WORK_DIR}"
+    echo "RUNTIME_CID=${cid}"
+    echo "busybox=$(command -v busybox 2>/dev/null || true)"
+    if have_cmd busybox; then
+      file "$(command -v busybox)" 2>/dev/null || true
+      ldd "$(command -v busybox)" 2>/dev/null || true
+    fi
+  } >&2
+
+  echo "----- process security context -----" >&2
+  {
+    grep -E 'NoNewPrivs|Seccomp|CapEff|CapPrm|CapBnd' "/proc/$$/status" 2>/dev/null || true
+    cat "/proc/$$/attr/current" 2>/dev/null || true
+    cat "/proc/$$/uid_map" 2>/dev/null || true
+    cat "/proc/$$/gid_map" 2>/dev/null || true
+  } >&2
+
+  echo "----- droplet state -----" >&2
+  sudo_droplet state "${cid}" >&2 2>/dev/null || true
+
+  echo "----- state.json -----" >&2
+  sudo_cmd cat "${container_dir}/state.json" >&2 2>/dev/null || true
+
+  if sudo_cmd test -f "${container_dir}/state.json"; then
+    pid="$(sudo_cmd jq -r '.pid // 0' "${container_dir}/state.json" 2>/dev/null || true)"
+  fi
+  if [[ "${pid}" =~ ^[0-9]$ ]] && [[ "${pid}" -gt 0 ]]; then
+    echo "----- init process status: ${pid} -----" >&2
+    sudo_cmd cat "/proc/${pid}/status" >&2 2>/dev/null || true
+  fi
+
+  echo "----- container files -----" >&2
+  sudo_cmd find "${container_dir}" -maxdepth 4 -type f -print >&2 2>/dev/null || true
+
+  echo "----- init.log -----" >&2
+  sudo_cmd cat "${container_dir}/logs/init.log" >&2 2>/dev/null || true
+
+  echo "----- droplet audit log -----" >&2
+  sudo_cmd tail -n 100 /etc/raind/log/droplet_audit.log >&2 2>/dev/null || true
+}
+
 assert_cgroup_file_exists() {
   local cid="$1"
   local file="$2"
@@ -276,7 +327,19 @@ assert_runtime_state() {
   local cid="$1"
   local expected="$2"
 
-  sudo_droplet state "${cid}" | jq -e --arg expected "${expected}" '.status == $expected' >/dev/null
+  local state_out="${E2E_WORK_DIR}/${cid}.state.json"
+
+  if ! sudo_droplet state "${cid}" >"${state_out}" 2>"${state_out}.err"; then
+    cat "${state_out}.err" >&2 || true
+    dump_runtime_debug "${cid}"
+    fail "failed to read runtime state: container=${cid}"
+  fi
+
+  if ! jq -e --arg expected "${expected}" '.status == $expected' "${state_out}" >/dev/null; then
+    cat "${state_out}" >&2 || true
+    dump_runtime_debug "${cid}"
+    fail "unexpected runtime state: container=${cid} expected=${expected}"
+  fi
 }
 
 assert_runtime_state_contract() {
@@ -290,7 +353,10 @@ assert_runtime_state_contract() {
     .bundle and
     .rootfs and
     (.annotations | type == "object")
-  ' >/dev/null
+  ' >/dev/null || {
+    dump_runtime_debug "${cid}"
+    fail "runtime state contract assertion failed: container=${cid}"
+  }
 }
 
 assert_runtime_list_contains() {
@@ -299,7 +365,10 @@ assert_runtime_list_contains() {
 
   sudo_droplet list --format json |
     jq -e --arg cid "${cid}" --arg expected "${expected}" \
-      'map(select(.id == $cid and .status == $expected)) | length == 1' >/dev/null
+      'map(select(.id == $cid and .status == $expected)) | length == 1' >/dev/null || {
+        dump_runtime_debug "${cid}"
+        fail "runtime list assertion failed: container=${cid} expected=${expected}"
+      }
 }
 
 run_runtime_lifecycle_e2e() {

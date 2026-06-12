@@ -2,9 +2,11 @@ package env
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"raind/internal/condenser/core/cert"
 	"raind/internal/condenser/core/network"
@@ -15,6 +17,7 @@ import (
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/store/npm"
 	"raind/internal/condenser/utils"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -81,6 +84,10 @@ func (m *BootstrapManager) SetupRuntime() error {
 	if err := m.setupCgroup(); err != nil {
 		return err
 	}
+	// 7. setup CLI group
+	if err := m.setupRaindGroup(); err != nil {
+		return err
+	}
 	// 7. setup certificate
 	if err := m.setupCertificate(); err != nil {
 		return err
@@ -113,6 +120,7 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.AuditLogDir,
 		utils.VarLogDir,
 		utils.CertDir,
+		utils.CliCertDir,
 		utils.WebCertDir,
 	}
 	for _, dir := range dirs {
@@ -269,6 +277,22 @@ func (m *BootstrapManager) setupIlm() error {
 
 func (m *BootstrapManager) setupNpm() error {
 	return m.npmStoreHandler.SetNetworkPolicy()
+}
+
+func (m *BootstrapManager) setupRaindGroup() error {
+	if _, err := osuser.LookupGroup(utils.RaindGroupName); err == nil {
+		return nil
+	} else {
+		var unknown osuser.UnknownGroupError
+		if !errors.As(err, &unknown) {
+			return err
+		}
+	}
+
+	if err := m.commandFactory.Command("groupadd", "--system", utils.RaindGroupName).Run(); err != nil {
+		return fmt.Errorf("create %s group: %w", utils.RaindGroupName, err)
+	}
+	return nil
 }
 
 func (m *BootstrapManager) setupAppArmor() error {
@@ -450,6 +474,9 @@ func (m *BootstrapManager) setupCertificate() error {
 	if err != nil {
 		return err
 	}
+	if err := m.installCliCACert(); err != nil {
+		return err
+	}
 	// server cert for web ui
 	err = m.certHandler.EnsureSelfSignedCert(
 		utils.WebPublicCertPath,
@@ -484,6 +511,25 @@ func (m *BootstrapManager) setupCertificate() error {
 	}
 
 	// 3. client cert for cli
+	err = m.certHandler.IssueClientCert(
+		utils.CliClientCertPath,
+		utils.CliClientKeyPath,
+		utils.ClientIssuerCACertPath,
+		utils.ClientIssuerCAKeyPath,
+		cert.ClientCertConfig{
+			CommonName: "raind-client",
+			SpiiffeId:  "spiffe://raind/cli/admin",
+			ValidFor:   1 * 365 * 24 * time.Hour, // 1 year
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if err := m.secureCliCertFiles(); err != nil {
+		return err
+	}
+
+	// 4. legacy client cert for root-only tooling and migration compatibility
 	err = m.certHandler.IssueClientCert(
 		utils.ClientCertPath,
 		utils.ClientKeyPath,
@@ -531,5 +577,43 @@ func (m *BootstrapManager) setupCertificate() error {
 		return err
 	}
 
+	return nil
+}
+
+func (m *BootstrapManager) installCliCACert() error {
+	ca, err := m.filesystemHandler.ReadFile(utils.PublicCertPath)
+	if err != nil {
+		return err
+	}
+	return m.filesystemHandler.WriteFile(utils.CliPublicCertPath, ca, 0o644)
+}
+
+func (m *BootstrapManager) secureCliCertFiles() error {
+	group, err := osuser.LookupGroup(utils.RaindGroupName)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		return err
+	}
+
+	for _, path := range []string{utils.CliCertDir, utils.CliPublicCertPath, utils.CliClientCertPath, utils.CliClientKeyPath} {
+		if err := os.Chown(path, 0, gid); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(utils.CliCertDir, 0o750); err != nil {
+		return err
+	}
+	if err := os.Chmod(utils.CliPublicCertPath, 0o640); err != nil {
+		return err
+	}
+	if err := os.Chmod(utils.CliClientCertPath, 0o640); err != nil {
+		return err
+	}
+	if err := os.Chmod(utils.CliClientKeyPath, 0o640); err != nil {
+		return err
+	}
 	return nil
 }

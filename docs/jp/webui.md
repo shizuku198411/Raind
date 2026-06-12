@@ -4,8 +4,8 @@ Raind WebUI はコンテナとして動作し、UDS gateway 経由で Condenser 
 
 ## 前提
 ```bash
-sudo make enable-service
-sudo make enable-ui-gateway-service
+sudo ./scripts/build.sh enable-service
+sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 ## WebUIのビルドと起動

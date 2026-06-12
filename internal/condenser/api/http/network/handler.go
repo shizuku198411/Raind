@@ -55,6 +55,7 @@ func (h *RequestHandler) CreateBridge(w http.ResponseWriter, r *http.Request) {
 	var req CreateBridgeRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+		return
 	}
 
 	// service

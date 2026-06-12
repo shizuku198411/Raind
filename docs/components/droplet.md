@@ -39,13 +39,12 @@ Droplet currently supports:
 ```bash
 git clone https://github.com/your-org/droplet.git
 cd Raind
-./scripts/build.sh
+workshop run raind-dev -- build
 ```
 
 ## Test
 
 ```bash
-make test-droplet
 workshop run raind-dev -- test-droplet
 ```
 

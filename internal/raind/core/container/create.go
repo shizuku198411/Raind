@@ -35,9 +35,9 @@ func (s *ServiceContainerCreate) Create(param ServiceCreateModel) (string, error
 		return "", err
 	}
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return "", fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return "", err
 	}
 	httpClient.NewRequest(
 		http.MethodPost,

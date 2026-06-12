@@ -67,7 +67,7 @@ Condenser が現在サポートしている機能:
 ```bash
 git clone https://github.com/your-org/condenser.git
 cd Raind
-./scripts/build.sh
+workshop run raind-dev -- build
 ```
 
 ## 使い方

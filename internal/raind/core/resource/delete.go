@@ -25,9 +25,9 @@ func (s *ServiceResourceDelete) Delete(param ServiceResourceDeleteModel) (Delete
 		return DeleteResponseModel{}, fmt.Errorf("read yaml file: %w", err)
 	}
 
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return DeleteResponseModel{}, fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return DeleteResponseModel{}, err
 	}
 
 	endpoint := httpClient.BaseUrl + "/v1/resource/delete"

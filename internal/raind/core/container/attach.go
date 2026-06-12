@@ -39,15 +39,16 @@ func (c *ServiceContainerAttach) Attach(containerId string) error {
 	}
 
 	// Dial websocket
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
+	certPaths := utils.ResolveClientCertPaths()
 
 	dialer, err := httpClient.NewMTLSDialer(
-		utils.PublicCertPath,
-		utils.ClientCertPath,
-		utils.ClientKeyPath,
+		certPaths.CA,
+		certPaths.Cert,
+		certPaths.Key,
 	)
 	if err != nil {
 		return err

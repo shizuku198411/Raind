@@ -3,8 +3,6 @@
   <img src="./docs/assets/raind_icon.png" alt="Project Icon" width="190">
 </p>
 
-![version](https://img.shields.io/badge/version-v0.2.1-blue) ![PoC](https://img.shields.io/badge/PoC-00ac97)
-
 Zero Trust oriented container runtime for Linux.  
 Raind focuses on controlling and visualizing container networking at the runtime layer, not only at orchestration or app layer.
 
@@ -57,43 +55,21 @@ Raind is organized as a monorepo:
   - Filtering, pagination, relation views, overlays for actions/details/logs
   - Terminal attach/exec UX via WebSocket
 
-## Architecture
-
-```text
-raind-cli
-  -> Condenser API (https://127.0.0.1:7755, mTLS)
-    -> Droplet (OCI runtime execution)
-
-Browser
-  -> raind-webui (HTTPS)
-    -> /run/raind/ui.sock (UDS)
-      -> raind-ui-gateway
-        -> Condenser API (https://127.0.0.1:7755, mTLS)
-          -> Droplet (OCI runtime execution)
-```
-
 ## Quick Start
 
 ### 1. Build and Install
 
 ```bash
-# need go lang
-sudo snap install go --classic
+# need Workshop
+# https://ubuntu.com/workshop/docs/
 
 git clone https://github.com/shizuku198411/Raind.git
 cd Raind
-make bootstrap
-make build
-sudo make install
-sudo make enable-service
-sudo make enable-ui-gateway-service
+sudo ./scripts/build.sh
+sudo usermod -aG raind "$USER"
 ```
 
-Or:
-
-```bash
-sudo make all
-```
+Log out and back in, or run `newgrp raind`, before using `raind` as a non-root CLI.
 
 ### 2. Verify
 
@@ -105,11 +81,33 @@ raind container ls
 ### 3. Test
 
 ```bash
-make test-droplet
-workshop run raind-dev -- test-droplet
+workshop run raind-dev -- test-unit
+workshop run raind-dev -- test-e2e
 ```
 
-### 4. Launch WebUI
+### 4. Workshop Manual Runtime
+
+Use an isolated Workshop runtime when you want to manually try raind changes
+without touching containers or services already running on your host.
+
+```bash
+workshop run raind-dev -- dev-install
+workshop run raind-dev -- dev-start
+workshop shell raind-dev
+```
+
+in workshop, you can try raind operations.
+```bash
+# 
+```
+
+Clean up the Workshop runtime after manual testing:
+
+```bash
+workshop run raind-dev -- dev-cleanup
+```
+
+### 5. Launch WebUI
 
 Build/deploy `webui/` with its manifest:
 

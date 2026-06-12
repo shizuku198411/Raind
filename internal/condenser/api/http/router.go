@@ -206,6 +206,10 @@ func RequireSPIFFE(prefix string) func(http.Handler) http.Handler {
 			}
 			// validate
 			cert := r.TLS.PeerCertificates[0]
+			if len(cert.URIs) == 0 {
+				http.Error(w, "client certificate URI SAN required", http.StatusForbidden)
+				return
+			}
 			spiffeId := cert.URIs[0]
 			if strings.HasPrefix(spiffeId.String(), prefix) {
 				next.ServeHTTP(w, r)

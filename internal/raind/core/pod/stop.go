@@ -14,9 +14,9 @@ func NewServicePodStop() *ServicePodStop {
 type ServicePodStop struct{}
 
 func (s *ServicePodStop) Stop(param ServicePodStopModel) error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	if err := httpClient.NewRequest(
 		http.MethodPost,

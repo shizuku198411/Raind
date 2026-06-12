@@ -6,9 +6,36 @@ sdks:
     channel: latest/stable
 
 actions:
+  bootstrap: |
+    cd /project
+    ./scripts/build.sh bootstrap "$@"
+  build: |
+    cd /project
+    ./scripts/build.sh build "$@"
+  install: |
+    cd /project
+    ./scripts/build.sh install "$@"
+  enable-service: |
+    cd /project
+    ./scripts/build.sh enable-service "$@"
+  enable-ui-gateway-service: |
+    cd /project
+    ./scripts/build.sh enable-ui-gateway-service "$@"
+  all: |
+    cd /project
+    ./scripts/build.sh all "$@"
   test-droplet: |
     cd /project
     ./scripts/test/droplet.sh "$@"
+  test-condenser: |
+    cd /project
+    ./scripts/test/condenser.sh "$@"
+  test-raind: |
+    cd /project
+    ./scripts/test/raind.sh "$@"
+  test-unit: |
+    cd /project
+    ./scripts/test/unit.sh "$@"
   test-droplet-e2e: |
     cd /project
     ./scripts/e2e/droplet.sh "$@"
@@ -18,11 +45,26 @@ actions:
   test-raind-e2e: |
     cd /project
     ./scripts/e2e/raind.sh "$@"
-  e2e: |
+  test-e2e: |
     cd /project
     ./scripts/e2e/droplet.sh "$@"
     ./scripts/e2e/condenser.sh "$@"
     ./scripts/e2e/raind.sh "$@"
-  test: |
+
+  dev-install: |
     cd /project
-    ./scripts/test/droplet.sh "$@"
+    ./scripts/workshop/install.sh "$@"
+  dev-start: |
+    cd /project
+    ./scripts/workshop/start.sh "$@"
+  dev-setup: |
+    cd /project
+    ./scripts/workshop/install.sh "$@"
+    ./scripts/workshop/start.sh "$@"
+  dev-cleanup: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+  dev-reset: |
+    cd /project
+    ./scripts/workshop/cleanup.sh "$@"
+    ./scripts/workshop/start.sh "$@"

@@ -14,9 +14,9 @@ func NewServiceBottleDelete() *ServiceBottleDelete {
 type ServiceBottleDelete struct{}
 
 func (s *ServiceBottleDelete) Delete(param ServiceBottleDeleteModel) error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	httpClient.NewRequest(
 		http.MethodPost,

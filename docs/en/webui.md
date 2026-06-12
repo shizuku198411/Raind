@@ -4,8 +4,8 @@ Raind WebUI runs as a container and communicates through UDS gateway.
 
 ## Prerequisite
 ```bash
-sudo make enable-service
-sudo make enable-ui-gateway-service
+sudo ./scripts/build.sh enable-service
+sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 ## Build and Run WebUI

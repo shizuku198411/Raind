@@ -7,6 +7,7 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
+RAIND_GROUP="${RAIND_GROUP:-raind}"
 VERSION_FILE="${ROOT_DIR}/VERSION"
 
 BINARIES=(
@@ -17,11 +18,24 @@ BINARIES=(
   "bin/raind-ui-gateway"
 )
 
+bootstrap() {
+  echo "==> download go modules"
+  go mod download
+}
+
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     echo "error: root privileges are required. run with sudo." >&2
     exit 1
   fi
+}
+
+ensure_raind_group() {
+  if getent group "${RAIND_GROUP}" >/dev/null 2>&1; then
+    return
+  fi
+  echo "==> create ${RAIND_GROUP} group"
+  groupadd --system "${RAIND_GROUP}"
 }
 
 build_components() {
@@ -75,6 +89,7 @@ build_components() {
 
 install_binaries() {
   need_root
+  ensure_raind_group
 
   for bin_path in "${BINARIES[@]}"; do
     local src="${ROOT_DIR}/${bin_path}"
@@ -171,8 +186,9 @@ enable_ui_gateway_service() {
 
 usage() {
   cat <<USAGE
-Usage: $0 [build|install|enable-service|enable-ui-gateway-service|all]
+Usage: $0 [bootstrap|build|install|enable-service|enable-ui-gateway-service|all]
 
+  bootstrap       Download Go modules
   build           Build all components
   install         Install built binaries to ${INSTALL_DIR}
   enable-service  Create and start ${SERVICE_NAME}
@@ -185,6 +201,9 @@ main() {
   local target="${1:-all}"
 
   case "${target}" in
+    bootstrap)
+      bootstrap
+      ;;
     build)
       build_components
       ;;

@@ -21,9 +21,13 @@ const (
 	CgroupSubtreeControlPath = "/sys/fs/cgroup/raind/cgroup.subtree_control"
 
 	CertDir                = "/etc/raind/cert"
+	CliCertDir             = "/etc/raind/cli"
 	WebCertDir             = "/etc/raind/cert/web"
 	PublicCertPath         = "/etc/raind/cert/raind.crt"
 	PrivateKeyPath         = "/etc/raind/cert/raind.key"
+	CliPublicCertPath      = "/etc/raind/cli/ca.crt"
+	CliClientCertPath      = "/etc/raind/cli/client.crt"
+	CliClientKeyPath       = "/etc/raind/cli/client.key"
 	WebPublicCertPath      = "/etc/raind/cert/web/raindWeb.crt"
 	WebPrivateKeyPath      = "/etc/raind/cert/web/raindWeb.key"
 	ClientIssuerCACertPath = "/etc/raind/cert/raindClientCA.crt"
@@ -40,6 +44,8 @@ const (
 	EnrichedLogPath = "/var/log/raind/raind_netflow.jsonl"
 	DnsLogPath      = "/var/log/raind/raind_dns.jsonl"
 	MetricsLogPath  = "/var/log/raind/raind_metrics.jsonl"
+
+	RaindGroupName = "raind"
 
 	PodInfraImage               = "registry.k8s.io/pause:3.9"
 	PodInfraContainerNamePrefix = "condenser-pod-infra-"

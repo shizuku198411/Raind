@@ -30,14 +30,19 @@ sudo sysctl -p.
 ```
 git clone --recurse-submodules https://github.com/shizuku198411/Raind.git
 cd raind
-make bootstrap
-make build
-sudo make install
-sudo make enable-service
-sudo make enable-ui-gateway-service
+workshop run raind-dev -- bootstrap
+workshop run raind-dev -- build
+sudo ./scripts/build.sh install
+sudo ./scripts/build.sh enable-service
+sudo ./scripts/build.sh enable-ui-gateway-service
+sudo usermod -aG raind "$USER"
 # or run install + service setup together
-sudo make all
+workshop run raind-dev -- build
+sudo ./scripts/build.sh all
+sudo usermod -aG raind "$USER"
 ```
+
+Log out and back in, or run `newgrp raind`, before using `raind` as a non-root CLI.
 
 ## Verification
 ```

@@ -71,7 +71,7 @@ Requirements
 ```bash
 git clone https://github.com/your-org/condenser.git
 cd Raind
-./scripts/build.sh
+workshop run raind-dev -- build
 ```
 
 ## Usage

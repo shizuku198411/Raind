@@ -17,9 +17,9 @@ func NewServicePodList() *ServicePodList {
 type ServicePodList struct{}
 
 func (s *ServicePodList) List() error {
-	httpClient := httpclient.NewHttpClient()
-	if httpClient == nil {
-		return fmt.Errorf("sudo required")
+	httpClient, err := httpclient.NewHttpClient()
+	if err != nil {
+		return err
 	}
 	if err := httpClient.NewRequest(
 		http.MethodGet,

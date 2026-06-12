@@ -56,6 +56,9 @@ func (m *AppArmorManager) ApplyAAProfile(profile string) error {
 
 	cmd := "changeprofile " + profile
 	if _, err := f.WriteString(cmd); err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.ENOENT) {
+			return nil
+		}
 		return fmt.Errorf("AppArmor changeprofile to %q failed: %w", profile, err)
 	}
 
@@ -84,7 +87,7 @@ func (m *AppArmorManager) ApplyAAProfileOnExec(profile string) error {
 
 	cmd := "exec " + profile
 	if _, err := f.WriteString(cmd); err != nil {
-		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.ENOENT) {
 			return nil
 		}
 		return fmt.Errorf("AppArmor exec profile %q failed: %w", profile, err)

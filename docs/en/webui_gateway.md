@@ -9,10 +9,10 @@ For a containerized WebUI, use `raind-ui-gateway` to expose a Unix domain socket
 
 ## Build & Install
 ```bash
-make build
-sudo make install
-sudo make enable-service
-sudo make enable-ui-gateway-service
+workshop run raind-dev -- build
+sudo ./scripts/build.sh install
+sudo ./scripts/build.sh enable-service
+sudo ./scripts/build.sh enable-ui-gateway-service
 ```
 
 ## Socket Access from WebUI Backend (Node.js)
