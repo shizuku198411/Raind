@@ -5,14 +5,37 @@ type ServicePodApplyModel struct {
 }
 
 type ApplyResponseDataModel struct {
-	Pods []PodInfo `json:"pods"`
+	Pods        []PodInfo        `json:"pods"`
+	ReplicaSets []ReplicaSetInfo `json:"replicasets"`
+	Deployments []DeploymentInfo `json:"deployments"`
+	Services    []ServiceInfo    `json:"services"`
 }
 
 type PodInfo struct {
 	PodId        string   `json:"podId"`
+	ReplicaSetId string   `json:"replicaSetId,omitempty"`
 	Name         string   `json:"name"`
 	Namespace    string   `json:"namespace"`
 	ContainerIds []string `json:"containerIds"`
+}
+
+type ReplicaSetInfo struct {
+	ReplicaSetId string `json:"replicaSetId"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+}
+
+type DeploymentInfo struct {
+	DeploymentId string `json:"deploymentId"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	Replicas     int    `json:"replicas"`
+}
+
+type ServiceInfo struct {
+	ServiceId string `json:"serviceId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type ApplyResponseModel struct {

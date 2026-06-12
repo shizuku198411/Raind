@@ -422,6 +422,14 @@ func (f *fakePsmHandler) GetReplicaSetList() ([]psm.ReplicaSetInfo, error) { ret
 func (f *fakePsmHandler) IsTemplateReferenced(string) (bool, error)        { return false, nil }
 func (f *fakePsmHandler) UpdateReplicaSetReplicas(string, int) error       { return nil }
 func (f *fakePsmHandler) RemoveReplicaSet(string) error                    { return nil }
+func (f *fakePsmHandler) StoreDeployment(string, psm.DeploymentSpec) error { return nil }
+func (f *fakePsmHandler) GetDeployment(string) (psm.DeploymentInfo, error) {
+	return psm.DeploymentInfo{}, nil
+}
+func (f *fakePsmHandler) GetDeploymentList() ([]psm.DeploymentInfo, error) { return nil, nil }
+func (f *fakePsmHandler) UpdateDeploymentReplicas(string, int) error       { return nil }
+func (f *fakePsmHandler) UpdateDeploymentReplicaSet(string, string) error  { return nil }
+func (f *fakePsmHandler) RemoveDeployment(string) error                    { return nil }
 func (f *fakePsmHandler) RemovePod(string) error                           { return nil }
 func (f *fakePsmHandler) UpdatePod(string, string) error                   { return nil }
 func (f *fakePsmHandler) UpdatePodStoppedByUser(string, bool) error        { return nil }

@@ -37,6 +37,10 @@ func (c *PodController) Start() {
 }
 
 func (c *PodController) reconcileOnce() error {
+	if err := c.reconcileDeployments(); err != nil {
+		return err
+	}
+
 	replicaSets, err := c.psmHandler.GetReplicaSetList()
 	if err != nil {
 		return err
@@ -77,6 +81,11 @@ func (c *PodController) reconcileOnce() error {
 					}
 					if _, err := c.podHandler.Start(podId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", podId, err)
+						if podInfo, getErr := c.psmHandler.GetPodById(podId); getErr == nil {
+							if delErr := c.deletePod(podInfo); delErr != nil {
+								log.Printf("pod controller cleanup failed: podId=%s err=%v", podId, delErr)
+							}
+						}
 					}
 				}
 			} else if current > rs.Spec.Replicas {
@@ -114,6 +123,15 @@ func (c *PodController) reconcileOnce() error {
 				if p.State == "stopped" {
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+					}
+					continue
+				}
+				if p.State == "created" {
+					if _, err := c.podHandler.Start(p.PodId); err != nil {
+						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+						if err := c.recreatePod(p); err != nil {
+							log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
+						}
 					}
 				}
 			}
@@ -185,6 +203,62 @@ func (c *PodController) reconcileOnce() error {
 		}
 		if _, err := c.podHandler.Start(stoppedPodId); err != nil {
 			log.Printf("pod controller start failed: podId=%s err=%v", stoppedPodId, err)
+		}
+	}
+
+	return nil
+}
+
+func (c *PodController) reconcileDeployments() error {
+	deployments, err := c.psmHandler.GetDeploymentList()
+	if err != nil {
+		return err
+	}
+	if len(deployments) == 0 {
+		return nil
+	}
+
+	replicaSets, err := c.psmHandler.GetReplicaSetList()
+	if err != nil {
+		return err
+	}
+	replicaSetsById := make(map[string]psm.ReplicaSetInfo, len(replicaSets))
+	for _, rs := range replicaSets {
+		replicaSetsById[rs.ReplicaSetId] = rs
+	}
+
+	for _, deploy := range deployments {
+		if deploy.Spec.ReplicaSetId == "" {
+			replicaSetId := utils.NewUlid()
+			if err := c.psmHandler.StoreReplicaSet(replicaSetId, psm.ReplicaSetSpec{
+				Name:       deploy.Spec.Name,
+				Namespace:  deploy.Spec.Namespace,
+				Replicas:   deploy.Spec.Replicas,
+				TemplateId: deploy.Spec.TemplateId,
+				Selector:   deploy.Spec.Selector,
+			}); err != nil {
+				return err
+			}
+			if err := c.psmHandler.UpdateDeploymentReplicaSet(deploy.DeploymentId, replicaSetId); err != nil {
+				if rbErr := c.psmHandler.RemoveReplicaSet(replicaSetId); rbErr != nil {
+					log.Printf("deployment replicasets rollback failed: replicaSetId=%s err=%v", replicaSetId, rbErr)
+				}
+				return err
+			}
+			continue
+		}
+
+		rs, ok := replicaSetsById[deploy.Spec.ReplicaSetId]
+		if !ok {
+			if err := c.psmHandler.UpdateDeploymentReplicaSet(deploy.DeploymentId, ""); err != nil {
+				return err
+			}
+			continue
+		}
+		if rs.Spec.Replicas != deploy.Spec.Replicas {
+			if err := c.psmHandler.UpdateReplicaSetReplicas(rs.ReplicaSetId, deploy.Spec.Replicas); err != nil {
+				return err
+			}
 		}
 	}
 

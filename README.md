@@ -1,153 +1,229 @@
-# Raind - Zero Trust Oriented Container Runtime
+# raind container runtime
+
 <p>
-  <img src="./docs/assets/raind_icon.png" alt="Project Icon" width="190">
+  <img src="./assets/raind_icon.png" alt="Project Icon" width="150">
 </p>
 
-Zero Trust oriented container runtime for Linux.  
-Raind focuses on controlling and visualizing container networking at the runtime layer, not only at orchestration or app layer.
+raind is an experimental container runtime stack written in Go. It is split into small components so the user-facing CLI can stay unprivileged while the runtime daemons keep the root-only operations isolated.
 
-## Concept
+## Components
 
-Raind provides:
+- `raind`: CLI for images, containers, networks, resources, policies, logs, and bottles.
+- `condenser`: root daemon that exposes the management API and coordinates runtime operations.
+- `droplet`: low-level runtime component for container lifecycle operations.
+- `condenser-hook-agent`: hook-side helper used by condenser and droplet workflows.
 
-- Runtime-level network policy enforcement (East-West / North-South)
-- Runtime-level traffic visibility (traffic/DNS/audit logs)
-- Unified operations for container lifecycle and grouped workloads
-- Localhost-restricted control plane with UDS gateway pattern for WebUI
+## Highlights
 
-## What Is Included
+- Docker-style image pull flow with manifest and layer progress reporting.
+- mTLS between CLI and daemon components.
+- Non-root `raind` CLI access through the `raind` Unix group.
+- Root-only daemon operations are handled by `condenser` and `droplet`.
+- Runtime security policy management for east-west and north-south traffic control.
+- Workshop-based test and manual verification environment.
+- Container, image, network, pod, ReplicaSet, service, policy, bottle, and netflow log command groups.
 
-Raind is organized as a monorepo:
+## Pre-Setup
 
-- `cmd/raind`: user-facing CLI entrypoint
-- `cmd/condenser`: high-level runtime daemon entrypoint (API, state, policy, resource orchestration)
-- `cmd/droplet`: low-level OCI runtime executor entrypoint
-- `cmd/raind-ui-gateway`: UDS gateway entrypoint to Condenser (mTLS upstream)
-- `internal/`: component implementations grouped by `raind`, `condenser`, `droplet`, and `raind-ui-gateway`
-- `webui/`: Vue + Vite based Web UI
+### Packages
 
-## Core Features
+raind uses the following packages on the host:
 
-- Container lifecycle: create/start/stop/delete, attach, exec, logs, stats
-- Image management: pull/build/list/remove
-- Orchestration:
-  - Bottle (Compose-style grouped multi-container operation)
-  - ReplicaSet / Pod / Service (desired-state management and selector-based service routing)
-- Resource management: ReplicaSet / Pod / Service apply/delete/list/show
-- Bottle management: grouped multi-container operation
-- OCI-compliant low-level runtime security (Droplet):
-  - Namespace and cgroup-based isolation/resource control
-  - Capability set controls
-  - Seccomp syscall filtering
-  - AppArmor profile integration
-  - OCI lifecycle hooks
-- Policy management:
-  - `RAIND-EW` (Inter Connect)
-  - `RAIND-NS-OBS` (External Observe)
-  - `RAIND-NS-ENF` (External Enforce)
-  - commit/revert workflow
-- Security-focused logging:
-  - Audit log (`/var/log/raind/raind_audit.jsonl`)
-  - Netflow log (`/var/log/raind/raind_netflow.jsonl`)
-  - DNS log (`/var/log/raind/raind_dns.jsonl`)
-- WebUI pages:
-  - Dashboard, Container, Resource, Bottle, Image, Policy, Audit Log, Network Log
-  - Filtering, pagination, relation views, overlays for actions/details/logs
-  - Terminal attach/exec UX via WebSocket
+- `go`
+- `ulogd2`
+- `ulogd2-json`
 
-## Quick Start
+Install them for your environment. On Ubuntu, for example:
 
-### 1. Build and Install
+```sh
+sudo apt update
+sudo apt install -y ulogd2 ulogd2-json
+```
 
-```bash
-# need Workshop
-# https://ubuntu.com/workshop/docs/
+Go can be installed with your preferred toolchain manager, distribution package, or Workshop SDK.
 
-git clone https://github.com/shizuku198411/Raind.git
-cd Raind
-sudo ./scripts/build.sh
+### Enable Packet Forwarding
+
+Enable IPv4 packet forwarding so containers can communicate with external networks:
+
+```sh
+cat /proc/sys/net/ipv4/ip_forward
+# 0 = disabled, 1 = enabled
+
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+To enable it permanently, add or uncomment this line in `/etc/sysctl.conf`:
+
+```conf
+net.ipv4.ip_forward = 1
+```
+
+Apply the setting:
+
+```sh
+sudo sysctl -p
+```
+
+### Configure Log Forwarding
+
+raind reads raw NFLOG records from ulogd and writes enriched runtime logs under `/var/log/raind`.
+
+Create the ulog output directory:
+
+```sh
+sudo mkdir -p /var/log/ulog
+```
+
+Edit `/etc/ulogd.conf`. The plugin path depends on the host architecture, so check the multiarch directory first:
+
+```sh
+dpkg-architecture -qDEB_HOST_MULTIARCH
+```
+
+Enable these plugins in the `PLUGIN OPTIONS` section, replacing `aarch64-linux-gnu` with your host multiarch directory when needed:
+
+```conf
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_inppkt_NFLOG.so"
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_filter_IFINDEX.so"
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_filter_IP2STR.so"
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_filter_PRINTPKT.so"
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_raw2packet_BASE.so"
+plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_output_JSON.so"
+```
+
+Define the raind NFLOG stacks:
+
+```conf
+stack=log10:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
+stack=log11:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
+stack=log12:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
+```
+
+Add the instances:
+
+```conf
+[log10]
+group=10
+
+[log11]
+group=11
+
+[log12]
+group=12
+
+[base]
+[ifi]
+[ip2str]
+[print]
+
+[json]
+file="/var/log/ulog/raind.jsonl"
+sync=1
+```
+
+Restart ulogd:
+
+```sh
+sudo systemctl restart ulogd
+sudo systemctl status ulogd --no-pager
+```
+
+## Build
+
+Download Go modules and build on the host:
+
+```sh
+./scripts/build.sh bootstrap
+./scripts/build.sh build
+```
+
+Or build inside Workshop:
+
+```sh
+workshop run raind-dev -- bootstrap
+workshop run raind-dev -- build
+```
+
+Built binaries are written to `bin/`:
+
+- `bin/raind`
+- `bin/condenser`
+- `bin/condenser-hook-agent`
+- `bin/droplet`
+
+## Install Locally
+
+Install the built binaries to `/usr/local/bin`:
+
+```sh
+sudo ./scripts/build.sh install
+```
+
+Create and start the condenser daemon service:
+
+```sh
+sudo ./scripts/build.sh enable-service
+```
+
+Add your user to the `raind` group so the CLI can read the client certificate without running as root:
+
+```sh
 sudo usermod -aG raind "$USER"
 ```
 
-Log out and back in, or run `newgrp raind`, before using `raind` as a non-root CLI.
+Log out and back in, or start a new group session:
 
-### 2. Verify
+```sh
+newgrp raind
+```
 
-```bash
+You can also build, install, and enable the main condenser service in one command:
+
+```sh
+sudo ./scripts/build.sh all
+```
+
+## First Checks
+
+```sh
+raind --version
+raind image ls
+raind container ls
+raind network ls
+```
+
+Run a container and verify port forwarding:
+
+```sh
 raind container run -p 9988:80 nginx:latest
 raind container ls
 ```
 
-### 3. Test
+Generate external traffic and check enriched netflow logs:
 
-```bash
-workshop run raind-dev -- test-unit
-workshop run raind-dev -- test-e2e
+```sh
+raind container run -t --rm alpine:latest
+# inside the container:
+ping 1.1.1.1
+exit
 ```
 
-### 4. Workshop Manual Runtime
+Then inspect the enriched log output:
 
-Use an isolated Workshop runtime when you want to manually try raind changes
-without touching containers or services already running on your host.
-
-```bash
-workshop run raind-dev -- dev-install
-workshop run raind-dev -- dev-start
-workshop shell raind-dev
+```sh
+sudo cat /var/log/raind/raind_netflow.jsonl | jq .
+raind logs netflow --line 20
 ```
 
-in workshop, you can try raind operations.
-```bash
-# 
-```
+The CLI should be run as a non-root user in the `raind` group. If certificate paths need to be overridden, use:
 
-Clean up the Workshop runtime after manual testing:
-
-```bash
-workshop run raind-dev -- dev-cleanup
-```
-
-### 5. Launch WebUI
-
-Build/deploy `webui/` with its manifest:
-
-```bash
-cd webui
-raind image build -f . -t raind-webui:latest
-raind resource apply -f deploy/manifest.yaml
-```
-
-## WebUI Overview
-### Dashboard
-![dashboard](./docs/assets/raind_webui_dashboard.png)
-
-### Container Page
-![container](./docs/assets/raind_webui_container.png)
-
-![container_attach](./docs/assets/raind_webui_container_attach.png)
-
-### Resource Relations
-![resource](./docs/assets/raind_webui_resource.png)
-
-### Policy Page
-![policy](./docs/assets/raind_webui_policy.png)
-
-### Audit / Network Log Pages
-![audit](./docs/assets/raind_webui_audit.png)
-
-![network](./docs/assets/raind_webui_network.png)
-
-## Security Model (Summary)
-
-- Condenser control API is localhost/mTLS oriented.
-- WebUI does not directly call Condenser from containers.
-- `raind-ui-gateway` exposes controlled UDS for WebUI backend.
-- Policy is enforced at runtime networking path.
-- Runtime-level logs provide traceability for actions and traffic.
+- `RAIND_CA_CERT`
+- `RAIND_CLIENT_CERT`
+- `RAIND_CLIENT_KEY`
 
 ## Documentation
 
-- Install: [EN](docs/en/install.md) / [JP](docs/jp/install.md)
-- WebUI: [EN](docs/en/webui.md) / [JP](docs/jp/webui.md)
-- UDS Gateway: [EN](docs/en/webui_gateway.md) / [JP](docs/jp/webui_gateway.md)
-- Command list: [EN](docs/en/command_list.md) / [JP](docs/jp/command_list.md)
+- [Testing with Workshop](docs/testing.md)
+- [Command Reference](docs/commands.md)
+- [Usage Examples](docs/examples.md)

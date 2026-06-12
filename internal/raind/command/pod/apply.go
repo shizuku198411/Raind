@@ -30,7 +30,7 @@ func runApply(ctx *cli.Context) error {
 	}
 
 	service := pod.NewServicePodApply()
-	podId, err := service.Apply(
+	result, err := service.Apply(
 		pod.ServicePodApplyModel{
 			FilePath: yamlPath,
 		},
@@ -39,10 +39,12 @@ func runApply(ctx *cli.Context) error {
 		return err
 	}
 
-	if podId == "" {
+	if len(result.Pods) == 0 {
 		fmt.Printf("pod applied\n")
 		return nil
 	}
-	fmt.Printf("pod: %s applied\n", podId)
+	for _, p := range result.Pods {
+		fmt.Printf("pod: %s applied\n", p.PodId)
+	}
 	return nil
 }

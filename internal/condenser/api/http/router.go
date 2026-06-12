@@ -112,6 +112,12 @@ func NewApiRouter() *chi.Mux {
 	r.Post("/v1/replicasets/{replicaSetId}/actions/scale", podHandler.ScaleReplicaSet) // scale replicaset
 	r.Delete("/v1/replicasets/{replicaSetId}", podHandler.RemoveReplicaSet)            // remove replicaset
 
+	// == deployments ==
+	r.Get("/v1/deployments", podHandler.GetDeploymentList)                             // list deployment
+	r.Get("/v1/deployments/{deploymentId}", podHandler.GetDeploymentById)              // get deployment detail
+	r.Post("/v1/deployments/{deploymentId}/actions/scale", podHandler.ScaleDeployment) // scale deployment
+	r.Delete("/v1/deployments/{deploymentId}", podHandler.RemoveDeployment)            // remove deployment
+
 	// == images ==
 	r.Get("/v1/images", imageHandler.GetImageList)      // get image list
 	r.Post("/v1/images", imageHandler.PullImage)        // pull image

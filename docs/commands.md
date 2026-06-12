@@ -1,0 +1,178 @@
+# Command Reference
+
+This is a high-level command map for `raind`. For exact flags and current help text, run:
+
+```sh
+raind --help
+raind <command> --help
+raind <command> <subcommand> --help
+```
+
+## Global
+
+```sh
+raind --version
+raind --help
+raind completion bash
+raind completion zsh
+```
+
+## Images
+
+```sh
+raind image pull <image:tag>
+raind image pull --os linux --arch amd64 <image:tag>
+raind image build -f <context-dir> -t <repo/name:tag>
+raind image ls
+raind image rm <image:tag>
+```
+
+## Containers
+
+```sh
+raind container create [flags] <image:tag> [command]
+raind container run [flags] <image:tag> [command]
+raind container start [--tty] <container-id>
+raind container stop <container-id>
+raind container rm <container-id>
+raind container ls
+raind container attach <container-id>
+raind container exec [--tty] <container-id> [command]
+raind container logs [--line <n>] [--pager] <container-id>
+```
+
+Common create and run flags:
+
+```sh
+--name <name>
+--network <network>
+-p, --publish <host-port:container-port>
+-v, --volume <host-path:container-path>
+-e, --env <KEY=VALUE>
+--device <SRC[:DST[:rwm]]>
+--cap-add <CAP_NAME>
+--cap-drop <CAP_NAME>
+-t, --tty
+-i, --interactive
+```
+
+`container run` also supports:
+
+```sh
+--rm
+```
+
+## Networks
+
+```sh
+raind network create <network-name>
+raind network ls
+raind network rm <network-name>
+```
+
+## Resources
+
+Apply or remove resources from YAML:
+
+```sh
+raind resource apply -f <resource.yaml>
+raind resource rm -f <resource.yaml>
+```
+
+Pod commands:
+
+```sh
+raind resource pod create --name <name> [--namespace <namespace>] [--uid <uid>]
+raind resource pod ls
+raind resource pod start <pod-id>
+raind resource pod stop <pod-id>
+raind resource pod rm <pod-id>
+```
+
+Pod create also supports repeated labels and annotations:
+
+```sh
+--label <key=value>
+--annotation <key=value>
+```
+
+ReplicaSet commands:
+
+```sh
+raind resource replicaset ls
+raind resource replicaset show <replicaset-id>
+raind resource replicaset scale --replicas <n> <replicaset-id>
+raind resource replicaset rm <replicaset-id>
+```
+
+The short alias `rs` can be used for `replicaset`:
+
+```sh
+raind resource rs ls
+```
+
+Deployment commands:
+
+```sh
+raind resource deployment ls
+raind resource deployment show <deployment-id>
+raind resource deployment scale --replicas <n> <deployment-id>
+raind resource deployment rm <deployment-id>
+```
+
+The short alias `deploy` can be used for `deployment`:
+
+```sh
+raind resource deploy ls
+```
+
+Service commands:
+
+```sh
+raind resource service create -f <service.yaml>
+raind resource service ls
+raind resource service show <service-id>
+raind resource service rm <service-id>
+```
+
+## Policies
+
+```sh
+raind policy add --type <ew|ns-obs|ns-enf> [flags]
+raind policy ls --type <ew|ns-obs|ns-enf>
+raind policy rm <policy-id>
+raind policy commit
+raind policy revert
+raind policy ns-mode <observe|enforce>
+```
+
+Policy add flags:
+
+```sh
+-s, --source <container-name>
+-d, --destination <container-name>
+-p, --protocol <protocol>
+--dport <port>
+--comment <text>
+```
+
+## Bottles
+
+```sh
+raind bottle create -f <bottle.yaml>
+raind bottle ls
+raind bottle show <bottle-id-or-name>
+raind bottle start <bottle-id-or-name>
+raind bottle stop <bottle-id-or-name>
+raind bottle rm <bottle-id-or-name>
+```
+
+## Logs
+
+```sh
+raind logs netflow
+raind logs netflow --line <n>
+raind logs netflow --pager
+raind logs netflow --json
+raind logs netflow -t <container-or-address>
+```

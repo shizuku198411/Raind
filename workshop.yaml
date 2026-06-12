@@ -18,9 +18,6 @@ actions:
   enable-service: |
     cd /project
     ./scripts/build.sh enable-service "$@"
-  enable-ui-gateway-service: |
-    cd /project
-    ./scripts/build.sh enable-ui-gateway-service "$@"
   all: |
     cd /project
     ./scripts/build.sh all "$@"

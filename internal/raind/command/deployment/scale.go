@@ -1,8 +1,8 @@
-package replicasetcommand
+package deploymentcommand
 
 import (
 	"fmt"
-	"raind/internal/raind/core/replicaset"
+	"raind/internal/raind/core/deployment"
 	"strconv"
 
 	"github.com/urfave/cli/v2"
@@ -11,8 +11,8 @@ import (
 func CommandScale() *cli.Command {
 	return &cli.Command{
 		Name:      "scale",
-		Usage:     "scale a replicaset",
-		ArgsUsage: "<replicaset-id>",
+		Usage:     "scale a deployment",
+		ArgsUsage: "<deployment-id>",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:    "replicas",
@@ -27,7 +27,7 @@ func CommandScale() *cli.Command {
 func runScale(ctx *cli.Context) error {
 	id := ctx.Args().Get(0)
 	if id == "" {
-		return fmt.Errorf("replicaset id is required")
+		return fmt.Errorf("deployment id is required")
 	}
 
 	replicas, err := resolveReplicas(ctx)
@@ -38,22 +38,17 @@ func runScale(ctx *cli.Context) error {
 		return fmt.Errorf("replicas must be >= 0")
 	}
 
-	service := replicaset.NewServiceReplicaSetScale()
-	data, err := service.Scale(
-		replicaset.ServiceReplicaSetScaleModel{
-			Id:       id,
-			Replicas: replicas,
-		},
-	)
+	service := deployment.NewServiceDeploymentScale()
+	data, err := service.Scale(deployment.ServiceDeploymentScaleModel{Id: id, Replicas: replicas})
 	if err != nil {
 		return err
 	}
 
-	targetId := data.ReplicaSetId
+	targetId := data.DeploymentId
 	if targetId == "" {
 		targetId = id
 	}
-	fmt.Printf("replicaset: %s scaled to %d\n", targetId, data.Replicas)
+	fmt.Printf("deployment: %s scaled to %d\n", targetId, data.Replicas)
 	return nil
 }
 

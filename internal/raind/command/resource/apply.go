@@ -30,7 +30,7 @@ func runApply(ctx *cli.Context) error {
 	}
 
 	service := pod.NewServicePodApply()
-	resourceId, err := service.Apply(
+	result, err := service.Apply(
 		pod.ServicePodApplyModel{
 			FilePath: yamlPath,
 		},
@@ -39,10 +39,28 @@ func runApply(ctx *cli.Context) error {
 		return err
 	}
 
-	if resourceId == "" {
-		fmt.Printf("resource applied\n")
-		return nil
-	}
-	fmt.Printf("resource: %s applied\n", resourceId)
+	printAppliedResources(result)
 	return nil
+}
+
+func printAppliedResources(result pod.ApplyResponseDataModel) {
+	for _, p := range result.Pods {
+		if p.ReplicaSetId != "" {
+			fmt.Printf("replicaset: %s applied\n", p.ReplicaSetId)
+			continue
+		}
+		fmt.Printf("pod: %s applied\n", p.PodId)
+	}
+	for _, rs := range result.ReplicaSets {
+		fmt.Printf("replicaset: %s applied\n", rs.ReplicaSetId)
+	}
+	for _, deploy := range result.Deployments {
+		fmt.Printf("deployment: %s applied\n", deploy.DeploymentId)
+	}
+	for _, svc := range result.Services {
+		fmt.Printf("service: %s applied\n", svc.ServiceId)
+	}
+	if len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
+		fmt.Println("resource applied")
+	}
 }

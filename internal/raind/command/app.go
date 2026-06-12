@@ -5,6 +5,7 @@ import (
 	bottlecommand "raind/internal/raind/command/bottle"
 	completioncommand "raind/internal/raind/command/completion"
 	containercommand "raind/internal/raind/command/container"
+	deploymentcommand "raind/internal/raind/command/deployment"
 	imagecommand "raind/internal/raind/command/image"
 	logscommand "raind/internal/raind/command/logs"
 	networkcommand "raind/internal/raind/command/network"
@@ -74,7 +75,19 @@ func NewApp() *cli.App {
 					resourcecommand.CommandRemove(),
 					resourcecommand.CommandPod(),
 					resourcecommand.CommandReplicaSet(),
+					resourcecommand.CommandDeployment(),
 					resourcecommand.CommandService(),
+				},
+			},
+			{
+				Name:    "deployment",
+				Usage:   "deployment operation",
+				Aliases: []string{"deploy"},
+				Subcommands: []*cli.Command{
+					deploymentcommand.CommandList(),
+					deploymentcommand.CommandShow(),
+					deploymentcommand.CommandScale(),
+					deploymentcommand.CommandRemove(),
 				},
 			},
 			{

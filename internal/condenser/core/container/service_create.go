@@ -180,6 +180,7 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 			return "", fmt.Errorf("create container failed: %w", err)
 		}
 	}
+	rollbackFlag.Runtime = true
 
 	if createParameter.PodId != "" && !createParameter.IsPodInfra {
 		templateName := baseName
@@ -211,9 +212,17 @@ type RollbackFlag struct {
 	DirectoryEnv bool
 	CgroupEntry  bool
 	ForwardRule  bool
+	Runtime      bool
 }
 
 func (s *ContainerService) rollback(rollbackFlag RollbackFlag, containerId string) error {
+	if rollbackFlag.Runtime {
+		if err := s.deleteContainer(containerId); err != nil {
+			if !isNotFoundErr(err) {
+				return err
+			}
+		}
+	}
 	if rollbackFlag.AllocateAddr {
 		if err := s.releaseAddress(containerId); err != nil {
 			return err
@@ -429,9 +438,9 @@ func (s *ContainerService) createContainerSpec(
 		if err != nil {
 			return err
 		}
-		nsReady := podInfo.UserNS != "" && podInfo.NetworkNS != "" && podInfo.IPCNS != "" && podInfo.UTSNS != ""
+		nsReady := podInfo.NetworkNS != "" && podInfo.IPCNS != "" && podInfo.UTSNS != ""
 		if nsReady {
-			if !s.nsPathExists(podInfo.NetworkNS) || !s.nsPathExists(podInfo.IPCNS) || !s.nsPathExists(podInfo.UTSNS) || !s.nsPathExists(podInfo.UserNS) {
+			if !s.nsPathExists(podInfo.NetworkNS) || !s.nsPathExists(podInfo.IPCNS) || !s.nsPathExists(podInfo.UTSNS) || (podInfo.UserNS != "" && !s.nsPathExists(podInfo.UserNS)) {
 				_ = s.psmHandler.ResetPodNamespaces(podId)
 				nsReady = false
 			}
@@ -454,7 +463,7 @@ func (s *ContainerService) createContainerSpec(
 	if podId == "" {
 		hostname = containerId
 	} else {
-		hostname = podId[:12]
+		hostname = shortId(podId, 12)
 	}
 
 	// env
@@ -622,16 +631,22 @@ func (s *ContainerService) createContainer(containerId string, tty bool) error {
 }
 
 func (s *ContainerService) joinContainer(containerId string, tty bool, podId string) error {
-	podOwner, err := s.psmHandler.GetPodOwnerPid(podId)
+	podInfo, err := s.psmHandler.GetPodById(podId)
 	if err != nil {
 		return err
 	}
-	if podOwner <= 0 || !s.nsPathExists(fmt.Sprintf("/proc/%d/ns/user", podOwner)) {
+	if podInfo.OwnerPid <= 0 {
 		_ = s.psmHandler.ResetPodNamespaces(podId)
 		return s.createContainer(containerId, tty)
 	}
+
+	podPid := 0
+	if podInfo.UserNS != "" && s.nsPathExists(podInfo.UserNS) && s.nsPathExists(fmt.Sprintf("/proc/%d/ns/user", podInfo.OwnerPid)) {
+		podPid = podInfo.OwnerPid
+	}
+
 	// runtime: create
-	if err := s.runtimeHandler.Create(runtime.CreateModel{ContainerId: containerId, Tty: tty}, podOwner); err != nil {
+	if err := s.runtimeHandler.Create(runtime.CreateModel{ContainerId: containerId, Tty: tty}, podPid); err != nil {
 		return err
 	}
 	return nil
@@ -722,10 +737,13 @@ func (s *ContainerService) podNamespacesPopulated(podInfo psm.PodInfo) bool {
 }
 
 func (s *ContainerService) podNamespacesReady(podInfo psm.PodInfo) bool {
-	if podInfo.UserNS == "" || podInfo.NetworkNS == "" || podInfo.IPCNS == "" || podInfo.UTSNS == "" {
+	if podInfo.NetworkNS == "" || podInfo.IPCNS == "" || podInfo.UTSNS == "" {
 		return false
 	}
-	return s.nsPathExists(podInfo.NetworkNS) && s.nsPathExists(podInfo.IPCNS) && s.nsPathExists(podInfo.UTSNS) && s.nsPathExists(podInfo.UserNS)
+	if podInfo.UserNS != "" && !s.nsPathExists(podInfo.UserNS) {
+		return false
+	}
+	return s.nsPathExists(podInfo.NetworkNS) && s.nsPathExists(podInfo.IPCNS) && s.nsPathExists(podInfo.UTSNS)
 }
 
 func (s *ContainerService) waitForPodNamespaces(podId string) error {
@@ -915,6 +933,13 @@ func isRegistryHost(host string) bool {
 		return true
 	}
 	return strings.Contains(host, ".") || strings.Contains(host, ":")
+}
+
+func shortId(id string, length int) string {
+	if len(id) <= length {
+		return id
+	}
+	return id[:length]
 }
 
 func normalizeRegistry(reg string) string {

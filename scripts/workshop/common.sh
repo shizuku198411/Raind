@@ -8,7 +8,6 @@ WORKSHOP_LOG_DIR="${WORKSHOP_LOG_DIR:-/var/log/raind}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
-UI_GATEWAY_SERVICE_NAME="${UI_GATEWAY_SERVICE_NAME:-raind-ui-gateway.service}"
 RAIND_GROUP="${RAIND_GROUP:-raind}"
 
 BINARIES=(
@@ -16,7 +15,6 @@ BINARIES=(
   "condenser"
   "condenser-hook-agent"
   "droplet"
-  "raind-ui-gateway"
 )
 
 log() {
@@ -73,7 +71,6 @@ prepare_runtime_dirs() {
   ensure_raind_group
   sudo_cmd mkdir -p \
     /etc/raind/log \
-    /etc/raind/cert/web \
     /etc/raind/store \
     /etc/raind/container \
     /etc/raind/image/layers \
@@ -86,7 +83,6 @@ prepare_runtime_dirs() {
     /etc/raind \
     /etc/raind/log \
     /etc/raind/cert \
-    /etc/raind/cert/web \
     /etc/raind/store \
     /run/raind \
     "${WORKSHOP_RUN_DIR}" \

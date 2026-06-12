@@ -96,6 +96,7 @@ func (s *PsmStore) loadOrInit() (*PodState, error) {
 				Pods:         map[string]PodInfo{},
 				PodTemplates: map[string]PodTemplateInfo{},
 				ReplicaSets:  map[string]ReplicaSetInfo{},
+				Deployments:  map[string]DeploymentInfo{},
 			}, nil
 		}
 		return nil, err
@@ -113,6 +114,9 @@ func (s *PsmStore) loadOrInit() (*PodState, error) {
 	}
 	if st.ReplicaSets == nil {
 		st.ReplicaSets = map[string]ReplicaSetInfo{}
+	}
+	if st.Deployments == nil {
+		st.Deployments = map[string]DeploymentInfo{}
 	}
 	return &st, nil
 }
@@ -155,6 +159,9 @@ func (s *PsmStore) SetPodState() error {
 		}
 		if st.ReplicaSets == nil {
 			st.ReplicaSets = map[string]ReplicaSetInfo{}
+		}
+		if st.Deployments == nil {
+			st.Deployments = map[string]DeploymentInfo{}
 		}
 		return nil
 	})

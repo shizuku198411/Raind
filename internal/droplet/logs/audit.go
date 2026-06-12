@@ -76,9 +76,13 @@ func RecordAuditLog(auditRecord AuditRecord) error {
 
 	// error
 	if auditRecord.Result != "success" {
+		message := "unknown error"
+		if auditRecord.Error != nil {
+			message = auditRecord.Error.Error()
+		}
 		rec.Error = &ErrInfo{
 			Stage:   auditRecord.Stage,
-			Message: auditRecord.Error.Error(),
+			Message: message,
 		}
 	}
 

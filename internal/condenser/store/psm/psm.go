@@ -171,6 +171,12 @@ func (m *PsmManager) IsTemplateReferenced(templateId string) (bool, error) {
 				return nil
 			}
 		}
+		for _, deploy := range st.Deployments {
+			if deploy.Spec.TemplateId == templateId {
+				referenced = true
+				return nil
+			}
+		}
 		return nil
 	})
 	return referenced, err
@@ -182,6 +188,82 @@ func (m *PsmManager) RemoveReplicaSet(replicaSetId string) error {
 			return fmt.Errorf("replicaSetId=%s not found", replicaSetId)
 		}
 		delete(st.ReplicaSets, replicaSetId)
+		return nil
+	})
+}
+
+func (m *PsmManager) StoreDeployment(deploymentId string, spec DeploymentSpec) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		now := time.Now()
+		st.Deployments[deploymentId] = DeploymentInfo{
+			DeploymentId: deploymentId,
+			Spec:         spec,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		return nil
+	})
+}
+
+func (m *PsmManager) GetDeployment(deploymentId string) (DeploymentInfo, error) {
+	var deploy DeploymentInfo
+	err := m.psmStore.withRLock(func(st *PodState) error {
+		info, ok := st.Deployments[deploymentId]
+		if !ok {
+			return fmt.Errorf("deploymentId=%s not found", deploymentId)
+		}
+		deploy = info
+		return nil
+	})
+	return deploy, err
+}
+
+func (m *PsmManager) GetDeploymentList() ([]DeploymentInfo, error) {
+	var deployments []DeploymentInfo
+	err := m.psmStore.withRLock(func(st *PodState) error {
+		for _, deploy := range st.Deployments {
+			deployments = append(deployments, deploy)
+		}
+		return nil
+	})
+	return deployments, err
+}
+
+func (m *PsmManager) UpdateDeploymentReplicas(deploymentId string, replicas int) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		deploy, ok := st.Deployments[deploymentId]
+		if !ok {
+			return fmt.Errorf("deploymentId=%s not found", deploymentId)
+		}
+		if replicas < 0 {
+			return fmt.Errorf("replicas must be >= 0")
+		}
+		deploy.Spec.Replicas = replicas
+		deploy.UpdatedAt = time.Now()
+		st.Deployments[deploymentId] = deploy
+		return nil
+	})
+}
+
+func (m *PsmManager) UpdateDeploymentReplicaSet(deploymentId, replicaSetId string) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		deploy, ok := st.Deployments[deploymentId]
+		if !ok {
+			return fmt.Errorf("deploymentId=%s not found", deploymentId)
+		}
+		deploy.Spec.ReplicaSetId = replicaSetId
+		deploy.UpdatedAt = time.Now()
+		st.Deployments[deploymentId] = deploy
+		return nil
+	})
+}
+
+func (m *PsmManager) RemoveDeployment(deploymentId string) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		if _, ok := st.Deployments[deploymentId]; !ok {
+			return fmt.Errorf("deploymentId=%s not found", deploymentId)
+		}
+		delete(st.Deployments, deploymentId)
 		return nil
 	})
 }
