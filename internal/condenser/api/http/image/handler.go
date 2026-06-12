@@ -145,9 +145,6 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	if dripfile == "" {
 		dripfile = r.URL.Query().Get("dockerfile")
 	}
-	if dripfile == "" {
-		dripfile = "Dripfile"
-	}
 	network := r.URL.Query().Get("network")
 
 	tmpDir, err := os.MkdirTemp("", "raind-build-context-")
@@ -160,6 +157,14 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	if err := image.ExtractTarToDir(r.Body, tmpDir); err != nil {
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid build context: "+err.Error(), nil)
 		return
+	}
+
+	if dripfile == "" {
+		dripfile, err = resolveBuildFile(tmpDir)
+		if err != nil {
+			apimodel.RespondFail(w, http.StatusBadRequest, "build file not found", nil)
+			return
+		}
 	}
 
 	dfPath := filepath.Join(tmpDir, filepath.Clean(dripfile))
@@ -181,6 +186,15 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "build completed", BuildImageResponse{Image: result})
+}
+
+func resolveBuildFile(contextDir string) (string, error) {
+	for _, candidate := range []string{"Dripfile", "Dockerfile"} {
+		if _, err := os.Stat(filepath.Join(contextDir, candidate)); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 // GetImageList godoc

@@ -14,6 +14,7 @@ import (
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/utils"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +25,38 @@ type buildState struct {
 	imageRepo  string
 	imageRef   string
 	rootfsPath string
+	alias      string
 
 	env        []string
 	workdir    string
 	cmd        []string
 	entrypoint []string
 	runScript  []string
+	user       string
+	shell      []string
 }
 
 type buildInstruction struct {
 	op   string
 	args string
+}
+
+type buildStage struct {
+	name  string
+	index int
+	state buildState
+}
+
+type fromSpec struct {
+	image string
+	alias string
+}
+
+type copySpec struct {
+	from    string
+	chmod   string
+	sources []string
+	dest    string
 }
 
 // == service: build image ==
@@ -59,24 +81,41 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 		return "", err
 	}
 
-	state := buildState{
-		workdir: "/",
-	}
+	var stages []buildStage
+	stageByName := map[string]buildStage{}
+	var cleanupRootfs []string
+	state := newBuildState()
 	defer func() {
-		if state.rootfsPath != "" {
-			_ = os.RemoveAll(state.rootfsPath)
+		for _, rootfs := range cleanupRootfs {
+			if rootfs != "" {
+				_ = os.RemoveAll(rootfs)
+			}
 		}
 	}()
 
 	for _, ins := range instructions {
 		switch ins.op {
 		case "FROM":
-			if state.imageRepo != "" {
-				return "", errors.New("multi-stage build is not supported")
+			if state.rootfsPath != "" {
+				if err := s.flushRunScript(&state, bridge); err != nil {
+					return "", err
+				}
+				stage := buildStage{name: state.alias, index: len(stages), state: state}
+				stages = append(stages, stage)
+				if stage.name != "" {
+					stageByName[strings.ToLower(stage.name)] = stage
+				}
 			}
-			if err := s.applyFrom(&state, ins.args); err != nil {
+			from, err := parseFromSpec(ins.args)
+			if err != nil {
 				return "", err
 			}
+			state = newBuildState()
+			state.alias = from.alias
+			if err := s.applyFrom(&state, from.image); err != nil {
+				return "", err
+			}
+			cleanupRootfs = append(cleanupRootfs, state.rootfsPath)
 		case "WORKDIR":
 			if err := s.applyWorkdir(&state, ins.args); err != nil {
 				return "", err
@@ -86,11 +125,17 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 				return "", err
 			}
 		case "COPY", "ADD":
-			if err := s.applyCopy(&state, buildParameter.ContextDir, ins.args); err != nil {
+			if err := s.flushRunScript(&state, bridge); err != nil {
+				return "", err
+			}
+			if err := s.applyCopy(&state, buildParameter.ContextDir, stages, stageByName, ins.args); err != nil {
 				return "", err
 			}
 		case "RUN":
 			if err := s.applyRun(&state, ins.args); err != nil {
+				return "", err
+			}
+			if err := s.flushRunScript(&state, bridge); err != nil {
 				return "", err
 			}
 		case "CMD":
@@ -101,6 +146,16 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 			if err := s.applyEntrypoint(&state, ins.args); err != nil {
 				return "", err
 			}
+		case "USER":
+			if err := s.applyUser(&state, ins.args); err != nil {
+				return "", err
+			}
+		case "SHELL":
+			if err := s.applyShell(&state, ins.args); err != nil {
+				return "", err
+			}
+		case "ARG", "LABEL", "EXPOSE", "VOLUME", "STOPSIGNAL", "HEALTHCHECK", "ONBUILD", "MAINTAINER":
+			// Parsed for Dockerfile compatibility. Raind does not persist these metadata fields yet.
 		default:
 			return "", fmt.Errorf("unsupported instruction: %s", ins.op)
 		}
@@ -110,10 +165,8 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 		return "", errors.New("missing FROM instruction")
 	}
 
-	if len(state.runScript) > 0 {
-		if err := s.runCommandInContainer(&state, bridge, state.runScript); err != nil {
-			return "", err
-		}
+	if err := s.flushRunScript(&state, bridge); err != nil {
+		return "", err
 	}
 
 	imageRepo, imageRef, err := s.parseImageRef(buildParameter.Image)
@@ -127,10 +180,32 @@ func (s *ImageService) Build(buildParameter ServiceBuildModel) (string, error) {
 	return imageRepo + ":" + imageRef, nil
 }
 
+func newBuildState() buildState {
+	return buildState{
+		workdir: "/",
+		shell:   []string{"/bin/sh", "-c"},
+	}
+}
+
 func (s *ImageService) applyFrom(state *buildState, image string) error {
 	image = strings.TrimSpace(strings.Fields(image)[0])
 	if image == "" {
 		return errors.New("FROM requires image")
+	}
+	if image == "scratch" {
+		tmpRootfs, err := os.MkdirTemp("", "raind-build-rootfs-")
+		if err != nil {
+			return err
+		}
+		state.imageRepo = "scratch"
+		state.imageRef = "latest"
+		state.rootfsPath = tmpRootfs
+		state.env = nil
+		state.workdir = "/"
+		state.cmd = nil
+		state.entrypoint = nil
+		state.user = ""
+		return nil
 	}
 
 	imageRepo, imageRef, err := s.parseImageRef(image)
@@ -176,6 +251,10 @@ func (s *ImageService) applyFrom(state *buildState, image string) error {
 	}
 	state.cmd = cloneSlice(imageConfig.Config.Cmd)
 	state.entrypoint = cloneSlice(imageConfig.Config.Entrypoint)
+	state.user = imageConfig.Config.User
+	if len(state.shell) == 0 {
+		state.shell = []string{"/bin/sh", "-c"}
+	}
 	return nil
 }
 
@@ -197,7 +276,10 @@ func (s *ImageService) applyEnv(state *buildState, arg string) error {
 	if arg == "" {
 		return errors.New("ENV requires key=value")
 	}
-	parts := strings.Fields(arg)
+	parts, err := splitDockerWords(arg)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < len(parts); i++ {
 		if strings.Contains(parts[i], "=") {
 			kv := strings.SplitN(parts[i], "=", 2)
@@ -213,45 +295,92 @@ func (s *ImageService) applyEnv(state *buildState, arg string) error {
 	return nil
 }
 
-func (s *ImageService) applyCopy(state *buildState, contextDir string, arg string) error {
-	parts := strings.Fields(arg)
-	if len(parts) < 2 {
-		return errors.New("COPY/ADD requires src and dest")
-	}
-	if len(parts) > 2 {
-		return errors.New("COPY/ADD multiple sources not supported")
-	}
-	src := parts[0]
-	dst := parts[1]
-	if src == "" || dst == "" {
-		return errors.New("COPY/ADD requires src and dest")
-	}
-	srcPath, err := safeJoin(contextDir, src)
+func (s *ImageService) applyCopy(state *buildState, contextDir string, stages []buildStage, stageByName map[string]buildStage, arg string) error {
+	spec, err := parseCopySpec(arg)
 	if err != nil {
 		return err
 	}
+	if len(spec.sources) < 1 {
+		return errors.New("COPY/ADD requires src and dest")
+	}
+
+	sourceRoot := contextDir
+	stageSource := false
+	if spec.from != "" {
+		stage, err := resolveCopyStage(spec.from, stages, stageByName)
+		if err != nil {
+			if _, atoiErr := strconv.Atoi(spec.from); atoiErr == nil {
+				return err
+			}
+			external := newBuildState()
+			if fromErr := s.applyFrom(&external, spec.from); fromErr != nil {
+				return fmt.Errorf("%w; also failed to use %q as external image: %v", err, spec.from, fromErr)
+			}
+			defer os.RemoveAll(external.rootfsPath)
+			sourceRoot = external.rootfsPath
+			stageSource = true
+		} else {
+			sourceRoot = stage.state.rootfsPath
+			stageSource = true
+		}
+	}
+
+	dst := spec.dest
 	dstAbs := dst
 	if !filepath.IsAbs(dstAbs) {
 		dstAbs = filepath.Join(state.workdir, dstAbs)
 	}
 	dstPath := filepath.Join(state.rootfsPath, strings.TrimPrefix(filepath.Clean(dstAbs), "/"))
-	if strings.HasSuffix(dst, "/") {
+	if strings.HasSuffix(dst, "/") || len(spec.sources) > 1 {
 		if err := os.MkdirAll(dstPath, 0o755); err != nil {
 			return err
 		}
 	}
+	if len(spec.sources) > 1 {
+		if dstInfo, err := os.Lstat(dstPath); err != nil || !dstInfo.IsDir() {
+			return errors.New("COPY/ADD with multiple sources requires destination directory")
+		}
+	}
 
-	info, err := os.Lstat(srcPath)
-	if err != nil {
-		return err
+	for _, src := range spec.sources {
+		if src == "" {
+			return errors.New("COPY/ADD requires src and dest")
+		}
+		srcPath, err := safeBuildSourceJoin(sourceRoot, src, stageSource)
+		if err != nil {
+			return err
+		}
+		targetPath := dstPath
+		if len(spec.sources) > 1 {
+			targetPath = filepath.Join(dstPath, filepath.Base(filepath.Clean(src)))
+		}
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if err := copyDir(srcPath, targetPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if dstInfo, err := os.Lstat(targetPath); err == nil && dstInfo.IsDir() {
+			targetPath = filepath.Join(targetPath, filepath.Base(srcPath))
+		}
+		if err := copyFile(srcPath, targetPath, info.Mode()); err != nil {
+			return err
+		}
+		if spec.chmod != "" {
+			mode, err := parseChmod(spec.chmod)
+			if err != nil {
+				return err
+			}
+			if err := os.Chmod(targetPath, mode); err != nil {
+				return err
+			}
+		}
 	}
-	if info.IsDir() {
-		return copyDir(srcPath, dstPath)
-	}
-	if dstInfo, err := os.Lstat(dstPath); err == nil && dstInfo.IsDir() {
-		dstPath = filepath.Join(dstPath, filepath.Base(srcPath))
-	}
-	return copyFile(srcPath, dstPath, info.Mode())
+	return nil
 }
 
 func (s *ImageService) applyRun(state *buildState, arg string) error {
@@ -285,6 +414,36 @@ func (s *ImageService) applyEntrypoint(state *buildState, arg string) error {
 	}
 	state.entrypoint = entry
 	return nil
+}
+
+func (s *ImageService) applyUser(state *buildState, arg string) error {
+	user := strings.TrimSpace(arg)
+	if user == "" {
+		return errors.New("USER requires user")
+	}
+	state.user = user
+	return nil
+}
+
+func (s *ImageService) applyShell(state *buildState, arg string) error {
+	shell, err := parseExecArray(arg)
+	if err != nil {
+		return err
+	}
+	if len(shell) == 0 {
+		return errors.New("SHELL requires command")
+	}
+	state.shell = shell
+	return nil
+}
+
+func (s *ImageService) flushRunScript(state *buildState, bridge string) error {
+	if len(state.runScript) == 0 {
+		return nil
+	}
+	script := cloneSlice(state.runScript)
+	state.runScript = nil
+	return s.runCommandInContainer(state, bridge, script)
 }
 
 func (s *ImageService) runCommandInContainer(state *buildState, bridge string, scriptLines []string) error {
@@ -609,19 +768,224 @@ func parseDripfile(path string) ([]buildInstruction, error) {
 	return instructions, nil
 }
 
+func parseFromSpec(arg string) (fromSpec, error) {
+	parts, err := splitDockerWords(arg)
+	if err != nil {
+		return fromSpec{}, err
+	}
+	var image string
+	var alias string
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if strings.HasPrefix(part, "--platform=") {
+			continue
+		}
+		if part == "--platform" {
+			i++
+			continue
+		}
+		if image == "" {
+			image = part
+			continue
+		}
+		if strings.EqualFold(part, "AS") {
+			if i+1 >= len(parts) || parts[i+1] == "" {
+				return fromSpec{}, errors.New("FROM AS requires stage name")
+			}
+			alias = parts[i+1]
+			i++
+			continue
+		}
+		return fromSpec{}, fmt.Errorf("invalid FROM argument: %s", part)
+	}
+	if image == "" {
+		return fromSpec{}, errors.New("FROM requires image")
+	}
+	return fromSpec{image: image, alias: alias}, nil
+}
+
+func parseCopySpec(arg string) (copySpec, error) {
+	parts, err := splitDockerInstructionArgs(arg)
+	if err != nil {
+		return copySpec{}, err
+	}
+	var out copySpec
+	var operands []string
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if !strings.HasPrefix(part, "--") {
+			operands = append(operands, part)
+			continue
+		}
+		key, value, hasValue := strings.Cut(strings.TrimPrefix(part, "--"), "=")
+		switch key {
+		case "from":
+			if !hasValue {
+				i++
+				if i >= len(parts) {
+					return copySpec{}, errors.New("COPY --from requires value")
+				}
+				value = parts[i]
+			}
+			out.from = value
+		case "chmod":
+			if !hasValue {
+				i++
+				if i >= len(parts) {
+					return copySpec{}, errors.New("COPY --chmod requires value")
+				}
+				value = parts[i]
+			}
+			out.chmod = value
+		case "chown", "link":
+			if !hasValue && key == "chown" {
+				i++
+				if i >= len(parts) {
+					return copySpec{}, errors.New("COPY --chown requires value")
+				}
+			}
+			// Accepted for Dockerfile compatibility. Ownership is not changed by Raind yet.
+		default:
+			return copySpec{}, fmt.Errorf("unsupported COPY/ADD option: --%s", key)
+		}
+	}
+	if len(operands) == 1 && strings.HasPrefix(strings.TrimSpace(operands[0]), "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(operands[0]), &arr); err != nil {
+			return copySpec{}, fmt.Errorf("invalid COPY/ADD JSON form: %w", err)
+		}
+		operands = arr
+	}
+	if len(operands) < 2 {
+		return copySpec{}, errors.New("COPY/ADD requires src and dest")
+	}
+	out.sources = operands[:len(operands)-1]
+	out.dest = operands[len(operands)-1]
+	return out, nil
+}
+
+func splitDockerInstructionArgs(arg string) ([]string, error) {
+	arg = strings.TrimSpace(arg)
+	if idx := strings.Index(arg, "["); idx > 0 {
+		prefix := strings.TrimSpace(arg[:idx])
+		array := strings.TrimSpace(arg[idx:])
+		parts, err := splitDockerWords(prefix)
+		if err != nil {
+			return nil, err
+		}
+		var probe []string
+		if err := json.Unmarshal([]byte(array), &probe); err != nil {
+			return nil, fmt.Errorf("invalid JSON form: %w", err)
+		}
+		return append(parts, array), nil
+	}
+	return splitDockerWords(arg)
+}
+
+func splitDockerWords(s string) ([]string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(s, "[") {
+		return []string{s}, nil
+	}
+
+	var out []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range s {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				continue
+			}
+			b.WriteRune(r)
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case ' ', '\t', '\r', '\n':
+			if b.Len() > 0 {
+				out = append(out, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, errors.New("unterminated quote")
+	}
+	if b.Len() > 0 {
+		out = append(out, b.String())
+	}
+	return out, nil
+}
+
+func resolveCopyStage(name string, stages []buildStage, stageByName map[string]buildStage) (buildStage, error) {
+	if name == "" {
+		return buildStage{}, errors.New("empty stage name")
+	}
+	if idx, err := strconv.Atoi(name); err == nil {
+		if idx < 0 || idx >= len(stages) {
+			return buildStage{}, fmt.Errorf("unknown build stage: %s", name)
+		}
+		return stages[idx], nil
+	}
+	if stage, ok := stageByName[strings.ToLower(name)]; ok {
+		return stage, nil
+	}
+	return buildStage{}, fmt.Errorf("unknown build stage: %s", name)
+}
+
+func safeBuildSourceJoin(root string, src string, allowAbs bool) (string, error) {
+	clean := filepath.Clean(src)
+	if filepath.IsAbs(clean) {
+		clean = strings.TrimPrefix(clean, string(os.PathSeparator))
+	}
+	return safeJoin(root, clean)
+}
+
+func parseChmod(value string) (fs.FileMode, error) {
+	mode, err := strconv.ParseUint(value, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid chmod value: %s", value)
+	}
+	return fs.FileMode(mode), nil
+}
+
 func parseShellOrExec(arg string) ([]string, error) {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
 		return nil, errors.New("command is empty")
 	}
 	if strings.HasPrefix(arg, "[") {
-		var arr []string
-		if err := json.Unmarshal([]byte(arg), &arr); err != nil {
-			return nil, fmt.Errorf("invalid exec form: %w", err)
-		}
-		return arr, nil
+		return parseExecArray(arg)
 	}
 	return []string{"/bin/sh", "-c", arg}, nil
+}
+
+func parseExecArray(arg string) ([]string, error) {
+	var arr []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(arg)), &arr); err != nil {
+		return nil, fmt.Errorf("invalid exec form: %w", err)
+	}
+	return arr, nil
 }
 
 func buildCommand(entrypoint, cmd []string) string {
@@ -992,6 +1356,7 @@ func (s *ImageService) storeBuiltImage(imageRepo, imageRef string, state buildSt
 			Cmd:        cloneSlice(state.cmd),
 			Entrypoint: cloneSlice(state.entrypoint),
 			WorkingDir: state.workdir,
+			User:       state.user,
 		},
 	}
 	configPath := filepath.Join(repoOut, "config.json")
