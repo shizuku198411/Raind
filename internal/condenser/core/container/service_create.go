@@ -443,10 +443,10 @@ func (s *ContainerService) createContainerSpec(
 			nspath = []string{networkPath, ipcPath, utsPath}
 			namespace = []string{"mount", "pid", "cgroup"}
 		} else {
-			namespace = []string{"mount", "network", "uts", "pid", "ipc", "user", "cgroup"}
+			namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
 		}
 	} else {
-		namespace = []string{"mount", "network", "uts", "pid", "ipc", "user", "cgroup"}
+		namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
 	}
 
 	// hostname

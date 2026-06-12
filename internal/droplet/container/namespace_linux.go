@@ -50,7 +50,7 @@ func buildSysProcAttr(procAttr procAttr) *syscall.SysProcAttr {
 func buildProcAttrForRootContainer(nsConfig namespaceConfig) procAttr {
 	cloneFlags := buildCloneFlags(nsConfig)
 	uidMap, gidMap := buildRootUserNamespaceIDMap(nsConfig)
-	setGroupsFlag := true
+	setGroupsFlag := nsConfig.user
 
 	return procAttr{
 		cloneFlags:    cloneFlags,
