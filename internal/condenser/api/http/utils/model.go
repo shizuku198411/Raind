@@ -1,9 +1,17 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 )
+
+const MaxJSONBodyBytes int64 = 1 << 20
+
+var ErrRequestBodyTooLarge = errors.New("request body too large")
 
 type ApiResponse struct {
 	Status  string `json:"status"` // success | fail
@@ -22,12 +30,39 @@ type StreamEvent struct {
 }
 
 func DecodeRequestBody(r *http.Request, v any) error {
-	dec := json.NewDecoder(r.Body)
+	body, err := readLimitedBody(r.Body, MaxJSONBodyBytes)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("invalid json: multiple JSON values")
+	}
 	return nil
+}
+
+func DecodeErrorStatus(err error) int {
+	if errors.Is(err, ErrRequestBodyTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}
+
+func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
+	lr := &io.LimitedReader{R: r, N: limit + 1}
+	body, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w: max=%d bytes", ErrRequestBodyTooLarge, limit)
+	}
+	return body, nil
 }
 
 func WriteJson(w http.ResponseWriter, statusCode int, v any) {

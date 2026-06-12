@@ -48,7 +48,7 @@ type RequestHandler struct {
 func (h *RequestHandler) CreatePod(w http.ResponseWriter, r *http.Request) {
 	var req CreatePodRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), CreatePodResponse{PodId: ""})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), CreatePodResponse{PodId: ""})
 		return
 	}
 
@@ -674,7 +674,7 @@ func (h *RequestHandler) ScaleReplicaSet(w http.ResponseWriter, r *http.Request)
 
 	var req ScaleReplicaSetRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), ScaleReplicaSetResponse{ReplicaSetId: replicaSetId})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), ScaleReplicaSetResponse{ReplicaSetId: replicaSetId})
 		return
 	}
 	if req.Replicas < 0 {
@@ -871,7 +871,7 @@ func (h *RequestHandler) ScaleDeployment(w http.ResponseWriter, r *http.Request)
 
 	var req ScaleDeploymentRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), ScaleDeploymentResponse{DeploymentId: deploymentId})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), ScaleDeploymentResponse{DeploymentId: deploymentId})
 		return
 	}
 	if req.Replicas < 0 {

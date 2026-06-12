@@ -3,6 +3,7 @@ package container
 import (
 	"os"
 	"path/filepath"
+	"raind/internal/droplet/spec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -271,14 +272,94 @@ func TestIsAllowedType_NotAllowedOptions_1(t *testing.T) {
 	assert.False(t, result)
 }
 
-func TestIsAllowedType_NotAllowedOptions_2(t *testing.T) {
+func TestIsAllowedType_CommonReadonlyBindOptions(t *testing.T) {
 	// == arrange ==
 	fstype := "bind"
-	options := []string{"rbind"}
+	options := []string{"rbind", "rprivate", "ro"}
 
 	// == act ==
 	result := isAllowedType(fstype, options)
 
 	// == asset ==
-	assert.False(t, result)
+	assert.True(t, result)
+}
+
+func TestValidateUserMount_CommonBind(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/home/user/project",
+		Destination: "/app",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate", "ro"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.Nil(t, err)
+}
+
+func TestValidateUserMount_DeniedSource(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/etc/raind/store",
+		Destination: "/data",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.NotNil(t, err)
+}
+
+func TestValidateUserMount_DeniedDestination(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/home/user/data",
+		Destination: "/proc/sys",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.NotNil(t, err)
+}
+
+func TestValidateUserMount_DeviceMount(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/dev/fuse",
+		Destination: "/dev/fuse",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate", "dev"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.Nil(t, err)
+}
+
+func TestValidateUserMount_DevicePathWithoutDevOption(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/dev/fuse",
+		Destination: "/dev/fuse",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.NotNil(t, err)
 }

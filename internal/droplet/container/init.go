@@ -604,21 +604,9 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 
 	// user mounts
 	for _, user_mount := range mountList {
-		// validate source
-		//if hasDeniedSource(user_mount.Source) {
-		//	return fmt.Errorf("invalid mount source: %s", user_mount.Source)
-		//}
-		// validate destination
-		//if hasDeniedDestination(user_mount.Destination) {
-		//	return fmt.Errorf("invalid mount destination: %s", user_mount.Destination)
-		//}
-		// validate fstype & options
-		// only allowed bind/rbind
-		//if !isAllowedType(user_mount.Type, user_mount.Options) {
-		//	return fmt.Errorf("invalid mount type and options: %s: %s", user_mount.Type, strings.Join(user_mount.Options, ","))
-		//}
-		// force options
-		//secureOptions := secureOptions(user_mount.Options)
+		if err := validateUserMount(user_mount); err != nil {
+			return err
+		}
 		prerequiredMounts = append(prerequiredMounts, spec.MountObject{
 			Destination: user_mount.Destination,
 			Type:        user_mount.Type,
@@ -662,7 +650,7 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 				case "rbind":
 					bindFlag = true
 					mountFlags |= syscall.MS_BIND | syscall.MS_REC
-				case "rprivate":
+				case "rprivate", "private", "z", "Z":
 					// ignore
 				default:
 					dataStrTmp = append(dataStrTmp, option)

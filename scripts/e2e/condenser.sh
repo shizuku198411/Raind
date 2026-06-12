@@ -235,6 +235,89 @@ assert_spiffe_rejections() {
   [[ "${code}" == "403" ]] || fail "management API returned ${code}, expected 403 for hook client cert"
 }
 
+issue_e2e_cli_cert() {
+  local spiffe="$1"
+  local name="$2"
+  local key="${E2E_WORK_DIR}/${name}.key"
+  local csr="${E2E_WORK_DIR}/${name}.csr"
+  local crt="${E2E_WORK_DIR}/${name}.crt"
+
+  sudo_cmd openssl req \
+    -new \
+    -newkey rsa:2048 \
+    -nodes \
+    -keyout "${key}" \
+    -out "${csr}" \
+    -subj "/CN=raind-${name}" \
+    -addext "subjectAltName=URI:${spiffe}" >/dev/null 2>&1
+
+  sudo_cmd openssl x509 \
+    -req \
+    -in "${csr}" \
+    -CA /etc/raind/cert/raindClientCA.crt \
+    -CAkey /etc/raind/cert/raindClientCA.key \
+    -CAcreateserial \
+    -out "${crt}" \
+    -days 1 \
+    -sha256 \
+    -copy_extensions copy >/dev/null 2>&1
+
+  printf '%s\n%s\n' "${crt}" "${key}"
+}
+
+scoped_api_request() {
+  local cert="$1"
+  local key="$2"
+  local method="$3"
+  local path="$4"
+  local out="$5"
+  local body="${6:-}"
+
+  local args=(
+    -sS
+    --connect-timeout 1
+    --max-time 5
+    --cert "${cert}"
+    --key "${key}"
+    --cacert /etc/raind/cert/raind.crt
+    -X "${method}"
+  )
+
+  if [[ -n "${body}" ]]; then
+    args+=(-H "Content-Type: application/json" -d "${body}")
+  fi
+
+  sudo_cmd curl \
+    "${args[@]}" \
+    -o "${out}" \
+    -w '%{http_code}' \
+    "https://127.0.0.1:7755${path}"
+}
+
+assert_cli_scope_authorization() {
+  if ! have_cmd openssl; then
+    log "skip CLI scope authorization checks: openssl is unavailable"
+    return
+  fi
+
+  local cert
+  local key
+  local code
+  local out="${E2E_WORK_DIR}/read-scope-images.json"
+
+  log "verify read-only CLI scope can read but cannot write"
+  mapfile -t issued < <(issue_e2e_cli_cert "spiffe://raind/cli/read" "read-scope-client")
+  cert="${issued[0]}"
+  key="${issued[1]}"
+
+  code="$(scoped_api_request "${cert}" "${key}" GET "/v1/images" "${out}")"
+  [[ "${code}" == "200" ]] || fail "read-scope GET returned ${code}, expected 200"
+  jq -e '.status == "success"' "${out}" >/dev/null
+
+  code="$(scoped_api_request "${cert}" "${key}" POST "/v1/networks" "${E2E_WORK_DIR}/read-scope-write.txt" '{"bridge":"scope-denied"}' || true)"
+  [[ "${code}" == "403" ]] || fail "read-scope POST returned ${code}, expected 403"
+}
+
 assert_read_api_surface() {
   assert_api_success "/v1/images"
   assert_api_success "/v1/containers"
@@ -366,6 +449,7 @@ main() {
   assert_client_cert_required
   assert_cert_contracts
   assert_spiffe_rejections
+  assert_cli_scope_authorization
   assert_error_contracts
   assert_network_lifecycle
   assert_pod_and_service_lifecycle

@@ -33,7 +33,7 @@ func (h *RequestHandler) AddPolicy(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req AddPolicyRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), req)
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), req)
 		return
 	}
 
@@ -181,7 +181,7 @@ func (h *RequestHandler) ChangeNSMode(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req ChangeNSModeRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), req)
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), req)
 		return
 	}
 

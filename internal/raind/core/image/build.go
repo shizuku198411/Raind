@@ -28,9 +28,6 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 	if param.Tag == "" {
 		return fmt.Errorf("image tag is required")
 	}
-	if param.Dripfile == "" {
-		param.Dripfile = "Dripfile"
-	}
 
 	info, err := os.Stat(param.ContextDir)
 	if err != nil {
@@ -39,9 +36,11 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 	if !info.IsDir() {
 		return fmt.Errorf("context path is not a directory: %s", param.ContextDir)
 	}
-	if _, err := os.Stat(filepath.Join(param.ContextDir, param.Dripfile)); err != nil {
-		return fmt.Errorf("dripfile not found: %w", err)
+	buildFile, err := resolveBuildFile(param.ContextDir, param.Dripfile)
+	if err != nil {
+		return fmt.Errorf("build file not found: %w", err)
 	}
+	param.Dripfile = buildFile
 
 	tarPath := filepath.Join(os.TempDir(), sanitizeTarName(param.Tag)+".tar")
 	if err := createTarFromDir(tarPath, param.ContextDir); err != nil {
@@ -64,6 +63,7 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 	query := url.Values{}
 	query.Set("tag", param.Tag)
 	query.Set("dripfile", param.Dripfile)
+	query.Set("stream", "1")
 	endpoint := httpClient.BaseUrl + "/v1/images/build?" + query.Encode()
 
 	req, err := http.NewRequest(http.MethodPost, endpoint, tarFile)
@@ -86,11 +86,33 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
 	}
 
+	if resp.Header.Get("Content-Type") == "application/x-ndjson" {
+		if _, err := httpclient.ReadStreamEvents(resp.Body); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	if err := jsonDecode(resp.Body, &respModel); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 
 	return nil
+}
+
+func resolveBuildFile(contextDir string, requested string) (string, error) {
+	if requested != "" {
+		if _, err := os.Stat(filepath.Join(contextDir, requested)); err != nil {
+			return "", err
+		}
+		return requested, nil
+	}
+	for _, candidate := range []string{"Dripfile", "Dockerfile"} {
+		if _, err := os.Stat(filepath.Join(contextDir, candidate)); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 func sanitizeTarName(tag string) string {

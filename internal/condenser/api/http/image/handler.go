@@ -35,7 +35,7 @@ func (h *RequestHandler) PullImage(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req PullImageRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 		return
 	}
 	stream := r.URL.Query().Get("stream") == "1"
@@ -98,7 +98,7 @@ func (h *RequestHandler) RemoveImage(w http.ResponseWriter, r *http.Request) {
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
 		// Some clients/proxies may drop DELETE body; allow query fallback.
 		if !errors.Is(err, io.EOF) {
-			apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+			apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 			return
 		}
 	}
@@ -136,6 +136,7 @@ func (h *RequestHandler) RemoveImage(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/images/build [post]
 func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
+	stream := r.URL.Query().Get("stream") == "1"
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		apimodel.RespondFail(w, http.StatusBadRequest, "missing tag query", nil)
@@ -144,9 +145,6 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	dripfile := r.URL.Query().Get("dripfile")
 	if dripfile == "" {
 		dripfile = r.URL.Query().Get("dockerfile")
-	}
-	if dripfile == "" {
-		dripfile = "Dripfile"
 	}
 	network := r.URL.Query().Get("network")
 
@@ -158,29 +156,100 @@ func (h *RequestHandler) BuildImage(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(tmpDir)
 
 	if err := image.ExtractTarToDir(r.Body, tmpDir); err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "invalid build context: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid build context: "+err.Error(), nil)
 		return
+	}
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "extracted",
+			ID:     "context",
+			Detail: "build context extracted",
+		})
+	}
+
+	if dripfile == "" {
+		dripfile, err = resolveBuildFile(tmpDir)
+		if err != nil {
+			if stream {
+				apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "build file not found"})
+				return
+			}
+			apimodel.RespondFail(w, http.StatusBadRequest, "build file not found", nil)
+			return
+		}
+	}
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "building",
+			ID:     dripfile,
+			Detail: "build file selected",
+		})
 	}
 
 	dfPath := filepath.Join(tmpDir, filepath.Clean(dripfile))
 	rel, err := filepath.Rel(tmpDir, dfPath)
 	if err != nil || strings.HasPrefix(rel, "..") {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "invalid dripfile path"})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusBadRequest, "invalid dripfile path", nil)
 		return
 	}
 
+	progress := image.ProgressFunc(nil)
+	if stream {
+		progress = func(e image.PullProgressEvent) {
+			apimodel.StreamJson(w, apimodel.StreamEvent{
+				Status:  e.Status,
+				ID:      e.ID,
+				Detail:  e.Detail,
+				Current: e.Current,
+				Total:   e.Total,
+				Error:   e.Error,
+			})
+		}
+	}
 	result, err := h.serviceHandler.Build(image.ServiceBuildModel{
 		Image:        tag,
 		ContextDir:   tmpDir,
 		DripfilePath: dfPath,
 		Network:      network,
+		Progress:     progress,
 	})
 	if err != nil {
+		if stream {
+			apimodel.StreamJson(w, apimodel.StreamEvent{Status: "error", Error: "build failed: " + err.Error()})
+			return
+		}
 		apimodel.RespondFail(w, http.StatusInternalServerError, "build failed: "+err.Error(), nil)
 		return
 	}
 
+	if stream {
+		apimodel.StreamJson(w, apimodel.StreamEvent{
+			Status: "success",
+			ID:     result,
+			Detail: "build completed",
+			Data:   BuildImageResponse{Image: result},
+		})
+		return
+	}
+
 	apimodel.RespondSuccess(w, http.StatusOK, "build completed", BuildImageResponse{Image: result})
+}
+
+func resolveBuildFile(contextDir string) (string, error) {
+	for _, candidate := range []string{"Dripfile", "Dockerfile"} {
+		if _, err := os.Stat(filepath.Join(contextDir, candidate)); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 // GetImageList godoc
