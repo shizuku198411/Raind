@@ -76,7 +76,6 @@ func buildProcessSpec(opts ConfigOptions) ProcessObject {
 		"CAP_SETPCAP",
 		"CAP_NET_BIND_SERVICE",
 		"CAP_SYS_CHROOT",
-		"CAP_SYS_ADMIN",
 		"CAP_KILL",
 		"CAP_AUDIT_WRITE",
 	}
