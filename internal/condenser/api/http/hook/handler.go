@@ -1,10 +1,8 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"raind/internal/condenser/core/hook"
@@ -55,14 +53,9 @@ func (h *RequestHandler) ApplyHook(w http.ResponseWriter, r *http.Request) {
 		logger.SetAction(r.Context(), "hook.poststop")
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "read hook body failed: "+err.Error(), nil)
-		return
-	}
 	var st hook.ServiceStateModel
-	if err := json.Unmarshal(body, &st); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+	if err := apimodel.DecodeRequestBody(r, &st); err != nil {
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 		return
 	}
 

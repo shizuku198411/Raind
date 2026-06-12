@@ -19,6 +19,15 @@ func TestPullImageInvalidJSONReturnsFailEnvelope(t *testing.T) {
 	assertFailEnvelope(t, rec, http.StatusBadRequest)
 }
 
+func TestPullImageTooLargeJSONReturnsRequestEntityTooLarge(t *testing.T) {
+	rec := httptest.NewRecorder()
+	body := `{"image":"` + strings.Repeat("a", 1<<20) + `"}`
+
+	NewRequestHandler().PullImage(rec, httptest.NewRequest(http.MethodPost, "/v1/images", strings.NewReader(body)))
+
+	assertFailEnvelope(t, rec, http.StatusRequestEntityTooLarge)
+}
+
 func TestRemoveImageMissingImageReturnsFailEnvelope(t *testing.T) {
 	rec := httptest.NewRecorder()
 

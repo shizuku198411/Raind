@@ -59,6 +59,32 @@ func TestDecodeRequestBodyRejectsInvalidJSON(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDecodeRequestBodyRejectsTooLargeJSON(t *testing.T) {
+	var dst struct {
+		Name string `json:"name"`
+	}
+	body := `{"name":"` + strings.Repeat("a", int(MaxJSONBodyBytes)) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+
+	err := DecodeRequestBody(req, &dst)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRequestBodyTooLarge)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, DecodeErrorStatus(err))
+}
+
+func TestDecodeRequestBodyRejectsMultipleJSONValues(t *testing.T) {
+	var dst struct {
+		Name string `json:"name"`
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"ok"}{"name":"extra"}`))
+
+	err := DecodeRequestBody(req, &dst)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple JSON values")
+}
+
 func TestStreamJsonWritesNDJSONEvent(t *testing.T) {
 	rec := httptest.NewRecorder()
 

@@ -39,7 +39,7 @@ func (h *RequestHandler) CreateContainer(w http.ResponseWriter, r *http.Request)
 	// decode request
 	var req CreateContainerRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), CreateContainerResponse{Id: ""})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), CreateContainerResponse{Id: ""})
 		return
 	}
 
@@ -132,7 +132,7 @@ func (h *RequestHandler) StartContainer(w http.ResponseWriter, r *http.Request) 
 	// decode request
 	var req StartContainerRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), StartContainerResponse{Id: containerId})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), StartContainerResponse{Id: containerId})
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *RequestHandler) ExecContainer(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req ExecContainerRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), ExecContainerResponse{Id: containerId})
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), ExecContainerResponse{Id: containerId})
 		return
 	}
 

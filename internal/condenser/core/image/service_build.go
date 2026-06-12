@@ -1011,7 +1011,45 @@ func (s *ImageService) storeBuiltImage(imageRepo, imageRef string, state buildSt
 
 // extractTarToDir extracts a tar stream into a directory and prevents path traversal.
 func ExtractTarToDir(r io.Reader, dst string) error {
-	tr := tar.NewReader(r)
+	return ExtractTarToDirWithOptions(r, dst, DefaultExtractTarOptions())
+}
+
+const (
+	DefaultBuildContextMaxBytes = int64(1 << 30)
+	DefaultBuildFileMaxBytes    = int64(512 << 20)
+	DefaultBuildMaxEntries      = 100_000
+)
+
+type ExtractTarOptions struct {
+	MaxBytes   int64
+	MaxFile    int64
+	MaxEntries int
+}
+
+func DefaultExtractTarOptions() ExtractTarOptions {
+	return ExtractTarOptions{
+		MaxBytes:   DefaultBuildContextMaxBytes,
+		MaxFile:    DefaultBuildFileMaxBytes,
+		MaxEntries: DefaultBuildMaxEntries,
+	}
+}
+
+// ExtractTarToDirWithOptions extracts a tar stream into a directory and applies
+// resource limits while preserving path traversal protections.
+func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) error {
+	if opt.MaxBytes <= 0 {
+		opt.MaxBytes = DefaultBuildContextMaxBytes
+	}
+	if opt.MaxFile <= 0 {
+		opt.MaxFile = DefaultBuildFileMaxBytes
+	}
+	if opt.MaxEntries <= 0 {
+		opt.MaxEntries = DefaultBuildMaxEntries
+	}
+
+	limited := &buildContextLimitReader{r: r, max: opt.MaxBytes}
+	tr := tar.NewReader(limited)
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -1022,6 +1060,10 @@ func ExtractTarToDir(r io.Reader, dst string) error {
 		}
 		if hdr.Name == "" {
 			continue
+		}
+		entries++
+		if entries > opt.MaxEntries {
+			return fmt.Errorf("build context has too many entries: max=%d", opt.MaxEntries)
 		}
 		target, err := safeJoin(dst, hdr.Name)
 		if err != nil {
@@ -1035,6 +1077,12 @@ func ExtractTarToDir(r io.Reader, dst string) error {
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
+			}
+			if hdr.Size < 0 {
+				return fmt.Errorf("invalid tar entry size: %s", hdr.Name)
+			}
+			if hdr.Size > opt.MaxFile {
+				return fmt.Errorf("build context file too large: %s max=%d bytes", hdr.Name, opt.MaxFile)
 			}
 			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if err != nil {
@@ -1058,4 +1106,29 @@ func ExtractTarToDir(r io.Reader, dst string) error {
 			// ignore other types
 		}
 	}
+}
+
+type buildContextLimitReader struct {
+	r     io.Reader
+	max   int64
+	total int64
+}
+
+func (r *buildContextLimitReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	remaining := r.max - r.total
+	if remaining < 0 {
+		return 0, fmt.Errorf("build context too large: max=%d bytes", r.max)
+	}
+	if int64(len(p)) > remaining+1 {
+		p = p[:remaining+1]
+	}
+	n, err := r.r.Read(p)
+	r.total += int64(n)
+	if r.total > r.max {
+		return n, fmt.Errorf("build context too large: max=%d bytes", r.max)
+	}
+	return n, err
 }

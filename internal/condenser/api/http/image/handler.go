@@ -35,7 +35,7 @@ func (h *RequestHandler) PullImage(w http.ResponseWriter, r *http.Request) {
 	// decode request
 	var req PullImageRequest
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 		return
 	}
 	stream := r.URL.Query().Get("stream") == "1"
@@ -98,7 +98,7 @@ func (h *RequestHandler) RemoveImage(w http.ResponseWriter, r *http.Request) {
 	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
 		// Some clients/proxies may drop DELETE body; allow query fallback.
 		if !errors.Is(err, io.EOF) {
-			apimodel.RespondFail(w, http.StatusBadRequest, "invalid json: "+err.Error(), nil)
+			apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid json: "+err.Error(), nil)
 			return
 		}
 	}
