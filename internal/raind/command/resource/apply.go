@@ -44,6 +44,13 @@ func runApply(ctx *cli.Context) error {
 }
 
 func printAppliedResources(result pod.ApplyResponseDataModel) {
+	for _, ns := range result.Namespaces {
+		if ns.Network == "" {
+			fmt.Printf("namespace: %s applied\n", ns.Name)
+			continue
+		}
+		fmt.Printf("namespace: %s applied (network: %s)\n", ns.Name, ns.Network)
+	}
 	for _, p := range result.Pods {
 		if p.ReplicaSetId != "" {
 			fmt.Printf("replicaset: %s applied\n", p.ReplicaSetId)
@@ -60,7 +67,7 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 	for _, svc := range result.Services {
 		fmt.Printf("service: %s applied\n", svc.ServiceId)
 	}
-	if len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
+	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
 		fmt.Println("resource applied")
 	}
 }

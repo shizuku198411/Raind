@@ -24,11 +24,16 @@ type DeletedDeploymentModel struct {
 	Namespace    string `json:"namespace,omitempty"`
 }
 
+type DeletedNamespaceModel struct {
+	Name string `json:"name,omitempty"`
+}
+
 type DeleteResponseModel struct {
 	Pods        []DeletedPodModel        `json:"pods,omitempty"`
 	ReplicaSets []DeletedReplicaSetModel `json:"replicasets,omitempty"`
 	Deployments []DeletedDeploymentModel `json:"deployments,omitempty"`
 	Services    []DeletedServiceModel    `json:"services,omitempty"`
+	Namespaces  []DeletedNamespaceModel  `json:"namespaces,omitempty"`
 }
 
 type DeleteApiResponseModel struct {

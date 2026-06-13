@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	httpclient "raind/internal/raind/core/client"
 	"text/tabwriter"
@@ -16,12 +17,16 @@ func NewServiceDeploymentList() *ServiceDeploymentList {
 
 type ServiceDeploymentList struct{}
 
-func (s *ServiceDeploymentList) List() error {
+func (s *ServiceDeploymentList) List(namespace string) error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
 	}
-	if err := httpClient.NewRequest(http.MethodGet, "/v1/deployments", nil); err != nil {
+	path := "/v1/deployments"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
+	if err := httpClient.NewRequest(http.MethodGet, path, nil); err != nil {
 		return err
 	}
 	resp, err := httpClient.Client.Do(httpClient.Request)

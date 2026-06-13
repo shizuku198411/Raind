@@ -26,6 +26,7 @@ func TestNetworkServiceCreateBridgeStoresIPAMThenCreatesBridge(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"raind1"}, ipamHandler.storedBridges)
 	assert.Equal(t, []networkCommandCall{
+		{name: "ip", args: []string{"-o", "link", "show"}},
 		{name: "ip", args: []string{"link", "show", "raind1"}},
 		{name: "ip", args: []string{"link", "add", "raind1", "type", "bridge"}},
 		{name: "ip", args: []string{"addr", "add", "10.166.1.254/24", "dev", "raind1"}},
@@ -49,35 +50,81 @@ func TestNetworkServiceCreateBridgeRollsBackIPAMWhenBridgeCreationFails(t *testi
 	assert.Equal(t, 1, policyHandler.commitCalls)
 }
 
+func TestNetworkServiceCreateBridgeRejectsUnmanagedNamespaceBridge(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		networkList: []ipam.NetworkList{
+			{Interface: "raind0"},
+			{Interface: "rns-managed"},
+		},
+	}
+	commands := &fakeNetworkCommandFactory{
+		outputs: [][]byte{[]byte("1: lo: <LOOPBACK>\n2: rns-managed: <BROADCAST>\n3: rns-stale@if10: <BROADCAST>\n")},
+	}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: &fakePolicyService{}}
+
+	err := service.CreateNewNetwork(ServiceNewNetworkModel{Bridge: "raind1"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmanaged namespace bridge exists: rns-stale")
+	assert.Empty(t, ipamHandler.storedBridges)
+	assert.Equal(t, []networkCommandCall{
+		{name: "ip", args: []string{"-o", "link", "show"}},
+	}, commands.calls)
+}
+
+func TestParseLinkNames(t *testing.T) {
+	out := "1: lo: <LOOPBACK>\n2: rns-demo@if10: <BROADCAST>\n3: rd_abc@if2: <BROADCAST>\n"
+
+	assert.Equal(t, []string{"lo", "rns-demo", "rd_abc"}, parseLinkNames(out))
+}
+
 type networkCommandCall struct {
 	name string
 	args []string
 }
 
 type fakeNetworkCommandFactory struct {
-	calls     []networkCommandCall
-	runErrors []error
+	calls      []networkCommandCall
+	runErrors  []error
+	outputs    [][]byte
+	outputErrs []error
 }
 
 func (f *fakeNetworkCommandFactory) Command(name string, args ...string) utils.CommandExecutor {
 	f.calls = append(f.calls, networkCommandCall{name: name, args: append([]string{}, args...)})
-	var err error
-	if len(f.runErrors) > 0 {
-		err = f.runErrors[0]
-		f.runErrors = f.runErrors[1:]
+	var output []byte
+	if len(f.outputs) > 0 {
+		output = f.outputs[0]
+		f.outputs = f.outputs[1:]
 	}
-	return &fakeNetworkCommandExecutor{err: err}
+	var outputErr error
+	if len(f.outputErrs) > 0 {
+		outputErr = f.outputErrs[0]
+		f.outputErrs = f.outputErrs[1:]
+	}
+	return &fakeNetworkCommandExecutor{factory: f, output: output, outputErr: outputErr}
 }
 
 type fakeNetworkCommandExecutor struct {
-	err error
+	factory   *fakeNetworkCommandFactory
+	output    []byte
+	outputErr error
 }
 
-func (e *fakeNetworkCommandExecutor) Start() error                   { return e.err }
-func (e *fakeNetworkCommandExecutor) Wait() error                    { return e.err }
-func (e *fakeNetworkCommandExecutor) Run() error                     { return e.err }
-func (e *fakeNetworkCommandExecutor) Output() ([]byte, error)        { return nil, e.err }
-func (e *fakeNetworkCommandExecutor) CombineOutput() ([]byte, error) { return nil, e.err }
+func (e *fakeNetworkCommandExecutor) popRunErr() error {
+	if e.factory == nil || len(e.factory.runErrors) == 0 {
+		return nil
+	}
+	err := e.factory.runErrors[0]
+	e.factory.runErrors = e.factory.runErrors[1:]
+	return err
+}
+
+func (e *fakeNetworkCommandExecutor) Start() error                   { return e.popRunErr() }
+func (e *fakeNetworkCommandExecutor) Wait() error                    { return nil }
+func (e *fakeNetworkCommandExecutor) Run() error                     { return e.popRunErr() }
+func (e *fakeNetworkCommandExecutor) Output() ([]byte, error)        { return e.output, e.outputErr }
+func (e *fakeNetworkCommandExecutor) CombineOutput() ([]byte, error) { return e.output, e.outputErr }
 func (e *fakeNetworkCommandExecutor) Pid() int                       { return 123 }
 func (e *fakeNetworkCommandExecutor) SetEnv([]string)                {}
 func (e *fakeNetworkCommandExecutor) SetStdout(io.Writer)            {}
@@ -87,12 +134,13 @@ func (e *fakeNetworkCommandExecutor) SetStdin(io.Reader)             {}
 type fakeNetworkIpamHandler struct {
 	storedBridges  []string
 	removedBridges []string
+	networkList    []ipam.NetworkList
 }
 
 func (f *fakeNetworkIpamHandler) Allocate(string, string) (string, error) { return "", nil }
 func (f *fakeNetworkIpamHandler) Release(string) error                    { return nil }
 func (f *fakeNetworkIpamHandler) GetNetworkList() ([]ipam.NetworkList, error) {
-	return nil, nil
+	return f.networkList, nil
 }
 func (f *fakeNetworkIpamHandler) StoreBridge(bridge string) (string, string, error) {
 	f.storedBridges = append(f.storedBridges, bridge)

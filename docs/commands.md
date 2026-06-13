@@ -84,6 +84,7 @@ Pod commands:
 ```sh
 raind resource pod create --name <name> [--namespace <namespace>] [--uid <uid>]
 raind resource pod ls
+raind resource pod ls --namespace <namespace>
 raind resource pod start <pod-id>
 raind resource pod stop <pod-id>
 raind resource pod rm <pod-id>
@@ -100,6 +101,7 @@ ReplicaSet commands:
 
 ```sh
 raind resource replicaset ls
+raind resource replicaset ls --namespace <namespace>
 raind resource replicaset show <replicaset-id>
 raind resource replicaset scale --replicas <n> <replicaset-id>
 raind resource replicaset rm <replicaset-id>
@@ -115,6 +117,7 @@ Deployment commands:
 
 ```sh
 raind resource deployment ls
+raind resource deployment ls --namespace <namespace>
 raind resource deployment show <deployment-id>
 raind resource deployment scale --replicas <n> <deployment-id>
 raind resource deployment rm <deployment-id>
@@ -131,8 +134,25 @@ Service commands:
 ```sh
 raind resource service create -f <service.yaml>
 raind resource service ls
+raind resource service ls --namespace <namespace>
 raind resource service show <service-id>
 raind resource service rm <service-id>
+```
+
+Namespace commands:
+
+```sh
+raind resource namespace create <namespace>
+raind resource namespace create <namespace> --network <existing-network>
+raind resource namespace ls
+raind resource namespace show <namespace>
+raind resource namespace rm <namespace>
+```
+
+The short alias `ns` can be used for `namespace`:
+
+```sh
+raind resource ns ls
 ```
 
 ## Policies

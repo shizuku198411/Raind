@@ -68,6 +68,53 @@ raind container run --name app --network appnet nginx:latest
 raind network rm appnet
 ```
 
+## Manage Resource Namespaces
+
+Create an isolated resource namespace. Raind creates a namespace-scoped network by default:
+
+```sh
+raind resource namespace create demo
+raind resource namespace ls
+raind resource namespace show demo
+```
+
+Apply resources into the namespace by setting `metadata.namespace`:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+```
+
+Filter resource views by namespace:
+
+```sh
+raind resource apply -f demo.yaml
+raind resource pod ls --namespace demo
+raind resource deployment ls --namespace demo
+raind resource rm -f demo.yaml
+```
+
 ## Apply Resource YAML
 
 ```sh

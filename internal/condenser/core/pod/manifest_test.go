@@ -64,6 +64,7 @@ apiVersion: apps/v1
 kind: ReplicaSet
 metadata:
   name: web
+  namespace: prod
 spec:
   selector:
     matchLabels:
@@ -83,6 +84,8 @@ spec:
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "ReplicaSet", got[0].Kind)
+	assert.Equal(t, "web", got[0].Name)
+	assert.Equal(t, "prod", got[0].Namespace)
 	assert.Equal(t, 1, got[0].Replicas)
 	assert.Equal(t, map[string]string{"app": "web"}, got[0].Selector)
 }

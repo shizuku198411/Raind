@@ -32,7 +32,13 @@ cleanup_network() {
   while read -r ifname; do
     [[ -n "${ifname}" ]] || continue
     sudo_cmd ip link del "${ifname}" 2>/dev/null || true
-  done < <(sudo_cmd ip -o link show 2>/dev/null | awk -F': ' '/: rd_/ {print $2}' | cut -d@ -f1)
+  done < <(sudo_cmd ip -o link show 2>/dev/null | awk -F': ' '/: (rd_|rns)/ {print $2}' | cut -d@ -f1)
+
+  while read -r ifname; do
+    [[ -n "${ifname}" ]] || continue
+    [[ "${ifname}" == "lo" ]] && continue
+    sudo_cmd ip link del "${ifname}" 2>/dev/null || true
+  done < <(sudo_cmd ip -o -4 addr show 2>/dev/null | awk '$4 ~ /^10\.166\./ {print $2}' | cut -d@ -f1 | sort -u)
 
   for table in filter nat; do
     while read -r rule; do

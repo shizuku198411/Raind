@@ -98,6 +98,17 @@ func TestContainerKillReadProcStartTimeReadsCurrentProcess(t *testing.T) {
 	assert.Greater(t, startTime, uint64(0))
 }
 
+func TestParseProcStatFieldsHandlesCommandWithSpaces(t *testing.T) {
+	// == exercise ==
+	fields, err := parseProcStatFields("123 (sleep worker) Z 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22")
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, fields, 23)
+	assert.Equal(t, "Z", fields[0])
+	assert.Equal(t, "19", fields[19])
+}
+
 func TestContainerKillWaitProcessExitReturnsWhenPidDoesNotExist(t *testing.T) {
 	// == setup ==
 	killController := &ContainerKill{}

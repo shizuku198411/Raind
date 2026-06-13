@@ -10,6 +10,7 @@ import (
 
 	apimodel "raind/internal/condenser/api/http/utils"
 	"raind/internal/condenser/core/container"
+	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
 	coreService "raind/internal/condenser/core/service"
 	"raind/internal/condenser/store/psm"
@@ -24,6 +25,7 @@ func NewRequestHandler() *RequestHandler {
 	return &RequestHandler{
 		serviceHandler:   pod.NewPodService(),
 		containerHandler: container.NewContaierService(),
+		namespaceHandler: corenamespace.NewNamespaceService(),
 		psmHandler:       psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 		ssmHandler:       ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
 	}
@@ -32,6 +34,7 @@ func NewRequestHandler() *RequestHandler {
 type RequestHandler struct {
 	serviceHandler   pod.PodServiceHandler
 	containerHandler container.ContainerServiceHandler
+	namespaceHandler corenamespace.NamespaceServiceHandler
 	psmHandler       psm.PsmHandler
 	ssmHandler       ssm.SsmHandler
 }
@@ -111,6 +114,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 	var replicaSetResults []ApplyReplicaSetResult
 	var deploymentResults []ApplyDeploymentResult
 	var serviceResults []ApplyServiceResult
+	var namespaceResults []ApplyNamespaceResult
 	var rollback []func()
 	rollbackApplied := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
@@ -146,6 +150,27 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch kind {
+		case "Namespace":
+			manifest, err := decodeNamespaceManifest(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusBadRequest, invalidYAMLErrorMessage(err), nil)
+				return
+			}
+			info, err := h.namespaceHandler.Create(corenamespace.ServiceCreateModel{
+				Name:        manifest.Metadata.Name,
+				Labels:      manifest.Metadata.Labels,
+				Annotations: manifest.Metadata.Annotations,
+			})
+			if err != nil {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "namespace create failed: "+err.Error(), nil)
+				return
+			}
+			rollback = append(rollback, func() {
+				_, _ = h.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: info.Name})
+			})
+			namespaceResults = append(namespaceResults, ApplyNamespaceResult{Name: info.Name, Network: info.Network})
 		case "Service":
 			manifest, err := coreService.DecodeK8sServiceManifest(rawBytes)
 			if err != nil {
@@ -191,6 +216,11 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 			}
 			m := manifests[0]
 			if m.Kind == "Deployment" {
+				if err := h.resolveManifestNetworks(&m); err != nil {
+					rollbackApplied()
+					apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), nil)
+					return
+				}
 				if err := h.ensureResourceNameAvailable(m.Name, m.Namespace); err != nil {
 					rollbackApplied()
 					apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), nil)
@@ -235,6 +265,11 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if m.Kind == "ReplicaSet" {
+				if err := h.resolveManifestNetworks(&m); err != nil {
+					rollbackApplied()
+					apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), nil)
+					return
+				}
 				if err := h.ensureResourceNameAvailable(m.Name, m.Namespace); err != nil {
 					rollbackApplied()
 					apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), nil)
@@ -278,6 +313,11 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			if err := h.resolveManifestNetworks(&m); err != nil {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), nil)
+				return
+			}
 			podId, err := h.serviceHandler.Create(pod.ServiceCreateModel{
 				Name:        m.Name,
 				Namespace:   m.Namespace,
@@ -294,31 +334,26 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				_, _ = h.serviceHandler.Remove(podId)
 			})
 
-			var containerIds []string
-			for _, c := range m.Containers {
-				if c.Image == "" {
+			if _, err := h.serviceHandler.Start(podId); err != nil {
+				_, _ = h.serviceHandler.Remove(podId)
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "pod start failed: "+err.Error(), nil)
+				return
+			}
+
+			containers, err := h.containerHandler.GetContainersByPodId(podId)
+			if err != nil {
+				_, _ = h.serviceHandler.Remove(podId)
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "container list failed: "+err.Error(), nil)
+				return
+			}
+			containerIds := make([]string, 0, len(containers))
+			for _, c := range containers {
+				if strings.HasPrefix(c.Name, utils.PodInfraContainerNamePrefix) {
 					continue
 				}
-				containerId, err := h.containerHandler.Create(container.ServiceCreateModel{
-					Image:   c.Image,
-					Command: c.Command,
-					Port:    c.Port,
-					Mount:   c.Mount,
-					Env:     c.Env,
-					CapAdd:  c.CapAdd,
-					CapDrop: c.CapDrop,
-					Network: c.Network,
-					Tty:     c.Tty,
-					Name:    c.Name,
-					PodId:   podId,
-				})
-				if err != nil {
-					_, _ = h.serviceHandler.Remove(podId)
-					rollbackApplied()
-					apimodel.RespondFail(w, http.StatusInternalServerError, "container create failed: "+err.Error(), nil)
-					return
-				}
-				containerIds = append(containerIds, containerId)
+				containerIds = append(containerIds, c.ContainerId)
 			}
 
 			results = append(results, ApplyPodResult{
@@ -339,6 +374,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 		ReplicaSets: replicaSetResults,
 		Deployments: deploymentResults,
 		Services:    serviceResults,
+		Namespaces:  namespaceResults,
 	})
 }
 
@@ -361,6 +397,8 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 	var rsResults []DeleteReplicaSetResult
 	var deployResults []DeleteDeploymentResult
 	var svcResults []DeleteServiceResult
+	var namespaceResults []DeleteNamespaceResult
+	var pendingNamespaceDeletes []string
 
 	dec := yaml.NewDecoder(bytes.NewReader(body))
 	for {
@@ -387,6 +425,13 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 		}
 
 		switch kind {
+		case "Namespace":
+			manifest, err := decodeNamespaceManifest(rawBytes)
+			if err != nil {
+				apimodel.RespondFail(w, http.StatusBadRequest, invalidYAMLErrorMessage(err), nil)
+				return
+			}
+			pendingNamespaceDeletes = append(pendingNamespaceDeletes, manifest.Metadata.Name)
 		case "Service":
 			manifest, err := coreService.DecodeK8sServiceManifest(rawBytes)
 			if err != nil {
@@ -520,12 +565,44 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	for _, name := range pendingNamespaceDeletes {
+		if _, err := h.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: name}); err != nil {
+			apimodel.RespondFail(w, http.StatusInternalServerError, "namespace remove failed: "+err.Error(), nil)
+			return
+		}
+		namespaceResults = append(namespaceResults, DeleteNamespaceResult{Name: name})
+	}
+
 	apimodel.RespondSuccess(w, http.StatusOK, "resources deleted", DeleteResourcesResponse{
 		Pods:        podResults,
 		ReplicaSets: rsResults,
 		Deployments: deployResults,
 		Services:    svcResults,
+		Namespaces:  namespaceResults,
 	})
+}
+
+type namespaceManifest struct {
+	APIVersion string        `yaml:"apiVersion"`
+	Kind       string        `yaml:"kind"`
+	Metadata   namespaceMeta `yaml:"metadata"`
+}
+
+func decodeNamespaceManifest(rawBytes []byte) (namespaceManifest, error) {
+	var manifest namespaceManifest
+	if err := yaml.Unmarshal(rawBytes, &manifest); err != nil {
+		return namespaceManifest{}, err
+	}
+	if manifest.Metadata.Name == "" {
+		return namespaceManifest{}, fmt.Errorf("namespace name is required")
+	}
+	return manifest, nil
+}
+
+type namespaceMeta struct {
+	Name        string            `yaml:"name"`
+	Labels      map[string]string `yaml:"labels"`
+	Annotations map[string]string `yaml:"annotations"`
 }
 
 func (h *RequestHandler) ensureResourceNameAvailable(name, namespace string) error {
@@ -567,6 +644,19 @@ func invalidYAMLErrorMessage(err error) string {
 	return "invalid yaml: " + err.Error()
 }
 
+func (h *RequestHandler) resolveManifestNetworks(m *pod.PodManifest) error {
+	networkName, err := h.namespaceHandler.ResolveNetwork(m.Namespace)
+	if err != nil {
+		return err
+	}
+	for i := range m.Containers {
+		if m.Containers[i].Network == "" {
+			m.Containers[i].Network = networkName
+		}
+	}
+	return nil
+}
+
 func (h *RequestHandler) removeDeploymentById(deploymentId string) error {
 	deploy, err := h.psmHandler.GetDeployment(deploymentId)
 	if err != nil {
@@ -595,12 +685,12 @@ func (h *RequestHandler) removeReplicaSetById(replicaSetId string) error {
 	if err := h.psmHandler.RemoveReplicaSet(replicaSetId); err != nil {
 		return err
 	}
-	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
-		return err
-	}
 	inUse, err := h.psmHandler.IsTemplateReferenced(rs.Spec.TemplateId)
 	if err == nil && !inUse {
 		_ = h.psmHandler.RemovePodTemplate(rs.Spec.TemplateId)
+	}
+	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
+		return err
 	}
 	return nil
 }
@@ -698,6 +788,7 @@ func (h *RequestHandler) ScaleReplicaSet(w http.ResponseWriter, r *http.Request)
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/replicasets [get]
 func (h *RequestHandler) GetReplicaSetList(w http.ResponseWriter, r *http.Request) {
+	namespaceFilter := r.URL.Query().Get("namespace")
 	list, err := h.psmHandler.GetReplicaSetList()
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "list failed: "+err.Error(), nil)
@@ -710,6 +801,9 @@ func (h *RequestHandler) GetReplicaSetList(w http.ResponseWriter, r *http.Reques
 	}
 	res := make([]ReplicaSetSummary, 0, len(list))
 	for _, rs := range list {
+		if namespaceFilter != "" && rs.Spec.Namespace != namespaceFilter {
+			continue
+		}
 		templateCount := h.getTemplateContainerCount(rs.Spec.TemplateId)
 		current := 0
 		ready := 0
@@ -909,6 +1003,7 @@ func (h *RequestHandler) ScaleDeployment(w http.ResponseWriter, r *http.Request)
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/deployments [get]
 func (h *RequestHandler) GetDeploymentList(w http.ResponseWriter, r *http.Request) {
+	namespaceFilter := r.URL.Query().Get("namespace")
 	list, err := h.psmHandler.GetDeploymentList()
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "list failed: "+err.Error(), nil)
@@ -916,6 +1011,9 @@ func (h *RequestHandler) GetDeploymentList(w http.ResponseWriter, r *http.Reques
 	}
 	res := make([]DeploymentSummary, 0, len(list))
 	for _, deploy := range list {
+		if namespaceFilter != "" && deploy.Spec.Namespace != namespaceFilter {
+			continue
+		}
 		current, ready, _ := h.deploymentReplicaCounts(deploy)
 		res = append(res, DeploymentSummary{
 			DeploymentId: deploy.DeploymentId,
@@ -1075,10 +1173,20 @@ func (h *RequestHandler) RemovePod(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/pods [get]
 func (h *RequestHandler) GetPodList(w http.ResponseWriter, r *http.Request) {
+	namespaceFilter := r.URL.Query().Get("namespace")
 	podList, err := h.serviceHandler.GetPodList()
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "retrieve pod list failed: "+err.Error(), nil)
 		return
+	}
+	if namespaceFilter != "" {
+		filtered := podList[:0]
+		for _, p := range podList {
+			if p.Namespace == namespaceFilter {
+				filtered = append(filtered, p)
+			}
+		}
+		podList = filtered
 	}
 	apimodel.RespondSuccess(w, http.StatusOK, "retrieve pod list success", podList)
 }

@@ -32,14 +32,14 @@ sudo_cmd() {
   fi
 
   if ! have_cmd sudo; then
-    fail "sudo is required for condenser e2e"
+    fail "sudo is required for condenser integration test"
   fi
   sudo -n "$@"
 }
 
 require_workshop() {
   if [[ "${ROOT_DIR}" != /project* ]]; then
-    fail "condenser e2e must run inside Workshop. use: workshop run raind-dev -- test-condenser-e2e"
+    fail "condenser integration test must run inside Workshop. use: workshop run raind-dev -- test-condenser-integ"
   fi
 }
 
@@ -324,6 +324,7 @@ assert_read_api_surface() {
   assert_api_success "/v1/networks"
   assert_api_success "/v1/pods"
   assert_api_success "/v1/services"
+  assert_api_success "/v1/namespaces"
   assert_api_success "/v1/bottle"
   assert_api_success "/v1/containers/stats"
   assert_api_success "/v1/policies/RAIND-EW"
@@ -353,6 +354,21 @@ assert_network_lifecycle() {
     "${E2E_WORK_DIR}/networks-after-create.json" >/dev/null
   assert_api_fail_method network-create-duplicate POST "/v1/networks" "{\"bridge\":\"${bridge}\"}"
   assert_api_success_method network-delete DELETE "/v1/networks/${bridge}/actions/delete"
+}
+
+assert_namespace_lifecycle() {
+  local ns="e2e-api-ns-$$"
+
+  assert_api_success_method namespace-create POST "/v1/namespaces" "{\"name\":\"${ns}\"}"
+  api_curl "/v1/namespaces/${ns}" >"${E2E_WORK_DIR}/namespace-get.json"
+  jq -e --arg ns "${ns}" '.status == "success" and .data.name == $ns and (.data.network | length > 0)' \
+    "${E2E_WORK_DIR}/namespace-get.json" >/dev/null
+
+  api_curl "/v1/namespaces" >"${E2E_WORK_DIR}/namespaces-after-create.json"
+  jq -e --arg ns "${ns}" '.data | map(select(.name == $ns)) | length == 1' \
+    "${E2E_WORK_DIR}/namespaces-after-create.json" >/dev/null
+
+  assert_api_success_method namespace-delete DELETE "/v1/namespaces/${ns}/actions/delete"
 }
 
 assert_pod_and_service_lifecycle() {
@@ -452,9 +468,10 @@ main() {
   assert_cli_scope_authorization
   assert_error_contracts
   assert_network_lifecycle
+  assert_namespace_lifecycle
   assert_pod_and_service_lifecycle
 
-  log "condenser e2e completed"
+  log "condenser integration test completed"
 }
 
 main "$@"

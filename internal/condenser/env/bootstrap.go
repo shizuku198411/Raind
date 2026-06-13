@@ -16,6 +16,7 @@ import (
 	"raind/internal/condenser/store/ilm"
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/store/npm"
+	"raind/internal/condenser/store/nsm"
 	"raind/internal/condenser/utils"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ func NewBootstrapManager() *BootstrapManager {
 		csmStoreHandler:   csm.NewCsmStore(utils.CsmStorePath),
 		csmHandler:        csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
 		ilmStoreHandler:   ilm.NewIlmStore(utils.IlmStorePath),
+		nsmStoreHandler:   nsm.NewNsmStore(utils.NsmStorePath),
 		npmStoreHandler:   npm.NewNpmStore(utils.NpmStorePath),
 		appArmorHandler:   lsm.NewAppArmorManager(),
 	}
@@ -50,6 +52,7 @@ type BootstrapManager struct {
 	csmStoreHandler   csm.CsmStoreHandler
 	csmHandler        csm.CsmHandler
 	ilmStoreHandler   ilm.IlmStoreHandler
+	nsmStoreHandler   nsm.NsmStoreHandler
 	npmStoreHandler   npm.NpmStoreHandler
 	appArmorHandler   lsm.AppArmorHandler
 }
@@ -77,6 +80,11 @@ func (m *BootstrapManager) SetupRuntime() error {
 
 	// 6. setup NPM (Network Policy Manager)
 	if err := m.setupNpm(); err != nil {
+		return err
+	}
+
+	// 6. setup NSM (Namespace State Manager)
+	if err := m.setupNsm(); err != nil {
 		return err
 	}
 
@@ -128,6 +136,10 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		}
 	}
 	return nil
+}
+
+func (m *BootstrapManager) setupNsm() error {
+	return m.nsmStoreHandler.SetNamespaceState()
 }
 
 func (m *BootstrapManager) setupCgroup() error {

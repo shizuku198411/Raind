@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	httpclient "raind/internal/raind/core/client"
 	"strings"
@@ -17,14 +18,18 @@ func NewServiceServiceList() *ServiceServiceList {
 
 type ServiceServiceList struct{}
 
-func (s *ServiceServiceList) List() error {
+func (s *ServiceServiceList) List(namespace string) error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
 	}
+	path := "/v1/services"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
 	if err := httpClient.NewRequest(
 		http.MethodGet,
-		"/v1/services",
+		path,
 		nil,
 	); err != nil {
 		return err

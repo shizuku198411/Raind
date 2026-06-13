@@ -55,9 +55,15 @@ func main() {
 
 	switch *event {
 	case "requestCert":
-		_ = requestClientCertificate(body, u, ca, cert, key)
+		if err := requestClientCertificate(body, u, ca, cert, key); err != nil {
+			fmt.Fprintf(os.Stderr, "request cert: %v\n", err)
+			os.Exit(1)
+		}
 	case "createRuntime", "createContainer", "poststart", "stopContainer", "poststop":
-		_ = postContainerState(body, event, u, ca, cert, key)
+		if err := postContainerState(body, event, u, ca, cert, key); err != nil {
+			fmt.Fprintf(os.Stderr, "post state: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "invalid event: %s", *event)
 		os.Exit(1)
@@ -157,8 +163,8 @@ func postContainerState(body []byte, event *string, u *string, ca *string, cert 
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 != 2 {
-		fmt.Fprintf(os.Stderr, "post state failed")
-		os.Exit(1)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("unexpected status: %s: %s", resp.Status, string(respBody))
 	}
 
 	return nil
@@ -170,7 +176,7 @@ type State struct {
 }
 
 func isCertificateExist(st State) bool {
-	certPath := "/etc/raind/container/" + st.ContainerId + "/cert/client.key"
+	certPath := "/etc/raind/container/" + st.ContainerId + "/cert/client.crt"
 	keyPath := "/etc/raind/container/" + st.ContainerId + "/cert/client.key"
 
 	_, certPathErr := os.Stat(certPath)
@@ -224,7 +230,8 @@ func requestCert(st State, url string, ca string, cert string, key string) error
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 != 2 {
-		return err
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("unexpected status: %s: %s", resp.Status, string(respBody))
 	}
 
 	certPem, err := io.ReadAll(resp.Body)

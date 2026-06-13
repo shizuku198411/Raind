@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	httpclient "raind/internal/raind/core/client"
 	"text/tabwriter"
@@ -16,14 +17,18 @@ func NewServiceReplicaSetList() *ServiceReplicaSetList {
 
 type ServiceReplicaSetList struct{}
 
-func (s *ServiceReplicaSetList) List() error {
+func (s *ServiceReplicaSetList) List(namespace string) error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
 	}
+	path := "/v1/replicasets"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
 	if err := httpClient.NewRequest(
 		http.MethodGet,
-		"/v1/replicasets",
+		path,
 		nil,
 	); err != nil {
 		return err

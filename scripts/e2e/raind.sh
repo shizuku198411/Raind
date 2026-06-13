@@ -5,9 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RAIND_BIN="${ROOT_DIR}/bin/raind"
 CONDENSER_BIN="${ROOT_DIR}/bin/condenser"
-E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/raind-cli-e2e}"
+E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/raind-deploy-e2e}"
 LOG_PATH="${E2E_WORK_DIR}/condenser.log"
 PID=""
+SUFFIX="${E2E_SUFFIX:-$$}"
+HOST_ADDR=""
 
 log() {
   printf '==> %s\n' "$*"
@@ -17,7 +19,7 @@ fail() {
   printf 'error: %s\n' "$*" >&2
   if [[ -f "${LOG_PATH}" ]]; then
     printf '%s\n' '--- condenser log ---' >&2
-    tail -120 "${LOG_PATH}" >&2 || true
+    tail -160 "${LOG_PATH}" >&2 || true
   fi
   exit 1
 }
@@ -40,7 +42,7 @@ sudo_cmd() {
 
 require_workshop() {
   if [[ "${ROOT_DIR}" != /project* ]]; then
-    fail "raind e2e must run inside Workshop. use: workshop run raind-dev -- test-raind-e2e"
+    fail "raind deploy e2e must run inside Workshop. use: workshop run raind-dev -- test-e2e"
   fi
 }
 
@@ -63,12 +65,17 @@ prepare_runtime() {
     /var/log/raind \
     /sys/fs/cgroup/raind
   sudo_cmd chmod 0755 /etc/raind /etc/raind/log /etc/raind/cert /etc/raind/store /var/log/raind
+  sudo_cmd install -m 0755 "${ROOT_DIR}/bin/condenser-hook-agent" /usr/local/bin/condenser-hook-agent
+  sudo_cmd install -m 0755 "${ROOT_DIR}/bin/droplet" /usr/local/bin/droplet
 
   for controller in cpu memory pids io; do
     if sudo_cmd grep -qw "${controller}" /sys/fs/cgroup/raind/cgroup.controllers; then
       sudo_cmd sh -c "echo +${controller} > /sys/fs/cgroup/raind/cgroup.subtree_control 2>/dev/null || true"
     fi
   done
+
+  HOST_ADDR="$(ip -4 -o addr show dev eth0 | awk '{split($4, a, "/"); print a[1]; exit}')"
+  [[ -n "${HOST_ADDR}" ]] || fail "could not resolve eth0 address"
 }
 
 cleanup_stale_condenser() {
@@ -87,14 +94,14 @@ assert_port_free() {
 start_condenser() {
   log "start condenser"
   mkdir -p "${E2E_WORK_DIR}"
-  : > "${LOG_PATH}"
+  : >"${LOG_PATH}"
 
   cleanup_stale_condenser
   for port in 7755 7756 7757 7758; do
     assert_port_free "${port}"
   done
 
-  sudo_cmd env PATH="${PATH}" "${CONDENSER_BIN}" >"${LOG_PATH}" 2>&1 &
+  sudo_cmd env PATH="${ROOT_DIR}/bin:${PATH}" "${CONDENSER_BIN}" >"${LOG_PATH}" 2>&1 &
   PID="$!"
 }
 
@@ -154,19 +161,6 @@ run_raind_allow_empty() {
   sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
 }
 
-assert_raind_fails() {
-  local name="$1"
-  shift
-  local out="${E2E_WORK_DIR}/${name}.err"
-
-  log "raind $* fails"
-  if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
-    cat "${out}" >&2 || true
-    fail "expected raind $* to fail"
-  fi
-  [[ -s "${out}" ]] || fail "raind $* failed without output"
-}
-
 assert_output_contains() {
   local name="$1"
   local pattern="$2"
@@ -181,162 +175,473 @@ assert_output_contains() {
 
 extract_created_id() {
   local name="$1"
-  awk '/: .* (created|applied)$/ { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
+  awk '/: .* (created|applied)$/ || /: .* created / { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
 }
 
-run_cli_checks() {
-  log "run raind cli checks"
+extract_policy_id() {
+  local name="$1"
+  awk '/^policy: .* created$/ { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
+}
 
-  run_raind version --version
-  assert_output_contains version "raind version"
+wait_raind_contains() {
+  local name="$1"
+  local pattern="$2"
+  shift 2
 
+  for _ in $(seq 1 120); do
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${E2E_WORK_DIR}/${name}.out" 2>&1 &&
+      grep -q "${pattern}" "${E2E_WORK_DIR}/${name}.out"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${E2E_WORK_DIR}/${name}.out ---" >&2
+  cat "${E2E_WORK_DIR}/${name}.out" >&2 || true
+  fail "timed out waiting for raind $* output to contain: ${pattern}"
+}
+
+wait_http_ok() {
+  local url="$1"
+  local out="${E2E_WORK_DIR}/http.out"
+
+  log "curl ${url}"
+  for _ in $(seq 1 120); do
+    if curl -fsS --connect-timeout 2 --max-time 3 "${url}" >"${out}" 2>"${E2E_WORK_DIR}/http.err" &&
+      grep -qi "nginx" "${out}"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  cat "${E2E_WORK_DIR}/http.err" >&2 2>/dev/null || true
+  fail "timed out waiting for ${url}"
+}
+
+write_static_build_context() {
+  local dir="$1"
+  mkdir -p "${dir}/assets"
+  cat >"${dir}/Dockerfile" <<'DOCKERFILE'
+FROM busybox:latest
+COPY message.txt /message.txt
+CMD ["cat", "/message.txt"]
+DOCKERFILE
+  printf 'raind image build e2e\n' >"${dir}/message.txt"
+  printf 'asset\n' >"${dir}/assets/file.txt"
+}
+
+test_image() {
+  local tag="local/e2e-image-${SUFFIX}:latest"
+  local context="${E2E_WORK_DIR}/image-context"
+
+  log "image test"
+  run_raind image-pull-busybox image pull busybox:latest
+  assert_output_contains image-pull-busybox "pull completed"
+  run_raind image-pull-nginx image pull nginx:latest
+  assert_output_contains image-pull-nginx "pull completed"
+
+  write_static_build_context "${context}"
+  run_raind image-build image build -t "${tag}" "${context}"
+  assert_output_contains image-build "build completed"
   run_raind image-ls image ls
-  assert_output_contains image-ls "REPOSITORY"
-
-  run_raind container-ls container ls
-  assert_output_contains container-ls "CONTAINER ID"
-
-  run_raind network-ls network ls
-  assert_output_contains network-ls "NETWORK"
-
-  run_raind pod-ls resource pod ls
-  assert_output_contains pod-ls "POD ID"
-
-  run_raind service-ls resource service ls
-  assert_output_contains service-ls "SERVICE ID"
-
-  run_raind bottle-ls bottle ls
-  assert_output_contains bottle-ls "BOTTLE ID"
-
-  run_raind help --help
-  assert_output_contains help "container"
-  assert_output_contains help "image"
-  assert_output_contains help "network"
-  assert_output_contains help "resource"
-  assert_output_contains help "policy"
-  assert_output_contains help "logs"
-
-  run_raind completion-bash completion bash
-  assert_output_contains completion-bash "_raind_complete"
-
-  run_raind completion-zsh completion zsh
-  assert_output_contains completion-zsh "#compdef raind"
-
-  run_raind policy-ls-ew policy ls --type ew
-  assert_output_contains policy-ls-ew "POLICY TYPE"
-
-  run_raind policy-ls-ns-obs policy ls --type ns-obs
-  assert_output_contains policy-ls-ns-obs "POLICY TYPE"
-
-  run_raind policy-ls-ns-enf policy ls --type ns-enf
-  assert_output_contains policy-ls-ns-enf "POLICY TYPE"
-
-  run_raind resource-replicaset-ls resource replicaset ls
-  assert_output_contains resource-replicaset-ls "REPLICASET ID"
-
-  run_raind_allow_empty logs-netflow logs netflow --line 5
-
-  assert_raind_fails invalid-top-level definitely-not-a-command
-  assert_raind_fails invalid-subcommand container definitely-not-a-subcommand
-  assert_raind_fails invalid-policy-type policy ls --type invalid
-  assert_raind_fails unknown-container-stop container stop unknown-e2e-container
-  assert_raind_fails unknown-container-rm container rm unknown-e2e-container
-  assert_raind_fails image-status-missing image rm ""
+  assert_output_contains image-ls "busybox"
+  assert_output_contains image-ls "nginx"
+  assert_output_contains image-ls "local/e2e-image-${SUFFIX}"
+  run_raind image-rm image rm "${tag}"
+  assert_output_contains image-rm "remove completed"
 }
 
-run_cli_write_checks() {
-  local bridge="rcli$$"
-  local pod_name="e2e-cli-pod-$$"
-  local svc_name="e2e-cli-svc-$$"
-  local resource_svc_name="e2e-cli-apply-svc-$$"
-  local pod_id
-  local service_id
+test_network() {
+  local bridge="e2enet${SUFFIX}"
+  local cid
 
-  log "run raind write-path checks"
-
+  log "network test"
   run_raind network-create network create "${bridge}"
   assert_output_contains network-create "created"
-  run_raind network-ls-after-create network ls
-  assert_output_contains network-ls-after-create "${bridge}"
-  assert_raind_fails network-create-duplicate network create "${bridge}"
+  run_raind network-ls network ls
+  assert_output_contains network-ls "${bridge}"
+
+  run_raind network-container-create container create --network "${bridge}" --name "e2e-net-${SUFFIX}" busybox:latest sleep 30
+  cid="$(extract_created_id network-container-create)"
+  [[ -n "${cid}" ]] || fail "network container id not found"
+  run_raind network-container-start container start "${cid}"
+  assert_output_contains network-container-start "started"
+  run_raind network-container-ls container ls
+  assert_output_contains network-container-ls "e2e-net-${SUFFIX}"
+  run_raind_allow_empty network-container-stop container stop "${cid}"
+  run_raind_allow_empty network-container-rm container rm "${cid}"
   run_raind network-rm network rm "${bridge}"
   assert_output_contains network-rm "delete network"
+}
 
-  run_raind pod-create resource pod create --name "${pod_name}" --namespace default --label app=e2e --annotation suite=raind
-  assert_output_contains pod-create "pod:"
-  pod_id="$(extract_created_id pod-create)"
-  [[ -n "${pod_id}" ]] || fail "pod create did not print pod id"
-  run_raind pod-ls-after-create resource pod ls
-  assert_output_contains pod-ls-after-create "${pod_name}"
-  run_raind_allow_empty pod-start resource pod start "${pod_id}"
-  run_raind_allow_empty pod-stop resource pod stop "${pod_id}"
+test_policy() {
+  local source_id
+  local dest_id
+  local policy_id
 
-  cat >"${E2E_WORK_DIR}/service.yaml" <<YAML
+  log "policy test"
+  run_raind policy-source-create container create --name "e2e-policy-src-${SUFFIX}" busybox:latest sleep 30
+  source_id="$(extract_created_id policy-source-create)"
+  run_raind policy-dest-create container create --name "e2e-policy-dst-${SUFFIX}" busybox:latest sleep 30
+  dest_id="$(extract_created_id policy-dest-create)"
+  [[ -n "${source_id}" && -n "${dest_id}" ]] || fail "policy container ids not found"
+
+  run_raind policy-add policy add --type ew --source "e2e-policy-src-${SUFFIX}" --destination "e2e-policy-dst-${SUFFIX}" --protocol tcp --dport 80 --comment "e2e policy"
+  policy_id="$(extract_policy_id policy-add)"
+  [[ -n "${policy_id}" ]] || fail "policy id not found"
+  run_raind policy-ls policy ls --type ew
+  assert_output_contains policy-ls "${policy_id}"
+  run_raind policy-rm policy rm "${policy_id}"
+  assert_output_contains policy-rm "remove"
+  run_raind policy-revert policy revert
+  assert_output_contains policy-revert "revert success"
+  run_raind policy-ns-mode-enforce policy ns-mode enforce
+  assert_output_contains policy-ns-mode-enforce "enforce"
+  run_raind policy-ns-mode-observe policy ns-mode observe
+  assert_output_contains policy-ns-mode-observe "observe"
+
+  run_raind_allow_empty policy-source-rm container rm "${source_id}"
+  run_raind_allow_empty policy-dest-rm container rm "${dest_id}"
+}
+
+test_container_deploy() {
+  local port=$((18100 + SUFFIX % 1000))
+  local cid
+
+  log "container deploy test"
+  run_raind container-create container create --name "e2e-web-${SUFFIX}" -p "${port}:80" nginx:latest
+  cid="$(extract_created_id container-create)"
+  [[ -n "${cid}" ]] || fail "container id not found"
+  run_raind container-start container start "${cid}"
+  assert_output_contains container-start "started"
+  wait_http_ok "http://${HOST_ADDR}:${port}/"
+  run_raind_allow_empty container-exec container exec "${cid}" nginx -v
+  run_raind_allow_empty container-logs container logs --line 20 "${cid}"
+  run_raind_allow_empty container-stop container stop "${cid}"
+  run_raind_allow_empty container-rm container rm "${cid}"
+}
+
+test_bottle_deploy() {
+  local port=$((19100 + SUFFIX % 1000))
+  local yaml="${E2E_WORK_DIR}/bottle.yaml"
+  local name="e2e-bottle-${SUFFIX}"
+
+  log "bottle deploy test"
+  cat >"${yaml}" <<YAML
+bottle:
+  name: ${name}
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "${port}:80"
+YAML
+  run_raind bottle-create bottle create -f "${yaml}"
+  assert_output_contains bottle-create "created"
+  run_raind bottle-ls bottle ls
+  assert_output_contains bottle-ls "${name}"
+  run_raind_allow_empty bottle-start bottle start "${name}"
+  wait_http_ok "http://${HOST_ADDR}:${port}/"
+  run_raind bottle-show bottle show "${name}"
+  assert_output_contains bottle-show "${name}"
+  run_raind_allow_empty bottle-stop bottle stop "${name}"
+  run_raind_allow_empty bottle-rm bottle rm "${name}"
+}
+
+test_resource_namespace() {
+  local ns="e2e-ns-${SUFFIX}"
+
+  log "resource namespace test"
+  run_raind ns-create resource namespace create "${ns}"
+  assert_output_contains ns-create "created"
+  run_raind ns-show resource namespace show "${ns}"
+  assert_output_contains ns-show "${ns}"
+  run_raind ns-ls resource namespace ls
+  assert_output_contains ns-ls "${ns}"
+  run_raind ns-rm resource namespace rm "${ns}"
+  assert_output_contains ns-rm "removed"
+}
+
+test_resource_pod() {
+  local yaml="${E2E_WORK_DIR}/pod.yaml"
+  local ns="e2e-pod-ns-${SUFFIX}"
+
+  log "resource pod test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+YAML
+  run_raind pod-apply resource apply -f "${yaml}"
+  assert_output_contains pod-apply "pod:"
+  wait_raind_contains pod-ls "e2e-pod" resource pod ls --namespace "${ns}"
+  wait_raind_contains pod-ready "1/1" resource pod ls --namespace "${ns}"
+  run_raind pod-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains pod-rm-manifest "pod:"
+  assert_output_contains pod-rm-manifest "namespace:"
+}
+
+test_resource_replicaset() {
+  local yaml="${E2E_WORK_DIR}/replicaset.yaml"
+  local ns="e2e-rs-ns-${SUFFIX}"
+
+  log "resource replicaset test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: e2e-rs
+  namespace: ${ns}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: e2e-rs
+  template:
+    metadata:
+      labels:
+        app: e2e-rs
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+YAML
+  run_raind rs-apply resource apply -f "${yaml}"
+  assert_output_contains rs-apply "replicaset:"
+  wait_raind_contains rs-ready "2        2        2" resource replicaset ls --namespace "${ns}"
+  run_raind rs-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains rs-rm-manifest "replicaset:"
+  assert_output_contains rs-rm-manifest "namespace:"
+}
+
+test_resource_deployment() {
+  local yaml="${E2E_WORK_DIR}/deployment.yaml"
+  local ns="e2e-deploy-ns-${SUFFIX}"
+
+  log "resource deployment test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-deploy
+  namespace: ${ns}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: e2e-deploy
+  template:
+    metadata:
+      labels:
+        app: e2e-deploy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+YAML
+  run_raind deploy-apply resource apply -f "${yaml}"
+  assert_output_contains deploy-apply "deployment:"
+  wait_raind_contains deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
+  run_raind deploy-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains deploy-rm-manifest "deployment:"
+  assert_output_contains deploy-rm-manifest "namespace:"
+}
+
+test_resource_service() {
+  local port=$((20100 + SUFFIX % 1000))
+  local yaml="${E2E_WORK_DIR}/service.yaml"
+  local ns="e2e-svc-ns-${SUFFIX}"
+
+  log "resource service test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-svc-web
+  namespace: ${ns}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: e2e-svc-web
+  template:
+    metadata:
+      labels:
+        app: e2e-svc-web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: ${svc_name}
-  namespace: default
+  name: e2e-svc
+  namespace: ${ns}
 spec:
   selector:
-    app: e2e
+    app: e2e-svc-web
   ports:
-    - port: 8080
-      targetPort: 80
-      protocol: TCP
+  - port: ${port}
+    targetPort: 80
+    protocol: TCP
 YAML
-  run_raind service-create resource service create -f "${E2E_WORK_DIR}/service.yaml"
-  assert_output_contains service-create "service:"
-  service_id="$(extract_created_id service-create)"
-  [[ -n "${service_id}" ]] || fail "service create did not print service id"
-  run_raind service-ls-after-create resource service ls
-  assert_output_contains service-ls-after-create "${svc_name}"
-  run_raind service-show resource service show "${service_id}"
-  assert_output_contains service-show "${svc_name}"
-  run_raind service-rm resource service rm "${service_id}"
-  assert_output_contains service-rm "removed"
+  run_raind svc-apply resource apply -f "${yaml}"
+  assert_output_contains svc-apply "service:"
+  wait_raind_contains svc-deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
+  wait_raind_contains svc-ls "e2e-svc" resource service ls --namespace "${ns}"
+  wait_http_ok "http://${HOST_ADDR}:${port}/"
+  run_raind svc-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains svc-rm-manifest "service:"
+  assert_output_contains svc-rm-manifest "deployment:"
+  assert_output_contains svc-rm-manifest "namespace:"
+}
 
-  cat >"${E2E_WORK_DIR}/resource-service.yaml" <<YAML
+test_resource_yaml_all_kinds() {
+  local port=$((21100 + SUFFIX % 1000))
+  local yaml="${E2E_WORK_DIR}/all-kinds.yaml"
+  local ns="e2e-yaml-ns-${SUFFIX}"
+
+  log "resource yaml all-kinds test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-yaml-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-yaml-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: e2e-yaml-rs
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-yaml-rs
+  template:
+    metadata:
+      labels:
+        app: e2e-yaml-rs
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-yaml-deploy
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2e-yaml-deploy
+  template:
+    metadata:
+      labels:
+        app: e2e-yaml-deploy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: ${resource_svc_name}
-  namespace: default
+  name: e2e-yaml-svc
+  namespace: ${ns}
 spec:
   selector:
-    app: e2e-resource
+    app: e2e-yaml-deploy
   ports:
-    - port: 9090
-      targetPort: 90
-      protocol: TCP
+  - port: ${port}
+    targetPort: 80
+    protocol: TCP
 YAML
-  run_raind resource-apply resource apply -f "${E2E_WORK_DIR}/resource-service.yaml"
-  assert_output_contains resource-apply "service:"
-  assert_output_contains resource-apply "applied"
-  run_raind resource-rm resource rm -f "${E2E_WORK_DIR}/resource-service.yaml"
-  assert_output_contains resource-rm "service:"
-
-  run_raind_allow_empty pod-rm resource pod rm "${pod_id}"
-
-  assert_raind_fails service-create-invalid resource service create -f "${E2E_WORK_DIR}/missing-service.yaml"
-  assert_raind_fails container-create-missing-image container create raind/e2e-missing:latest --name "e2e-cli-missing-$$"
+  run_raind yaml-apply resource apply -f "${yaml}"
+  assert_output_contains yaml-apply "namespace:"
+  assert_output_contains yaml-apply "pod:"
+  assert_output_contains yaml-apply "replicaset:"
+  assert_output_contains yaml-apply "deployment:"
+  assert_output_contains yaml-apply "service:"
+  wait_raind_contains yaml-deploy-ready "1        1        1" resource deployment ls --namespace "${ns}"
+  wait_raind_contains yaml-rs-ready "1        1        1" resource replicaset ls --namespace "${ns}"
+  wait_http_ok "http://${HOST_ADDR}:${port}/"
+  run_raind yaml-rm resource rm -f "${yaml}"
+  assert_output_contains yaml-rm "namespace:"
+  assert_output_contains yaml-rm "pod:"
+  assert_output_contains yaml-rm "replicaset:"
+  assert_output_contains yaml-rm "deployment:"
+  assert_output_contains yaml-rm "service:"
 }
 
 main() {
   require_workshop
+  rm -rf "${E2E_WORK_DIR}"
   mkdir -p "${E2E_WORK_DIR}"
 
   build_components
   prepare_runtime
   cleanup_stale_condenser
-  assert_raind_fails condenser-down image ls
   start_condenser
   trap stop_condenser EXIT
   wait_ready
-  run_cli_checks
-  run_cli_write_checks
 
-  log "raind e2e completed"
+  test_image
+  test_network
+  test_policy
+  test_container_deploy
+  test_bottle_deploy
+  test_resource_namespace
+  test_resource_pod
+  test_resource_replicaset
+  test_resource_deployment
+  test_resource_service
+  test_resource_yaml_all_kinds
+
+  log "raind deploy e2e completed"
 }
 
 main "$@"
