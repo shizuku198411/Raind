@@ -37,15 +37,11 @@ parts:
   raind:
     plugin: nil
     source: .
-    build-snaps:
-      - go/latest/stable
     build-packages:
       - ca-certificates
       - git
     override-build: |
       set -eux
-
-      export PATH="/snap/bin:$PATH"
 
       ./scripts/build.sh build
 
