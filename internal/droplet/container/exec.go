@@ -135,7 +135,7 @@ func (c *ContainerExec) executeNsenter(containerPid int, opt ExecOption) error {
 func (c *ContainerExec) executeShim(containerPid int, opt ExecOption) error {
 	entrypoint := opt.Entrypoint
 	shimArgs := append([]string{"exec-shim", opt.ContainerId, strconv.Itoa(containerPid)}, entrypoint...)
-	cmd := c.commandFactory.Command(os.Args[0], shimArgs...)
+	cmd := c.commandFactory.Command(utils.SelfBinPath(), shimArgs...)
 
 	// execute exec-shim subcommand
 	if err := cmd.Start(); err != nil {

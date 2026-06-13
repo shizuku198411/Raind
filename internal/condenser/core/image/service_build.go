@@ -542,9 +542,10 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 		return err
 	}
 	hookAddr = strings.Split(hookAddr, "/")[0]
+	hookAgentPath := utils.HookAgentBinPath()
 	createRuntimeHook := []string{
 		strings.Join([]string{
-			"/usr/local/bin/condenser-hook-agent",
+			hookAgentPath,
 			"--url", "https://localhost:7757/v1/pki/sign",
 			"--event", "requestCert",
 			"--ca", utils.PublicCertPath,
@@ -552,7 +553,7 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 			"--key", utils.HookClientKeyPath,
 		}, ","),
 		strings.Join([]string{
-			"/usr/local/bin/condenser-hook-agent",
+			hookAgentPath,
 			"--url", "https://" + hookAddr + ":7756/v1/hooks/droplet",
 			"--event", "createRuntime",
 			"--ca", utils.PublicCertPath,
@@ -566,7 +567,7 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 	}
 	createContainerHook := []string{
 		strings.Join([]string{
-			"/usr/local/bin/condenser-hook-agent",
+			hookAgentPath,
 			"--url", "https://" + hookAddr + ":7756/v1/hooks/droplet",
 			"--event", "createContainer",
 			"--ca", utils.PublicCertPath,
@@ -579,7 +580,7 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 	}
 	poststartHook := []string{
 		strings.Join([]string{
-			"/usr/local/bin/condenser-hook-agent",
+			hookAgentPath,
 			"--url", "https://" + hookAddr + ":7756/v1/hooks/droplet",
 			"--event", "poststart",
 			"--ca", utils.PublicCertPath,
@@ -592,7 +593,7 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 	}
 	stopContainerHook := []string{
 		strings.Join([]string{
-			"/usr/local/bin/condenser-hook-agent",
+			hookAgentPath,
 			"--url", "https://" + hookAddr + ":7756/v1/hooks/droplet",
 			"--event", "stopContainer",
 			"--ca", utils.PublicCertPath,
