@@ -98,7 +98,7 @@ func (c *ContainerRun) Run(opt RunOption) error {
 	// 5. prepare init subcommand
 	entrypoint := spec.Process.Args
 	initArgs := append([]string{"init", opt.ContainerId, fifo}, entrypoint...)
-	cmd := c.commandFactory.Command(os.Args[0], initArgs...)
+	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
 	// set stdout/stderr/stdin
 	if opt.Tty {
 		cmd.SetStdout(os.Stdout)

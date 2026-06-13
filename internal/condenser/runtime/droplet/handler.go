@@ -19,9 +19,8 @@ type DropletHandler struct {
 	commandFactory utils.CommandFactory
 }
 
-const runtimePath = "droplet"
-
 func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
+	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"spec",
 		"--rootfs", specParameter.Rootfs,
@@ -111,6 +110,7 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 }
 
 func (h *DropletHandler) Create(createParameter runtime.CreateModel, podPid int) error {
+	runtimePath := utils.DropletBinPath()
 	if podPid <= 0 {
 		var args []string
 		if createParameter.Tty {
@@ -167,6 +167,7 @@ func (h *DropletHandler) Create(createParameter runtime.CreateModel, podPid int)
 }
 
 func (h *DropletHandler) Start(startParameter runtime.StartModel) error {
+	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"start",
 		startParameter.ContainerId,
@@ -184,6 +185,7 @@ func (h *DropletHandler) Start(startParameter runtime.StartModel) error {
 }
 
 func (h *DropletHandler) Delete(deleteParameter runtime.DeleteModel) error {
+	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"delete",
 		deleteParameter.ContainerId,
@@ -201,6 +203,7 @@ func (h *DropletHandler) Delete(deleteParameter runtime.DeleteModel) error {
 }
 
 func (h *DropletHandler) Stop(stopParameter runtime.StopModel) error {
+	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"kill",
 		stopParameter.ContainerId,
@@ -218,6 +221,7 @@ func (h *DropletHandler) Stop(stopParameter runtime.StopModel) error {
 }
 
 func (h *DropletHandler) Exec(execParameter runtime.ExecModel) error {
+	runtimePath := utils.DropletBinPath()
 	var args []string
 	if execParameter.Tty {
 		args = []string{

@@ -304,7 +304,7 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 
 	// prepare init subcommand
 	initArgs := append([]string{"init", containerId, fifo}, entrypoint...)
-	cmd := c.commandFactory.Command(os.Args[0], initArgs...)
+	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
 	// set stdout/stderr to log files
 	logPath := utils.InitLogPath(containerId)
 	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0640)
@@ -335,7 +335,7 @@ func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, 
 
 	// prepare shim subcommand
 	shimArgs := append([]string{"shim", containerId, fifo}, entrypoint...)
-	cmd := c.commandFactory.Command(os.Args[0], shimArgs...)
+	cmd := c.commandFactory.Command(utils.SelfBinPath(), shimArgs...)
 
 	// execute init subcommand
 	if err := cmd.Start(); err != nil {

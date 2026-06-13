@@ -2,7 +2,9 @@ package utils
 
 import (
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 func NewCommandFactory() *ExecCommandFactory {
@@ -88,7 +90,35 @@ func (e *ExecCmd) Pid() int {
 }
 
 func (e *ExecCmd) SetEnv(envv []string) {
-	e.cmd.Env = append(e.cmd.Env, envv...)
+	base := e.cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	e.cmd.Env = mergeEnv(base, envv)
+}
+
+func mergeEnv(base, override []string) []string {
+	out := append([]string(nil), base...)
+	index := make(map[string]int, len(out))
+	for i, kv := range out {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			index[k] = i
+		}
+	}
+	for _, kv := range override {
+		k, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			out = append(out, kv)
+			continue
+		}
+		if i, exists := index[k]; exists {
+			out[i] = kv
+		} else {
+			index[k] = len(out)
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // SetStdout sets the stdout writer for the underlying command.

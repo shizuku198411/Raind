@@ -53,7 +53,7 @@ func TestDropletHandlerSpecBuildsExpectedArgs(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, factory.calls, 1)
-	assert.Equal(t, "droplet", factory.calls[0].name)
+	assert.Equal(t, "/usr/local/bin/droplet", factory.calls[0].name)
 	assert.Equal(t, []string{
 		"spec", "--rootfs", "/rootfs", "--cwd", "/app", "--command", "/bin/sh -c test",
 		"--hostname", "cid", "--host_if_name", "eth0", "--bridge_if_name", "raind0",
@@ -81,24 +81,24 @@ func TestDropletHandlerCreateBuildsExpectedArgs(t *testing.T) {
 		{
 			name:  "normal",
 			model: runtime.CreateModel{ContainerId: "cid"},
-			want:  commandCall{name: "droplet", args: []string{"create", "cid"}},
+			want:  commandCall{name: "/usr/local/bin/droplet", args: []string{"create", "cid"}},
 		},
 		{
 			name:  "tty",
 			model: runtime.CreateModel{ContainerId: "cid", Tty: true},
-			want:  commandCall{name: "droplet", args: []string{"create", "-t", "cid"}},
+			want:  commandCall{name: "/usr/local/bin/droplet", args: []string{"create", "-t", "cid"}},
 		},
 		{
 			name:   "pod nsenter",
 			model:  runtime.CreateModel{ContainerId: "cid"},
 			podPid: 123,
-			want:   commandCall{name: "nsenter", args: []string{"-t", "123", "-U", "--", "droplet", "create", "cid"}},
+			want:   commandCall{name: "nsenter", args: []string{"-t", "123", "-U", "--", "/usr/local/bin/droplet", "create", "cid"}},
 		},
 		{
 			name:   "pod nsenter tty",
 			model:  runtime.CreateModel{ContainerId: "cid", Tty: true},
 			podPid: 123,
-			want:   commandCall{name: "nsenter", args: []string{"-t", "123", "-U", "--", "droplet", "create", "-t", "cid"}},
+			want:   commandCall{name: "nsenter", args: []string{"-t", "123", "-U", "--", "/usr/local/bin/droplet", "create", "-t", "cid"}},
 		},
 	}
 
@@ -125,31 +125,31 @@ func TestDropletHandlerLifecycleBuildsExpectedArgs(t *testing.T) {
 		{
 			name: "start",
 			run:  func(h *DropletHandler) error { return h.Start(runtime.StartModel{ContainerId: "cid"}) },
-			want: commandCall{name: "droplet", args: []string{"start", "cid"}},
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"start", "cid"}},
 		},
 		{
 			name: "stop",
 			run:  func(h *DropletHandler) error { return h.Stop(runtime.StopModel{ContainerId: "cid"}) },
-			want: commandCall{name: "droplet", args: []string{"kill", "cid"}},
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"kill", "cid"}},
 		},
 		{
 			name: "delete",
 			run:  func(h *DropletHandler) error { return h.Delete(runtime.DeleteModel{ContainerId: "cid"}) },
-			want: commandCall{name: "droplet", args: []string{"delete", "cid"}},
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"delete", "cid"}},
 		},
 		{
 			name: "exec",
 			run: func(h *DropletHandler) error {
 				return h.Exec(runtime.ExecModel{ContainerId: "cid", Entrypoint: []string{"/bin/echo", "ok"}})
 			},
-			want: commandCall{name: "droplet", args: []string{"exec", "cid", "/bin/echo", "ok"}},
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"exec", "cid", "/bin/echo", "ok"}},
 		},
 		{
 			name: "exec tty",
 			run: func(h *DropletHandler) error {
 				return h.Exec(runtime.ExecModel{ContainerId: "cid", Tty: true, Entrypoint: []string{"/bin/sh"}})
 			},
-			want: commandCall{name: "droplet", args: []string{"exec", "-t", "cid", "/bin/sh"}},
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"exec", "-t", "cid", "/bin/sh"}},
 		},
 	}
 
