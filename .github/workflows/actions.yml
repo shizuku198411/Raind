@@ -98,9 +98,6 @@ jobs:
       - name: Integration Tests
         run: workshop run raind-dev -- dev-cleanup && workshop run raind-dev -- test-integ
 
-      - name: E2E Tests
-        run: workshop run raind-dev -- dev-cleanup && workshop run raind-dev -- test-e2e
-
   e2e-test:
     name: e2e test
     runs-on: ubuntu-latest
