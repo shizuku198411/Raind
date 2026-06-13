@@ -43,6 +43,16 @@ parts:
     override-build: |
       set -eux
 
+      if [ -n "${RAIND_SNAP_GO_BIN:-}" ]; then
+        export PATH="${RAIND_SNAP_GO_BIN}:$PATH"
+      fi
+      if [ -n "${RAIND_SNAP_GOROOT:-}" ]; then
+        export GOROOT="${RAIND_SNAP_GOROOT}"
+      fi
+
+      which go
+      go version
+
       ./scripts/build.sh build
 
       mkdir -p "$CRAFT_PART_INSTALL/bin"
