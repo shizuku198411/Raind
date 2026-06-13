@@ -33,19 +33,22 @@ actions:
   test-unit: |
     cd /project
     ./scripts/test/unit.sh "$@"
-  test-droplet-e2e: |
+  test-droplet-integ: |
     cd /project
-    ./scripts/e2e/droplet.sh "$@"
-  test-condenser-e2e: |
+    ./scripts/integ/droplet.sh "$@"
+  test-condenser-integ: |
     cd /project
-    ./scripts/e2e/condenser.sh "$@"
-  test-raind-e2e: |
+    ./scripts/integ/condenser.sh "$@"
+  test-raind-integ: |
     cd /project
-    ./scripts/e2e/raind.sh "$@"
+    ./scripts/integ/raind.sh "$@"
+  test-integ: |
+    cd /project
+    ./scripts/integ/droplet.sh "$@"
+    ./scripts/integ/condenser.sh "$@"
+    ./scripts/integ/raind.sh "$@"
   test-e2e: |
     cd /project
-    ./scripts/e2e/droplet.sh "$@"
-    ./scripts/e2e/condenser.sh "$@"
     ./scripts/e2e/raind.sh "$@"
 
   dev-install: |

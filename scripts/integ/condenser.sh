@@ -32,14 +32,14 @@ sudo_cmd() {
   fi
 
   if ! have_cmd sudo; then
-    fail "sudo is required for condenser e2e"
+    fail "sudo is required for condenser integration test"
   fi
   sudo -n "$@"
 }
 
 require_workshop() {
   if [[ "${ROOT_DIR}" != /project* ]]; then
-    fail "condenser e2e must run inside Workshop. use: workshop run raind-dev -- test-condenser-e2e"
+    fail "condenser integration test must run inside Workshop. use: workshop run raind-dev -- test-condenser-integ"
   fi
 }
 
@@ -471,7 +471,7 @@ main() {
   assert_namespace_lifecycle
   assert_pod_and_service_lifecycle
 
-  log "condenser e2e completed"
+  log "condenser integration test completed"
 }
 
 main "$@"

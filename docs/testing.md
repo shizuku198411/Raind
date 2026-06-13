@@ -1,6 +1,6 @@
 # Testing with Workshop
 
-This project uses Canonical Workshop for automated tests and manual runtime checks. Do not run e2e tests directly on the host machine unless you intentionally want to affect the host runtime environment.
+This project uses Canonical Workshop for automated tests and manual runtime checks. Do not run integration or e2e tests directly on the host machine unless you intentionally want to affect the host runtime environment.
 
 ## Workshop Project
 
@@ -28,7 +28,29 @@ workshop run raind-dev -- test-condenser
 workshop run raind-dev -- test-raind
 ```
 
+## Integration Tests
+
+Integration tests verify the droplet, condenser, and raind CLI/API wiring without covering every real deployment workflow.
+
+Run all integration tests:
+
+```sh
+workshop run raind-dev -- test-integ
+```
+
+Run each component integration suite:
+
+```sh
+workshop run raind-dev -- test-droplet-integ
+workshop run raind-dev -- test-condenser-integ
+workshop run raind-dev -- test-raind-integ
+```
+
+The integration scripts build the required binaries inside Workshop before running their checks.
+
 ## E2E Tests
+
+E2E tests deploy real containers, bottles, and resources, then verify runtime behavior such as published HTTP access.
 
 Run all e2e tests:
 
@@ -36,15 +58,7 @@ Run all e2e tests:
 workshop run raind-dev -- test-e2e
 ```
 
-Run each component e2e suite:
-
-```sh
-workshop run raind-dev -- test-droplet-e2e
-workshop run raind-dev -- test-condenser-e2e
-workshop run raind-dev -- test-raind-e2e
-```
-
-The e2e scripts build the required binaries inside Workshop before running their checks.
+The e2e script builds the required binaries inside Workshop before running its checks.
 
 ## Manual Runtime Verification
 
@@ -92,4 +106,4 @@ Clean up services, files, cgroups, and network artifacts:
 workshop run raind-dev -- dev-cleanup
 ```
 
-The cleanup script removes Workshop runtime artifacts such as `/etc/raind`, `/run/raind`, Workshop logs, installed binaries, `raind0`, `raindDns`, `rd_*` interfaces, RAIND iptables chains, and the Workshop systemd service files.
+The cleanup script removes Workshop runtime artifacts such as `/etc/raind`, `/run/raind`, Workshop logs, installed binaries, `raind0`, `raindDns`, `rd_*` and `rns*` interfaces, RAIND iptables chains, and the Workshop systemd service files.

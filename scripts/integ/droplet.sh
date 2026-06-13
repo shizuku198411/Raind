@@ -151,7 +151,7 @@ build_droplet() {
 
 require_workshop() {
   if [[ "${ROOT_DIR}" != /project* ]]; then
-    fail "droplet e2e must run inside Workshop. use: workshop run raind-dev -- test-droplet-e2e"
+    fail "droplet integration test must run inside Workshop. use: workshop run raind-dev -- test-droplet-integ"
   fi
 }
 
@@ -172,7 +172,7 @@ run_smoke_e2e() {
   local upper="${smoke_dir}/upper"
   local work="${smoke_dir}/work"
 
-  log "run droplet cli smoke e2e"
+  log "run droplet cli smoke integration test"
   rm -rf "${smoke_dir}"
   mkdir -p "${bundle_dir}" "${dead_bundle_dir}" "${rootfs}" "${layer}" "${upper}" "${work}"
 
@@ -457,7 +457,7 @@ main() {
       ;;
   esac
 
-  log "droplet e2e completed"
+  log "droplet integration test completed"
 }
 
 main "$@"
