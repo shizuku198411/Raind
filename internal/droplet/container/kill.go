@@ -203,6 +203,14 @@ func (c *ContainerKill) waitProcessExit(procIdentity ProcIdentity, timeout time.
 				return nil
 			}
 		}
+		state, err := c.readProcState(procIdentity.Pid)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+		} else if state == "Z" {
+			return nil
+		}
 		if currentStart != procIdentity.StartTime {
 			// re-used proc, exit
 			return nil
@@ -258,15 +266,40 @@ func (c *ContainerKill) readProcStartTime(pid int) (uint64, error) {
 	//  23  6381568   vsize
 	//  24  1280      rss
 	//       :
-	s := string(b)
-	idx := strings.LastIndex(s, ")")
-	if idx < 0 {
-		return 0, fmt.Errorf("invalid stat format")
+	fields, err := parseProcStatFields(string(b))
+	if err != nil {
+		return 0, err
 	}
-	fields := strings.Fields(s[idx+1:])
 	startTime, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return 0, err
 	}
 	return startTime, nil
+}
+
+func (c *ContainerKill) readProcState(pid int) (string, error) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", err
+	}
+	fields, err := parseProcStatFields(string(b))
+	if err != nil {
+		return "", err
+	}
+	if len(fields) == 0 {
+		return "", fmt.Errorf("invalid stat format")
+	}
+	return fields[0], nil
+}
+
+func parseProcStatFields(s string) ([]string, error) {
+	idx := strings.LastIndex(s, ")")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid stat format")
+	}
+	fields := strings.Fields(s[idx+1:])
+	if len(fields) < 20 {
+		return nil, fmt.Errorf("invalid stat format")
+	}
+	return fields, nil
 }

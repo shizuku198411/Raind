@@ -187,11 +187,16 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 			} else {
 				manifest.Selector = manifest.Labels
 			}
+			manifest.Name = rs.Metadata.Name
+			manifest.Namespace = rs.Metadata.Namespace
+			if manifest.Namespace == "" {
+				manifest.Namespace = "default"
+			}
 			if !selectorMatchesLabels(manifest.Selector, manifest.Labels) {
 				return nil, fmt.Errorf("replicaset selector must match template labels")
 			}
 			if manifest.Name == "" {
-				return nil, fmt.Errorf("replicaset template name is required")
+				return nil, fmt.Errorf("replicaset name is required")
 			}
 			result = append(result, manifest)
 		case "Deployment":

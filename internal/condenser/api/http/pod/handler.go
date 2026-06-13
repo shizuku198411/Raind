@@ -334,31 +334,26 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				_, _ = h.serviceHandler.Remove(podId)
 			})
 
-			var containerIds []string
-			for _, c := range m.Containers {
-				if c.Image == "" {
+			if _, err := h.serviceHandler.Start(podId); err != nil {
+				_, _ = h.serviceHandler.Remove(podId)
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "pod start failed: "+err.Error(), nil)
+				return
+			}
+
+			containers, err := h.containerHandler.GetContainersByPodId(podId)
+			if err != nil {
+				_, _ = h.serviceHandler.Remove(podId)
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "container list failed: "+err.Error(), nil)
+				return
+			}
+			containerIds := make([]string, 0, len(containers))
+			for _, c := range containers {
+				if strings.HasPrefix(c.Name, utils.PodInfraContainerNamePrefix) {
 					continue
 				}
-				containerId, err := h.containerHandler.Create(container.ServiceCreateModel{
-					Image:   c.Image,
-					Command: c.Command,
-					Port:    c.Port,
-					Mount:   c.Mount,
-					Env:     c.Env,
-					CapAdd:  c.CapAdd,
-					CapDrop: c.CapDrop,
-					Network: c.Network,
-					Tty:     c.Tty,
-					Name:    c.Name,
-					PodId:   podId,
-				})
-				if err != nil {
-					_, _ = h.serviceHandler.Remove(podId)
-					rollbackApplied()
-					apimodel.RespondFail(w, http.StatusInternalServerError, "container create failed: "+err.Error(), nil)
-					return
-				}
-				containerIds = append(containerIds, containerId)
+				containerIds = append(containerIds, c.ContainerId)
 			}
 
 			results = append(results, ApplyPodResult{
@@ -690,12 +685,12 @@ func (h *RequestHandler) removeReplicaSetById(replicaSetId string) error {
 	if err := h.psmHandler.RemoveReplicaSet(replicaSetId); err != nil {
 		return err
 	}
-	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
-		return err
-	}
 	inUse, err := h.psmHandler.IsTemplateReferenced(rs.Spec.TemplateId)
 	if err == nil && !inUse {
 		_ = h.psmHandler.RemovePodTemplate(rs.Spec.TemplateId)
+	}
+	if err := h.removePodsByTemplateId(rs.Spec.TemplateId); err != nil {
+		return err
 	}
 	return nil
 }
