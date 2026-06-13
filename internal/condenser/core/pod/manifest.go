@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"raind/internal/condenser/store/psm"
 
@@ -110,6 +112,7 @@ type manifestVolume struct {
 
 type manifestHostPath struct {
 	Path string `yaml:"path"`
+	Type string `yaml:"type"`
 }
 
 type manifestVolumeMount struct {
@@ -260,19 +263,57 @@ func selectorMatchesLabels(selector, labels map[string]string) bool {
 	return true
 }
 
-func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes []manifestVolume) (PodManifest, error) {
-	if meta.Namespace == "" {
-		meta.Namespace = "default"
-	}
+func buildHostPathVolumeMap(volumes []manifestVolume) (map[string]string, error) {
 	volumeHostPath := map[string]string{}
 	for _, v := range volumes {
 		if v.Name == "" {
 			continue
 		}
+		if _, exists := volumeHostPath[v.Name]; exists {
+			return nil, fmt.Errorf("volume %q: duplicate volume name", v.Name)
+		}
 		if v.HostPath.Path == "" {
-			return PodManifest{}, fmt.Errorf("volume %q: only hostPath volumes are supported", v.Name)
+			return nil, fmt.Errorf("volume %q: only hostPath volumes are supported", v.Name)
+		}
+		if !filepath.IsAbs(v.HostPath.Path) {
+			return nil, fmt.Errorf("volume %q: hostPath.path must be absolute", v.Name)
+		}
+
+		switch v.HostPath.Type {
+		case "", "Directory":
+			info, err := os.Stat(v.HostPath.Path)
+			if err != nil {
+				return nil, fmt.Errorf("volume %q: hostPath directory %q is not available: %w", v.Name, v.HostPath.Path, err)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
+			}
+		case "DirectoryOrCreate":
+			if err := os.MkdirAll(v.HostPath.Path, 0755); err != nil {
+				return nil, fmt.Errorf("volume %q: create hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
+			}
+			info, err := os.Stat(v.HostPath.Path)
+			if err != nil {
+				return nil, fmt.Errorf("volume %q: stat hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
+			}
+		default:
+			return nil, fmt.Errorf("volume %q: unsupported hostPath.type %q", v.Name, v.HostPath.Type)
 		}
 		volumeHostPath[v.Name] = v.HostPath.Path
+	}
+	return volumeHostPath, nil
+}
+
+func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes []manifestVolume) (PodManifest, error) {
+	if meta.Namespace == "" {
+		meta.Namespace = "default"
+	}
+	volumeHostPath, err := buildHostPathVolumeMap(volumes)
+	if err != nil {
+		return PodManifest{}, err
 	}
 
 	specs := make([]psm.ContainerTemplateSpec, 0, len(containers))
@@ -301,6 +342,9 @@ func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes
 		for _, vm := range c.VolumeMounts {
 			if vm.Name == "" || vm.MountPath == "" {
 				continue
+			}
+			if !filepath.IsAbs(vm.MountPath) {
+				return PodManifest{}, fmt.Errorf("container %q: volumeMount %q mountPath must be absolute", c.Name, vm.Name)
 			}
 			hostPath, ok := volumeHostPath[vm.Name]
 			if !ok {
