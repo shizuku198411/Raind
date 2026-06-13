@@ -11,11 +11,14 @@ func CommandList() *cli.Command {
 		Name:    "ls",
 		Usage:   "list deployments",
 		Aliases: []string{"get"},
-		Action:  runList,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "filter by namespace"},
+		},
+		Action: runList,
 	}
 }
 
 func runList(ctx *cli.Context) error {
 	service := deployment.NewServiceDeploymentList()
-	return service.List()
+	return service.List(ctx.String("namespace"))
 }

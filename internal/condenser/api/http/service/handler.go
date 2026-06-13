@@ -74,6 +74,7 @@ func (h *RequestHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} apimodel.ApiResponse
 // @Router /v1/services [get]
 func (h *RequestHandler) GetServiceList(w http.ResponseWriter, r *http.Request) {
+	namespaceFilter := r.URL.Query().Get("namespace")
 	list, err := h.ssmHandler.GetServiceList()
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "list failed: "+err.Error(), nil)
@@ -81,6 +82,9 @@ func (h *RequestHandler) GetServiceList(w http.ResponseWriter, r *http.Request) 
 	}
 	res := make([]ServiceSummary, 0, len(list))
 	for _, s := range list {
+		if namespaceFilter != "" && s.Namespace != namespaceFilter {
+			continue
+		}
 		var ports []ServicePort
 		for _, p := range s.Ports {
 			ports = append(ports, ServicePort{

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	httpclient "raind/internal/raind/core/client"
 	"text/tabwriter"
@@ -16,14 +17,18 @@ func NewServicePodList() *ServicePodList {
 
 type ServicePodList struct{}
 
-func (s *ServicePodList) List() error {
+func (s *ServicePodList) List(namespace string) error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
 	}
+	path := "/v1/pods"
+	if namespace != "" {
+		path += "?namespace=" + url.QueryEscape(namespace)
+	}
 	if err := httpClient.NewRequest(
 		http.MethodGet,
-		"/v1/pods",
+		path,
 		nil,
 	); err != nil {
 		return err

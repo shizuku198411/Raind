@@ -1,32 +1,27 @@
-package deployment
+package namespace
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	httpclient "raind/internal/raind/core/client"
 	"text/tabwriter"
 	"time"
 )
 
-func NewServiceDeploymentList() *ServiceDeploymentList {
-	return &ServiceDeploymentList{}
+func NewServiceNamespaceList() *ServiceNamespaceList {
+	return &ServiceNamespaceList{}
 }
 
-type ServiceDeploymentList struct{}
+type ServiceNamespaceList struct{}
 
-func (s *ServiceDeploymentList) List(namespace string) error {
+func (s *ServiceNamespaceList) List() error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
 	}
-	path := "/v1/deployments"
-	if namespace != "" {
-		path += "?namespace=" + url.QueryEscape(namespace)
-	}
-	if err := httpClient.NewRequest(http.MethodGet, path, nil); err != nil {
+	if err := httpClient.NewRequest(http.MethodGet, "/v1/namespaces", nil); err != nil {
 		return err
 	}
 	resp, err := httpClient.Client.Do(httpClient.Request)
@@ -37,45 +32,44 @@ func (s *ServiceDeploymentList) List(namespace string) error {
 
 	var respModel ListResponseModel
 	if !httpClient.IsStatusOk(resp) {
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&respModel); decodeErr != nil {
-			return fmt.Errorf("decode response: %w", decodeErr)
+		if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
+			return fmt.Errorf("decode response: %w", err)
 		}
 		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
-
-	s.printDeploymentList(respModel.Data)
+	s.printNamespaceList(respModel.Data)
 	return nil
 }
 
-func (s *ServiceDeploymentList) printDeploymentList(list []DeploymentInfoModel) {
+func (s *ServiceNamespaceList) printNamespaceList(namespaces []NamespaceInfoModel) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
-	fmt.Fprintln(w, "DEPLOYMENT ID\tNAME\tNAMESPACE\tDESIRED\tCURRENT\tREADY\tREPLICASET\tCREATED")
-
-	for _, deploy := range list {
+	fmt.Fprintln(w, "NAME\tNETWORK\tAUTO\tPODS\tSERVICES\tREPLICASETS\tDEPLOYMENTS\tALLOCATIONS\tCREATED")
+	for _, ns := range namespaces {
 		fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			deploy.DeploymentId,
-			deploy.Name,
-			deploy.Namespace,
-			deploy.Desired,
-			deploy.Current,
-			deploy.Ready,
-			emptyIfZero(deploy.ReplicaSetId),
-			formatTime(deploy.CreatedAt),
+			"%s\t%s\t%t\t%d\t%d\t%d\t%d\t%d\t%s\n",
+			ns.Name,
+			ns.Network,
+			ns.NetworkAuto,
+			ns.Resources.Pods,
+			ns.Resources.Services,
+			ns.Resources.ReplicaSets,
+			ns.Resources.Deployments,
+			ns.Resources.Allocations,
+			formatNamespaceTime(ns.CreatedAt),
 		)
 	}
-
 	w.Flush()
 }
 
-func formatTime(t time.Time) string {
-	now := time.Now()
-	d := now.Sub(t)
-
+func formatNamespaceTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
 	switch {
 	case d < time.Minute:
 		return "less than a minutes"

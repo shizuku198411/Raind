@@ -16,6 +16,7 @@ import (
 	imageHandler "raind/internal/condenser/api/http/image"
 	"raind/internal/condenser/api/http/logger"
 	logHandler "raind/internal/condenser/api/http/logs"
+	namespaceHandler "raind/internal/condenser/api/http/namespace"
 	networkHandler "raind/internal/condenser/api/http/network"
 	podHandler "raind/internal/condenser/api/http/pod"
 	policyHandler "raind/internal/condenser/api/http/policy"
@@ -61,6 +62,7 @@ func NewApiRouter() *chi.Mux {
 	logHandler := logHandler.NewRequestHandler()
 	podHandler := podHandler.NewRequestHandler()
 	serviceHandler := serviceHandler.NewRequestHandler()
+	namespaceHandler := namespaceHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
@@ -134,6 +136,12 @@ func NewApiRouter() *chi.Mux {
 	r.With(RequireCLIScope(ScopeResourceWrite)).Post("/v1/services", serviceHandler.CreateService)    // create service
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/services/{serviceId}", serviceHandler.GetServiceById) // get service detail
 	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/services/{serviceId}", serviceHandler.RemoveService)
+
+	// == namespaces ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces", namespaceHandler.GetNamespaceList)
+	r.With(RequireCLIScope(ScopeResourceWrite)).Post("/v1/namespaces", namespaceHandler.CreateNamespace)
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces/{name}", namespaceHandler.GetNamespace)
+	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/namespaces/{name}/actions/delete", namespaceHandler.DeleteNamespace)
 
 	// == network ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/networks", networkHandler.GetNetworkList)        // list network

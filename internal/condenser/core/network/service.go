@@ -7,6 +7,7 @@ import (
 	"raind/internal/condenser/utils"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 func NewNetworkService() *NetworkService {
@@ -29,6 +30,10 @@ type RollbackFlag struct {
 }
 
 func (s *NetworkService) CreateNewNetwork(param ServiceNewNetworkModel) (err error) {
+	if err := s.ensureNoUnmanagedNamespaceBridge(); err != nil {
+		return err
+	}
+
 	var rollback RollbackFlag
 	defer func() error {
 		if err != nil {
@@ -105,6 +110,51 @@ func (s *NetworkService) RemoveNetwork(param ServiceRemoveNetworkModel) error {
 	}
 
 	return nil
+}
+
+func (s *NetworkService) ensureNoUnmanagedNamespaceBridge() error {
+	networkList, err := s.ipamHandler.GetNetworkList()
+	if err != nil {
+		return err
+	}
+	managed := make(map[string]struct{}, len(networkList))
+	for _, n := range networkList {
+		managed[n.Interface] = struct{}{}
+	}
+
+	out, err := s.commandFactory.Command("ip", "-o", "link", "show").Output()
+	if err != nil {
+		return err
+	}
+	for _, ifname := range parseLinkNames(string(out)) {
+		if !strings.HasPrefix(ifname, "rns") {
+			continue
+		}
+		if _, ok := managed[ifname]; ok {
+			continue
+		}
+		return fmt.Errorf("unmanaged namespace bridge exists: %s; remove stale bridge before creating a network", ifname)
+	}
+	return nil
+}
+
+func parseLinkNames(output string) []string {
+	lines := strings.Split(output, "\n")
+	names := make([]string, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.SplitN(line, ": ", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(parts[1])
+		if i := strings.Index(name, "@"); i >= 0 {
+			name = name[:i]
+		}
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func (s *NetworkService) CreateBridgeInterface(ifname string, addr string) error {

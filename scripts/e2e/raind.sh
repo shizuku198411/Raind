@@ -205,6 +205,10 @@ run_cli_checks() {
   run_raind service-ls resource service ls
   assert_output_contains service-ls "SERVICE ID"
 
+  run_raind namespace-ls resource namespace ls
+  assert_output_contains namespace-ls "NAME"
+  assert_output_contains namespace-ls "default"
+
   run_raind bottle-ls bottle ls
   assert_output_contains bottle-ls "BOTTLE ID"
 
@@ -246,9 +250,13 @@ run_cli_checks() {
 
 run_cli_write_checks() {
   local bridge="rcli$$"
+  local ns_name="e2e-cli-ns-$$"
+  local ns_pod_name="e2e-cli-ns-pod-$$"
+  local manifest_ns_name="e2e-cli-manifest-ns-$$"
   local pod_name="e2e-cli-pod-$$"
   local svc_name="e2e-cli-svc-$$"
   local resource_svc_name="e2e-cli-apply-svc-$$"
+  local ns_pod_id
   local pod_id
   local service_id
 
@@ -261,6 +269,25 @@ run_cli_write_checks() {
   assert_raind_fails network-create-duplicate network create "${bridge}"
   run_raind network-rm network rm "${bridge}"
   assert_output_contains network-rm "delete network"
+
+  run_raind namespace-create resource namespace create "${ns_name}"
+  assert_output_contains namespace-create "created"
+  assert_output_contains namespace-create "${ns_name}"
+  run_raind namespace-show resource namespace show "${ns_name}"
+  assert_output_contains namespace-show "${ns_name}"
+  assert_output_contains namespace-show "NETWORK"
+  run_raind namespace-ls-after-create resource namespace ls
+  assert_output_contains namespace-ls-after-create "${ns_name}"
+
+  run_raind ns-pod-create resource pod create --name "${ns_pod_name}" --namespace "${ns_name}" --label app=e2e-ns
+  assert_output_contains ns-pod-create "pod:"
+  ns_pod_id="$(extract_created_id ns-pod-create)"
+  [[ -n "${ns_pod_id}" ]] || fail "namespace pod create did not print pod id"
+  run_raind ns-pod-ls resource pod ls --namespace "${ns_name}"
+  assert_output_contains ns-pod-ls "${ns_pod_name}"
+  run_raind_allow_empty ns-pod-rm resource pod rm "${ns_pod_id}"
+  run_raind namespace-rm resource namespace rm "${ns_name}"
+  assert_output_contains namespace-rm "removed"
 
   run_raind pod-create resource pod create --name "${pod_name}" --namespace default --label app=e2e --annotation suite=raind
   assert_output_contains pod-create "pod:"
@@ -315,6 +342,34 @@ YAML
   assert_output_contains resource-apply "applied"
   run_raind resource-rm resource rm -f "${E2E_WORK_DIR}/resource-service.yaml"
   assert_output_contains resource-rm "service:"
+
+  cat >"${E2E_WORK_DIR}/resource-namespace-service.yaml" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${manifest_ns_name}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${resource_svc_name}-ns
+  namespace: ${manifest_ns_name}
+spec:
+  selector:
+    app: e2e-resource-ns
+  ports:
+    - port: 9191
+      targetPort: 91
+      protocol: TCP
+YAML
+  run_raind resource-namespace-apply resource apply -f "${E2E_WORK_DIR}/resource-namespace-service.yaml"
+  assert_output_contains resource-namespace-apply "namespace:"
+  assert_output_contains resource-namespace-apply "service:"
+  run_raind resource-service-ls-ns resource service ls --namespace "${manifest_ns_name}"
+  assert_output_contains resource-service-ls-ns "${resource_svc_name}-ns"
+  run_raind resource-namespace-rm resource rm -f "${E2E_WORK_DIR}/resource-namespace-service.yaml"
+  assert_output_contains resource-namespace-rm "namespace:"
+  assert_output_contains resource-namespace-rm "service:"
 
   run_raind_allow_empty pod-rm resource pod rm "${pod_id}"
 

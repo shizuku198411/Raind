@@ -10,6 +10,10 @@ import (
 // == service: create pod sandbox ==
 func (s *PodService) Create(createParameter ServiceCreateModel) (string, error) {
 	templateId := utils.NewUlid()
+	containers, err := s.resolveContainerNetworks(createParameter.Namespace, createParameter.Containers)
+	if err != nil {
+		return "", err
+	}
 
 	if err := s.psmHandler.StorePodTemplate(templateId, psm.PodTemplateSpec{
 		Name:        createParameter.Name,
@@ -20,7 +24,7 @@ func (s *PodService) Create(createParameter ServiceCreateModel) (string, error) 
 		UserNS:      createParameter.UserNS,
 		Labels:      createParameter.Labels,
 		Annotations: createParameter.Annotations,
-		Containers:  createParameter.Containers,
+		Containers:  containers,
 	}); err != nil {
 		return "", err
 	}

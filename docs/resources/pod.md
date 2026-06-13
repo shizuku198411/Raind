@@ -37,6 +37,7 @@ pod: <pod-id> created
 ## List/Start/Stop/Remove
 ```
 $ raind resource pod ls
+$ raind resource pod ls --namespace default
 $ raind resource pod start <pod-id>
 $ raind resource pod stop <pod-id>
 $ raind resource pod rm <pod-id>

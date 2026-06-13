@@ -136,6 +136,14 @@ func (s *PodService) ensurePodTemplateContainers(podInfo psm.PodInfo) error {
 		if spec.Image == "" {
 			return fmt.Errorf("pod template invalid: container image required: %s", spec.Name)
 		}
+		networkName := spec.Network
+		if networkName == "" {
+			resolved, err := s.namespaceHandler.ResolveNetwork(podInfo.Namespace)
+			if err != nil {
+				return err
+			}
+			networkName = resolved
+		}
 		expectedName := s.buildPodMemberName(spec.Name, podInfo.PodId)
 		if _, ok := actualByName[expectedName]; ok {
 			continue
@@ -148,7 +156,7 @@ func (s *PodService) ensurePodTemplateContainers(podInfo psm.PodInfo) error {
 			Env:     spec.Env,
 			CapAdd:  spec.CapAdd,
 			CapDrop: spec.CapDrop,
-			Network: spec.Network,
+			Network: networkName,
 			Tty:     spec.Tty,
 			Name:    spec.Name,
 			PodId:   podInfo.PodId,

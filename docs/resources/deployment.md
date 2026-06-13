@@ -38,6 +38,7 @@ raind resource apply -f /path/to/deployment.yaml
 
 ```sh
 raind resource deployment ls
+raind resource deployment ls --namespace default
 raind resource deployment show <deployment-id>
 raind resource deployment scale <deployment-id> -r 3
 raind resource deployment rm <deployment-id>
@@ -54,3 +55,7 @@ raind resource deploy ls
 ```sh
 raind resource rm -f /path/to/deployment.yaml
 ```
+
+## Namespace Network
+
+When `metadata.namespace` points to a Raind namespace, Pods created by the Deployment use that namespace network unless a container network is set explicitly.

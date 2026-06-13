@@ -16,6 +16,7 @@ const (
 	SsmStorePath  = "/etc/raind/store/ssm.json"
 	NpmStorePath  = "/etc/raind/store/npm.json"
 	BsmStorePath  = "/etc/raind/store/bsm.json"
+	NsmStorePath  = "/etc/raind/store/nsm.json"
 
 	CgroupRuntimeDir         = "/sys/fs/cgroup/raind"
 	CgroupSubtreeControlPath = "/sys/fs/cgroup/raind/cgroup.subtree_control"
