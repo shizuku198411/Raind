@@ -1,0 +1,82 @@
+name: Raind Snap Test
+
+on:
+  pull_request:
+    paths:
+      - "snap/**"
+      - "cmd/**"
+      - "internal/**"
+      - "scripts/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/snap.yml"
+  workflow_dispatch:
+
+
+jobs:
+  snap-build:
+    name: build snap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Build snap
+        run: snapcraft --destructive-mode
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raind-snap
+          path: "*.snap"
+
+  snap-smoke:
+    name: install and smoke test snap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: snap-build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download snap artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: raind-snap
+          path: .
+
+      - name: Install snap
+        run: |
+          sudo snap install ./raind_*.snap --dangerous --classic
+
+      - name: Check snap commands
+        run: |
+          which raind
+          which raind.droplet
+          which raind.condenser-hook-agent
+
+          raind --version
+          raind.droplet --version || true
+          raind.condenser-hook-agent --help || true
+
+      - name: Check condenser service
+        run: |
+          snap services raind
+          sudo snap logs raind.condenser -n 100 || true
+
+      - name: Check snap runtime env
+        run: |
+          snap run --shell raind -c '
+            set -eux
+            echo "SNAP=$SNAP"
+            echo "RAIND_DROPLET_BIN=$RAIND_DROPLET_BIN"
+            echo "RAIND_HOOK_AGENT_BIN=$RAIND_HOOK_AGENT_BIN"
+            test -x "$RAIND_DROPLET_BIN"
+            test -x "$RAIND_HOOK_AGENT_BIN"
+          '

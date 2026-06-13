@@ -1,0 +1,57 @@
+name: raind
+base: core24
+version: "0.3.1"
+summary: Workload-Centric Container Runtime
+description: |
+  Raind is a workload-centric container runtime that manages
+  containers, Pods, resources, policy, and network-flow visibility
+  through one runtime stack.
+
+grade: devel
+confinement: classic
+
+apps:
+  raind:
+    command: bin/raind
+    environment:
+      RAIND_DROPLET_BIN: $SNAP/bin/droplet
+      RAIND_HOOK_AGENT_BIN: $SNAP/bin/condenser-hook-agent
+
+  condenser:
+    command: bin/condenser
+    daemon: simple
+    restart-condition: on-failure
+    environment:
+      RAIND_DROPLET_BIN: $SNAP/bin/droplet
+      RAIND_HOOK_AGENT_BIN: $SNAP/bin/condenser-hook-agent
+
+  droplet:
+    command: bin/droplet
+    environment:
+      RAIND_DROPLET_SELF_BIN: $SNAP/bin/droplet
+
+  condenser-hook-agent:
+    command: bin/condenser-hook-agent
+
+parts:
+  raind:
+    plugin: nil
+    source: .
+    build-snaps:
+      - go/latest/stable
+    build-packages:
+      - ca-certificates
+      - git
+    override-build: |
+      set -eux
+
+      export PATH="/snap/bin:$PATH"
+
+      ./scripts/build.sh build
+
+      mkdir -p "$CRAFT_PART_INSTALL/bin"
+
+      install -m 0755 bin/raind "$CRAFT_PART_INSTALL/bin/raind"
+      install -m 0755 bin/condenser "$CRAFT_PART_INSTALL/bin/condenser"
+      install -m 0755 bin/condenser-hook-agent "$CRAFT_PART_INSTALL/bin/condenser-hook-agent"
+      install -m 0755 bin/droplet "$CRAFT_PART_INSTALL/bin/droplet"
