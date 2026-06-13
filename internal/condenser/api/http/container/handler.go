@@ -235,6 +235,7 @@ func (h *RequestHandler) ExecContainer(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "service failed: "+err.Error(), nil)
+		return
 	}
 
 	// encode response

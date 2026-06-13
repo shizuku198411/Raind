@@ -68,8 +68,6 @@ func NewApiRouter() *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// SPIFFE
-	r.Use(RequireCLIIdentity)
 	// LOGGER
 	node, _ := os.Hostname()
 	r.Use(logger.LoggerMiddleware(
@@ -77,6 +75,8 @@ func NewApiRouter() *chi.Mux {
 		"condenser",
 		node,
 	))
+	// SPIFFE
+	r.Use(RequireCLIIdentity)
 
 	// == v1 ==
 	// == bottles ==
@@ -174,8 +174,6 @@ func NewHookRouter() *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// SPIFFE
-	r.Use(RequireSPIFFE("spiffe://raind/container"))
 	// LOGGER
 	node, _ := os.Hostname()
 	r.Use(logger.LoggerMiddleware(
@@ -183,6 +181,8 @@ func NewHookRouter() *chi.Mux {
 		"condenser",
 		node,
 	))
+	// SPIFFE
+	r.Use(RequireSPIFFE("spiffe://raind/container"))
 
 	// == hook ==
 	r.Post("/v1/hooks/droplet", hookHandler.ApplyHook)
