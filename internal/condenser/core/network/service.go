@@ -72,7 +72,16 @@ func (s *NetworkService) CreateNewNetwork(param ServiceNewNetworkModel) (err err
 	}
 	rollback.CreateBridgeInterface = true
 
-	// 3. refresh policy
+	// 3. Setup DNS redirect for the newly-created network
+	_, dnsProxyAddr, _, err := s.ipamHandler.GetDnsProxyInfo()
+	if err != nil {
+		return err
+	}
+	if err := s.CreateRedirectDnsTrafficRule(param.Bridge, dnsProxyAddr); err != nil {
+		return err
+	}
+
+	// 4. refresh policy
 	err = s.policyHandler.CommitPolicy()
 	if err != nil {
 		return err
