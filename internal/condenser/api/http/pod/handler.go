@@ -228,11 +228,19 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				apimodel.RespondFail(w, http.StatusBadRequest, "name already used by other ingress", nil)
 				return
 			}
+			if len(manifest.TLSHosts) > 0 {
+				if err := coreIngress.NewTLSManager().EnsureHosts(manifest.TLSHosts); err != nil {
+					rollbackApplied()
+					apimodel.RespondFail(w, http.StatusInternalServerError, "ingress tls certificate create failed: "+err.Error(), nil)
+					return
+				}
+			}
 			ingressId := utils.NewUlid()
 			if err := h.ismHandler.StoreIngress(ingressId, ism.IngressInfo{
 				Name:      manifest.Name,
 				Namespace: manifest.Namespace,
 				Rules:     manifest.Rules,
+				TLSHosts:  manifest.TLSHosts,
 			}); err != nil {
 				rollbackApplied()
 				apimodel.RespondFail(w, http.StatusInternalServerError, "ingress store failed: "+err.Error(), nil)
@@ -245,6 +253,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				IngressId: ingressId,
 				Name:      manifest.Name,
 				Namespace: manifest.Namespace,
+				TLSHosts:  manifest.TLSHosts,
 			})
 
 		case "Pod", "ReplicaSet", "Deployment":
@@ -527,6 +536,10 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 					apimodel.RespondFail(w, http.StatusInternalServerError, "remove failed: "+err.Error(), nil)
 					return
 				}
+				if err := coreIngress.NewTLSManager().RemoveHostsIfUnused(in.TLSHosts, activeTLSHostsExcept(list, in.IngressId)); err != nil {
+					apimodel.RespondFail(w, http.StatusInternalServerError, "ingress tls certificate cleanup failed: "+err.Error(), nil)
+					return
+				}
 				ingressResults = append(ingressResults, DeleteIngressResult{
 					IngressId: in.IngressId,
 					Name:      in.Name,
@@ -683,6 +696,17 @@ type namespaceMeta struct {
 	Name        string            `yaml:"name"`
 	Labels      map[string]string `yaml:"labels"`
 	Annotations map[string]string `yaml:"annotations"`
+}
+
+func activeTLSHostsExcept(ingresses []ism.IngressInfo, excludedIngressId string) []string {
+	var hosts []string
+	for _, in := range ingresses {
+		if in.IngressId == excludedIngressId {
+			continue
+		}
+		hosts = append(hosts, in.TLSHosts...)
+	}
+	return hosts
 }
 
 func (h *RequestHandler) ensureResourceNameAvailable(name, namespace string) error {

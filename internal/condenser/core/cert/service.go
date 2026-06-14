@@ -194,6 +194,65 @@ func (m *CertManager) IssueClientCert(certPath string, keyPath string, CACertPat
 	return nil
 }
 
+func (m *CertManager) IssueServerCert(certPath string, keyPath string, CACertPath string, CAKeyPath string, cfg ServerCertConfig) error {
+	if m.isFileExists(certPath) && m.isFileExists(keyPath) {
+		return nil
+	}
+
+	privKey, err := rsa.GenerateKey(rand.Reader, 3072)
+	if err != nil {
+		return err
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: cfg.CommonName,
+		},
+		NotBefore: time.Now().Add(-5 * time.Minute),
+		NotAfter:  time.Now().Add(cfg.ValidFor),
+		KeyUsage: x509.KeyUsageDigitalSignature |
+			x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+		DNSNames:              cfg.DNSNames,
+		IPAddresses:           cfg.IPAddresses,
+	}
+
+	caCert, caKey, err := m.loadCertAndKey(CACertPath, CAKeyPath)
+	if err != nil {
+		return err
+	}
+
+	derBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		&template,
+		caCert,
+		&privKey.PublicKey,
+		caKey,
+	)
+	if err != nil {
+		return err
+	}
+	if err := m.writePem(certPath, "CERTIFICATE", derBytes, 0644); err != nil {
+		return err
+	}
+
+	if err := m.writePem(keyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(privKey), 0600); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (m *CertManager) loadCertAndKey(certPath string, keyPath string) (*x509.Certificate, *rsa.PrivateKey, error) {
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {

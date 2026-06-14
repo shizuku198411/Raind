@@ -41,9 +41,10 @@ type ServiceInfo struct {
 }
 
 type IngressInfo struct {
-	IngressId string `json:"ingressId"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
+	IngressId string   `json:"ingressId"`
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"`
+	TLSHosts  []string `json:"tlsHosts,omitempty"`
 }
 
 type NamespaceInfo struct {

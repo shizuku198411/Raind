@@ -28,11 +28,18 @@ type DeletedNamespaceModel struct {
 	Name string `json:"name,omitempty"`
 }
 
+type DeletedIngressModel struct {
+	IngressId string `json:"ingressId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
 type DeleteResponseModel struct {
 	Pods        []DeletedPodModel        `json:"pods,omitempty"`
 	ReplicaSets []DeletedReplicaSetModel `json:"replicasets,omitempty"`
 	Deployments []DeletedDeploymentModel `json:"deployments,omitempty"`
 	Services    []DeletedServiceModel    `json:"services,omitempty"`
+	Ingresses   []DeletedIngressModel    `json:"ingresses,omitempty"`
 	Namespaces  []DeletedNamespaceModel  `json:"namespaces,omitempty"`
 }
 

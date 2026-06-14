@@ -129,6 +129,7 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.VarLogDir,
 		utils.CertDir,
 		utils.CliCertDir,
+		utils.IngressCertDir,
 	}
 	for _, dir := range dirs {
 		if err := m.filesystemHandler.MkdirAll(dir, 0o755); err != nil {
@@ -502,7 +503,20 @@ func (m *BootstrapManager) setupCertificate() error {
 		return err
 	}
 
-	// 3. client cert for cli
+	// 3. ingress CA
+	err = m.certHandler.EnsureClientCACert(
+		utils.IngressIssuerCACertPath,
+		utils.IngressIssuerCAKeyPath,
+		cert.CertConfig{
+			CommonName: "raind ingress issuer",
+			ValidFor:   5 * 365 * 24 * time.Hour, // 5 years
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	// 4. client cert for cli
 	err = m.certHandler.IssueClientCert(
 		utils.CliClientCertPath,
 		utils.CliClientKeyPath,
@@ -521,7 +535,7 @@ func (m *BootstrapManager) setupCertificate() error {
 		return err
 	}
 
-	// 4. legacy client cert for root-only tooling and migration compatibility
+	// 5. legacy client cert for root-only tooling and migration compatibility
 	err = m.certHandler.IssueClientCert(
 		utils.ClientCertPath,
 		utils.ClientKeyPath,
@@ -537,7 +551,7 @@ func (m *BootstrapManager) setupCertificate() error {
 		return err
 	}
 
-	// 4. csr request client cert
+	// 6. csr request client cert
 	err = m.certHandler.IssueClientCert(
 		utils.HookClientCertPath,
 		utils.HookClientKeyPath,

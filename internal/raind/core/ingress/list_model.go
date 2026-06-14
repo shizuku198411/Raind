@@ -23,6 +23,7 @@ type IngressInfoModel struct {
 	Name      string             `json:"name"`
 	Namespace string             `json:"namespace"`
 	Rules     []IngressRuleModel `json:"rules,omitempty"`
+	TLSHosts  []string           `json:"tlsHosts,omitempty"`
 	CreatedAt time.Time          `json:"createdAt"`
 }
 

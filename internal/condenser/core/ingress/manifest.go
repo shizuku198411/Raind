@@ -15,6 +15,7 @@ type IngressManifest struct {
 	Name      string
 	Namespace string
 	Rules     []ism.IngressRule
+	TLSHosts  []string
 }
 
 type ingressMeta struct {
@@ -31,7 +32,13 @@ type ingressManifest struct {
 }
 
 type ingressSpec struct {
+	TLS   []ingressTLSManifest  `yaml:"tls"`
 	Rules []ingressRuleManifest `yaml:"rules"`
+}
+
+type ingressTLSManifest struct {
+	Hosts      []string `yaml:"hosts"`
+	SecretName string   `yaml:"secretName"`
 }
 
 type ingressRuleManifest struct {
@@ -150,5 +157,34 @@ func buildIngressManifest(in ingressManifest) (IngressManifest, error) {
 	if len(rules) == 0 {
 		return IngressManifest{}, fmt.Errorf("ingress must have at least one rule")
 	}
-	return IngressManifest{Name: in.Metadata.Name, Namespace: in.Metadata.Namespace, Rules: rules}, nil
+	tlsHosts, err := buildTLSHosts(in.Spec.TLS)
+	if err != nil {
+		return IngressManifest{}, err
+	}
+
+	return IngressManifest{Name: in.Metadata.Name, Namespace: in.Metadata.Namespace, Rules: rules, TLSHosts: tlsHosts}, nil
+}
+
+func buildTLSHosts(entries []ingressTLSManifest) ([]string, error) {
+	seen := map[string]bool{}
+	var hosts []string
+	for _, entry := range entries {
+		for _, rawHost := range entry.Hosts {
+			host := strings.ToLower(strings.TrimSpace(rawHost))
+			if host == "" {
+				continue
+			}
+			if strings.Contains(host, "*") {
+				return nil, fmt.Errorf("ingress tls wildcard host is not supported yet: %s", host)
+			}
+			if strings.Contains(host, ":") {
+				return nil, fmt.Errorf("ingress tls host must not include port: %s", host)
+			}
+			if !seen[host] {
+				seen[host] = true
+				hosts = append(hosts, host)
+			}
+		}
+	}
+	return hosts, nil
 }

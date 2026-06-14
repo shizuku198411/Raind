@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -17,29 +18,87 @@ import (
 	"raind/internal/condenser/utils"
 )
 
-const defaultHTTPAddr = ":7780"
+const (
+	defaultHTTPAddr  = ":7780"
+	defaultHTTPSAddr = ":7443"
+)
 
 func NewGateway() *Gateway {
 	return &Gateway{
 		ismHandler: ism.NewIsmManager(ism.NewIsmStore(utils.IsmStorePath)),
 		ssmHandler: ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
-		addr:       ingressHTTPAddr(),
+		tlsManager: NewTLSManager(),
+		httpAddr:   ingressHTTPAddr(),
+		httpsAddr:  ingressHTTPSAddr(),
 	}
 }
 
 type Gateway struct {
 	ismHandler ism.IsmHandler
 	ssmHandler ssm.SsmHandler
-	addr       string
+	tlsManager *TLSManager
+	httpAddr   string
+	httpsAddr  string
 }
 
 func (g *Gateway) Start() error {
-	if g.addr == "" {
+	errCh := make(chan error, 2)
+	started := false
+
+	if g.httpAddr != "" {
+		started = true
+		go func() {
+			log.Printf("[*] ingress http gateway listening on %s", g.httpAddr)
+			errCh <- http.ListenAndServe(g.httpAddr, g)
+		}()
+	}
+	if g.httpsAddr != "" {
+		started = true
+		go func() {
+			log.Printf("[*] ingress https gateway listening on %s", g.httpsAddr)
+			srv := &http.Server{
+				Addr:    g.httpsAddr,
+				Handler: g,
+				TLSConfig: &tls.Config{
+					MinVersion:     tls.VersionTLS12,
+					GetCertificate: g.getCertificate,
+				},
+			}
+			errCh <- srv.ListenAndServeTLS("", "")
+		}()
+	}
+
+	if !started {
 		log.Printf("[*] ingress gateway disabled")
 		return nil
 	}
-	log.Printf("[*] ingress gateway listening on %s", g.addr)
-	return http.ListenAndServe(g.addr, g)
+	return <-errCh
+}
+
+func (g *Gateway) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	host := normalizeHost(hello.ServerName)
+	if host == "" {
+		return nil, fmt.Errorf("ingress tls SNI is required")
+	}
+	if !g.isTLSHostEnabled(host) {
+		return nil, fmt.Errorf("ingress tls host is not configured: %s", host)
+	}
+	return g.tlsManager.GetCertificate(hello)
+}
+
+func (g *Gateway) isTLSHostEnabled(host string) bool {
+	ingresses, err := g.ismHandler.GetIngressList()
+	if err != nil {
+		return false
+	}
+	for _, in := range ingresses {
+		for _, tlsHost := range in.TLSHosts {
+			if normalizeHost(tlsHost) == host {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +180,13 @@ func (g *Gateway) resolve(r *http.Request) (routeMatch, error) {
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].pathLen > matches[j].pathLen })
 	return matches[0], nil
+}
+
+func ingressHTTPSAddr() string {
+	if v := strings.TrimSpace(os.Getenv("RAIND_INGRESS_HTTPS_ADDR")); v != "" {
+		return v
+	}
+	return defaultHTTPSAddr
 }
 
 func ingressHTTPAddr() string {

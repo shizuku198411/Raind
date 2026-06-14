@@ -56,9 +56,10 @@ type ApplyServiceResult struct {
 }
 
 type ApplyIngressResult struct {
-	IngressId string `json:"ingressId"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
+	IngressId string   `json:"ingressId"`
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"`
+	TLSHosts  []string `json:"tlsHosts,omitempty"`
 }
 
 type ApplyNamespaceResult struct {

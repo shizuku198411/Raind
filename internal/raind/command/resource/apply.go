@@ -3,6 +3,7 @@ package resourcecommand
 import (
 	"fmt"
 	"raind/internal/raind/core/pod"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 )
@@ -68,6 +69,10 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 		fmt.Printf("service: %s applied\n", svc.ServiceId)
 	}
 	for _, in := range result.Ingresses {
+		if len(in.TLSHosts) > 0 {
+			fmt.Printf("ingress: %s applied (tls: enabled, hosts: %s)\n", in.IngressId, strings.Join(in.TLSHosts, ","))
+			continue
+		}
 		fmt.Printf("ingress: %s applied\n", in.IngressId)
 	}
 	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {

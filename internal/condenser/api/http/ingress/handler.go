@@ -44,6 +44,7 @@ func (h *RequestHandler) GetIngressList(w http.ResponseWriter, r *http.Request) 
 			Name:      in.Name,
 			Namespace: in.Namespace,
 			Rules:     in.Rules,
+			TLSHosts:  in.TLSHosts,
 			CreatedAt: in.CreatedAt.Format(time.RFC3339),
 		})
 	}

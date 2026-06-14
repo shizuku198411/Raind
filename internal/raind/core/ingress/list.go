@@ -54,16 +54,17 @@ func (s *ServiceIngressList) List(namespace string) error {
 
 func (s *ServiceIngressList) printIngressList(list []IngressInfoModel) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
-	fmt.Fprintf(w, "INGRESS ID\tNAME\tNAMESPACE\tHOSTS\tPATHS\tBACKENDS\tCREATED\n")
+	fmt.Fprintf(w, "INGRESS ID\tNAME\tNAMESPACE\tHOSTS\tTLS\tPATHS\tBACKENDS\tCREATED\n")
 
 	for _, in := range list {
 		fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			in.IngressId,
 			in.Name,
 			in.Namespace,
 			formatHosts(in.Rules),
+			formatTLS(in.TLSHosts),
 			formatPaths(in.Rules),
 			formatBackends(in.Rules),
 			formatTime(in.CreatedAt),
@@ -90,6 +91,15 @@ func formatHosts(rules []IngressRuleModel) string {
 	}
 	sort.Strings(hosts)
 	return strings.Join(hosts, ",")
+}
+
+func formatTLS(hosts []string) string {
+	if len(hosts) == 0 {
+		return "-"
+	}
+	cp := append([]string(nil), hosts...)
+	sort.Strings(cp)
+	return strings.Join(cp, ",")
 }
 
 func formatPaths(rules []IngressRuleModel) string {
