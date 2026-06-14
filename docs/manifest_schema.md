@@ -9,17 +9,18 @@ raind resource rm -f <manifest.yaml>
 
 Raind accepts multi-document YAML separated by `---`. Empty documents are ignored.
 
-> Scope: this document covers the resource manifest path handled by `raind resource apply/rm`. Bottle definition files use a separate schema and are not covered here.
+> Scope: this document covers the resource manifest path handled by `raind resource apply/rm`. Bottle definition files use a separate Raind-native schema and are not covered here.
 
 ## Supported resource kinds
 
 | Kind | Accepted `apiVersion` | Apply support | Remove support | Notes |
-| --- | --- | --- | --- | --- |
-| `Namespace` | Usually `v1` | Yes | Yes | Creates/removes a Raind resource namespace. |
+|---|---|---:|---:|---|
+| `Namespace` | Usually `v1` | Yes | Yes | Creates/removes a Raind resource namespace and its namespace network. |
 | `Pod` | Usually `v1` | Yes | Yes | Creates and starts a Pod immediately. |
-| `ReplicaSet` | Usually `apps/v1` | Yes | Yes | Creates a template and ReplicaSet record; the controller reconciles Pods. |
-| `Deployment` | Usually `apps/v1` | Yes | Yes | Creates a template and Deployment record; the controller creates/manages the backing ReplicaSet. |
-| `Service` | Usually `v1` | Yes | Yes | Stores an L4 Service backed by selector-based Pod endpoints and iptables rules. |
+| `ReplicaSet` | Usually `apps/v1` | Yes | Yes | Stores a Pod template and desired replica count; the controller reconciles Pods. |
+| `Deployment` | Usually `apps/v1` | Yes | Yes | Stores a Deployment; the controller creates/manages the backing ReplicaSet. |
+| `Service` | Usually `v1` | Yes | Yes | Provides L4 forwarding to selected Pods. Supports `ClusterIP` and `NodePort`. |
+| `Ingress` | Usually `networking.k8s.io/v1` | Yes | Yes | Provides HTTP/HTTPS host/path routing through the embedded condenser gateway. |
 
 `apiVersion` is parsed but not currently validated by version. Unsupported `kind` values fail with `unsupported kind`.
 
@@ -50,11 +51,18 @@ metadata:
   name: demo-svc
   namespace: demo
 # ...
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: demo
+# ...
 ```
 
 ### Default namespace
 
-If `metadata.namespace` is omitted for `Pod`, `ReplicaSet`, `Deployment`, or `Service`, Raind uses `default`.
+If `metadata.namespace` is omitted for `Pod`, `ReplicaSet`, `Deployment`, `Service`, or `Ingress`, Raind uses `default`.
 
 ### Labels and selectors
 
@@ -78,9 +86,17 @@ spec:
 
 If `spec.selector.matchLabels` is omitted on ReplicaSet or Deployment, Raind uses the template labels as the selector. If a selector is provided, every selector key/value must exist in the template labels.
 
+Services use `spec.selector` directly:
+
+```yaml
+spec:
+  selector:
+    app: demo
+```
+
 ### Unsupported Kubernetes fields
 
-Raind accepts a small Kubernetes-style subset. Unknown YAML fields are generally ignored by the current decoder, but they do not affect runtime behavior.
+Raind accepts a focused Kubernetes-style subset. Unknown YAML fields are generally ignored by the current decoder, but they do not affect runtime behavior.
 
 Notable unsupported or ignored fields include, but are not limited to:
 
@@ -92,12 +108,16 @@ Notable unsupported or ignored fields include, but are not limited to:
 - `spec.resources`
 - `spec.livenessProbe` / `readinessProbe` / `startupProbe`
 - `imagePullPolicy`
-- named ports
+- named container or Service ports
 - `env.valueFrom`
 - ConfigMap / Secret volumes
 - PVC / projected / emptyDir volumes
-- Service `type`, `clusterIP`, `nodePort`, `sessionAffinity`
+- Service `LoadBalancer`, `ExternalName`, `nodePort`, `sessionAffinity`
 - Deployment rollout strategy, revision history, progress deadline, status
+- Ingress annotations and controller-specific features
+- Ingress `pathType: ImplementationSpecific`
+- Ingress backend named service ports
+- Ingress Secret-based TLS certificates
 
 ## `Namespace`
 
@@ -108,21 +128,21 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: <name>                 # required
-  labels:                      # optional
+  labels:                      # optional, currently ignored by namespace manifest conversion
     <key>: <value>
-  annotations:                 # optional
+  annotations:                 # optional, currently ignored by namespace manifest conversion
     <key>: <value>
 ```
 
 ### Field notes
 
 | Field | Required | Notes |
-| --- | --- | --- |
-| `metadata.name` | Yes | Namespace name. Raind namespace validation is stricter than generic Kubernetes names; lowercase names such as `demo` or `team-a` are safe. |
-| `metadata.labels` | No | Stored on namespace creation. |
-| `metadata.annotations` | No | Stored on namespace creation. |
+|---|---:|---|
+| `metadata.name` | Yes | Namespace name. Lowercase names such as `demo` or `team-a` are safe. |
+| `metadata.labels` | No | Accepted by YAML but not central to current namespace behavior. |
+| `metadata.annotations` | No | Accepted by YAML but not central to current namespace behavior. |
 
-A new namespace gets a namespace-scoped network unless it is created through the CLI with an explicit existing network. The manifest path currently creates the namespace with Raind's default namespace network behavior.
+A new resource namespace gets a namespace-scoped Raind network. Pods, ReplicaSets, Deployments, Services, and Ingresses in that namespace use the namespace boundary by default.
 
 ## `Pod`
 
@@ -144,7 +164,7 @@ spec:
       hostPath:
         path: /absolute/host/path
         type: Directory        # optional; supported: Directory, DirectoryOrCreate
-  containers:                  # optional by parser, but practical Pods should define at least one
+  containers:
     - name: <container-name>
       image: <image:tag>
       command: ["/bin/sh", "-c"]
@@ -173,22 +193,22 @@ spec:
 ### Pod metadata
 
 | Field | Required | Notes |
-| --- | --- | --- |
+|---|---:|---|
 | `metadata.name` | Yes | Pod name. |
-| `metadata.namespace` | No | Defaults to `default`. If the namespace has a namespace network, containers use it unless a container-level network is set internally by Raind. |
+| `metadata.namespace` | No | Defaults to `default`. |
 | `metadata.labels` | No | Used by Services and higher-level selectors. |
 | `metadata.annotations` | No | Stored with the Pod. |
 
 ### Container fields
 
 | Field | Required | Notes |
-| --- | --- | --- |
-| `name` | No at parser level | Container name. Recommended for all manifests. |
-| `image` | No at parser level | Container image reference. Runtime creation needs a usable image. |
+|---|---:|---|
+| `name` | No at parser level | Container name. Recommended. |
+| `image` | Yes for useful workloads | Container image reference. |
 | `command` | No | Array form only. |
-| `args` | No | Appended to `command`. If `command: ["/bin/sh", "-c"]` and `args: ["echo ok"]`, Raind stores `["/bin/sh", "-c", "echo ok"]` as the command vector. |
+| `args` | No | Appended to `command`. |
 | `env` | No | Supports only `name` + `value`. Empty `name` entries are ignored. |
-| `ports` | No | Supports `hostPort` + `containerPort`. Entries with `containerPort: 0` are ignored. Entries without `hostPort` are not published. |
+| `ports` | No | Supports `hostPort` + `containerPort`. Entries without `hostPort` are not host-published. |
 | `mount` | No | Raind raw mount strings, such as `/host:/container` or `/host:/container:ro`. |
 | `volumeMounts` | No | Kubernetes-style references to `spec.volumes`. |
 | `securityContext.capabilities.add` | No | Passed to container capability add list. |
@@ -227,7 +247,7 @@ ports:
 
 This becomes a Raind port mapping like `8080:80`.
 
-`containerPort` without `hostPort` is currently not used as an exposed-only metadata field by the resource manifest path.
+`containerPort` without `hostPort` is useful for documentation and Service backend conventions, but it is not host-published by the Pod manifest path.
 
 ### Raw mounts
 
@@ -250,7 +270,7 @@ volumes:
   - name: data
     hostPath:
       path: /home/workshop/data
-      type: Directory
+      type: DirectoryOrCreate
 containers:
   - name: app
     image: alpine:latest
@@ -263,7 +283,7 @@ containers:
 Supported `hostPath.type` values:
 
 | `hostPath.type` | Behavior |
-| --- | --- |
+|---|---|
 | omitted / empty | Same as `Directory`. The path must already exist and be a directory. |
 | `Directory` | The path must already exist and be a directory. |
 | `DirectoryOrCreate` | Raind creates the directory with `0755` if missing, then verifies that it is a directory. |
@@ -280,9 +300,9 @@ Validation rules:
 
 - `hostPath.path` must be absolute.
 - `volumeMounts[].mountPath` must be absolute.
-- duplicate `volumes[].name` values fail.
+- Duplicate `volumes[].name` values fail.
 - `volumeMounts[].name` must refer to an existing volume.
-- only `hostPath` volumes are supported.
+- Only `hostPath` volumes are supported.
 
 `readOnly: true` appends `:ro` to the generated Raind mount string.
 
@@ -339,9 +359,9 @@ spec:
 ### Field notes
 
 | Field | Required | Notes |
-| --- | --- | --- |
+|---|---:|---|
 | `metadata.name` | Yes | ReplicaSet name. Also used as the template name if `spec.template.metadata.name` is omitted. |
-| `metadata.namespace` | No | Defaults to `default`. This top-level namespace is the namespace used by the ReplicaSet. |
+| `metadata.namespace` | No | Defaults to `default`. |
 | `spec.replicas` | No | Defaults to `1`. Must be `>= 0`. Explicit `0` is preserved. |
 | `spec.selector.matchLabels` | No | Defaults to template labels if omitted. If present, it must match template labels. |
 | `spec.template.metadata.name` | No | Defaults to the ReplicaSet name. |
@@ -381,8 +401,7 @@ spec:
         - name: app
           image: nginx:latest
           ports:
-            - hostPort: 8080
-              containerPort: 80
+            - containerPort: 80
           volumeMounts:
             - name: data
               mountPath: /usr/share/nginx/html
@@ -395,7 +414,7 @@ spec:
 Deployment uses the same template subset as ReplicaSet. Raind stores a Deployment and lets the controller create/manage the backing ReplicaSet.
 
 | Field | Required | Notes |
-| --- | --- | --- |
+|---|---:|---|
 | `metadata.name` | Yes | Deployment name. |
 | `metadata.namespace` | No | Defaults to `default`. |
 | `spec.replicas` | No | Defaults to `1`. Must be `>= 0`. Explicit `0` is preserved. |
@@ -415,46 +434,109 @@ Unsupported Deployment-specific Kubernetes fields are ignored by the current man
 apiVersion: v1
 kind: Service
 metadata:
-  name: <name>                 # required by API handler
+  name: <name>                 # required
   namespace: <namespace>       # optional, default: default
-  labels:                      # parsed but not currently stored by Service manifest conversion
-    <key>: <value>
 spec:
+  type: ClusterIP              # optional; supported: ClusterIP, NodePort; default: ClusterIP
+  clusterIP: 10.166.255.10     # optional; ClusterIP only
   selector:
     app: demo
   ports:
-    - port: 8080
-      targetPort: 80           # optional, defaults to port
-      protocol: TCP            # optional, defaults to tcp
+    - port: 80
+      targetPort: 8080         # optional, defaults to port
+      protocol: TCP            # optional, defaults to TCP
 ```
 
 ### Field notes
 
 | Field | Required | Notes |
-| --- | --- | --- |
+|---|---:|---|
 | `metadata.name` | Yes | Service name. |
 | `metadata.namespace` | No | Defaults to `default`. |
-| `metadata.labels` | No | Parsed but not currently stored in the Service state. |
+| `spec.type` | No | Defaults to `ClusterIP`. Supported: `ClusterIP`, `NodePort`. |
+| `spec.clusterIP` | No | Optional explicit Service VIP for `ClusterIP` Services. Auto-assigned when omitted. |
 | `spec.selector` | No at parser level | Used by the Service controller to select Pods by label. Useful Services should define it. |
-| `spec.ports[].port` | Yes for each active port | Entries with `port: 0` are ignored. |
+| `spec.ports[].port` | Yes for each active port | Entries with `port: 0` are ignored. For `NodePort`, this is the host-published port. |
 | `spec.ports[].targetPort` | No | Defaults to `port` when omitted or `0`. |
-| `spec.ports[].protocol` | No | Defaults to `tcp`. Controller lowercases protocol when applying iptables behavior. |
+| `spec.ports[].protocol` | No | Defaults to `TCP`. |
 
-Service `type` is not currently part of the supported schema. Raind Services behave as Raind-managed L4 forwarding rules for selected Pods.
+### Service type behavior
+
+| Type | Default | External exposure | Behavior |
+|---|---:|---:|---|
+| `ClusterIP` | Yes | No | Allocates or uses a Service VIP and forwards traffic from `clusterIP:port` to matching Pod backends. |
+| `NodePort` | No | Yes | Publishes the Service port on the host and forwards traffic to matching Pod backends. |
+
+Unsupported Kubernetes Service types such as `LoadBalancer` and `ExternalName` are not implemented.
+
+## `Ingress`
+
+### Schema
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: <name>                 # required
+  namespace: <namespace>       # optional, default: default
+spec:
+  tls:                         # optional; enables HTTPS for listed hosts
+    - hosts:
+        - demo.local
+      secretName: demo-tls     # optional; accepted but not used yet
+  rules:
+    - host: demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix   # optional; supported: Prefix, Exact; default: Prefix
+            backend:
+              service:
+                name: demo-svc
+                port:
+                  number: 80
+```
+
+### Field notes
+
+| Field | Required | Notes |
+|---|---:|---|
+| `metadata.name` | Yes | Ingress name. |
+| `metadata.namespace` | No | Defaults to `default`. |
+| `spec.rules` | Yes | At least one host/path rule is required. |
+| `spec.rules[].host` | Yes for useful routing | Stored in lowercase and matched against the HTTP Host header. |
+| `spec.rules[].http.paths` | Yes | At least one path is required for each rule. |
+| `spec.rules[].http.paths[].path` | No | Defaults to `/`. Must start with `/`. |
+| `spec.rules[].http.paths[].pathType` | No | Defaults to `Prefix`. Supported: `Prefix`, `Exact`. |
+| `spec.rules[].http.paths[].backend.service.name` | Yes | Backend Service name in the same namespace. |
+| `spec.rules[].http.paths[].backend.service.port.number` | Yes | Backend Service port number. Named ports are not supported yet. |
+| `spec.tls[].hosts` | No | Enables managed TLS cert issuance for each listed host. |
+| `spec.tls[].secretName` | No | Accepted for Kubernetes-style compatibility, but not used yet. |
+
+### Ingress behavior
+
+Raind implements Ingress with an embedded gateway inside `condenser`.
+
+| Gateway | Default address | Environment override |
+|---|---|---|
+| HTTP | `:7780` | `RAIND_INGRESS_HTTP_ADDR` |
+| HTTPS | `:7443` | `RAIND_INGRESS_HTTPS_ADDR` |
+
+Ingress routing uses Host header + path matching. TLS certificate selection uses SNI.
+
+For HTTPS, Raind uses a dedicated Ingress CA under `/etc/raind/ingress/certs`. It issues host-specific server certificates with the host set as a DNS SAN. These certificates are local Raind-managed certificates and are not publicly trusted unless the Raind Ingress CA is installed into the client trust store.
+
+When an Ingress is removed, Raind removes per-host TLS certificates for hosts that are no longer referenced by any remaining Ingress.
 
 ## Comprehensive example
 
-The following multi-document manifest exercises the currently supported resource kinds and fields.
+The following multi-document manifest exercises the currently supported resource kinds and major fields.
 
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
   name: demo
-  labels:
-    team: platform
-  annotations:
-    description: demo namespace for Raind manifest schema
 ---
 apiVersion: v1
 kind: Pod
@@ -511,7 +593,6 @@ spec:
       app: demo-rs
   template:
     metadata:
-      name: demo-rs-pod
       labels:
         app: demo-rs
         tier: worker
@@ -527,7 +608,7 @@ spec:
         - name: worker
           image: alpine:latest
           command: ["/bin/sh", "-c"]
-          args: ["echo replicaset worker; sleep infinity"]
+          args: ["while true; do echo rs; sleep 60; done"]
           env:
             - name: ROLE
               value: worker
@@ -535,17 +616,12 @@ spec:
             - name: rs-data
               mountPath: /data
               readOnly: false
-          securityContext:
-            capabilities:
-              add: []
-              drop:
-                - CAP_NET_RAW
           tty: true
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: demo-deploy
+  name: demo-web
   namespace: demo
 spec:
   replicas: 2
@@ -554,7 +630,6 @@ spec:
       app: demo-web
   template:
     metadata:
-      name: demo-web-pod
       labels:
         app: demo-web
         tier: web
@@ -562,18 +637,17 @@ spec:
         raind.dev/example: deployment
     spec:
       volumes:
-        - name: web-data
+        - name: html
           hostPath:
-            path: /home/workshop/raind-demo/web-data
+            path: /home/workshop/raind-demo/html
             type: DirectoryOrCreate
       containers:
         - name: web
           image: nginx:latest
           ports:
-            - hostPort: 18081
-              containerPort: 80
+            - containerPort: 80
           volumeMounts:
-            - name: web-data
+            - name: html
               mountPath: /usr/share/nginx/html
               readOnly: true
           tty: true
@@ -581,119 +655,91 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: demo-web
+  name: demo-svc
   namespace: demo
-  labels:
-    app: demo-web
 spec:
+  type: ClusterIP
+  selector:
+    app: demo-web
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-nodeport
+  namespace: demo
+spec:
+  type: NodePort
   selector:
     app: demo-web
   ports:
     - port: 8081
       targetPort: 80
       protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: demo
+spec:
+  tls:
+    - hosts:
+        - demo.local
+        - www.demo.local
+  rules:
+    - host: demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-svc
+                port:
+                  number: 80
+    - host: www.demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-svc
+                port:
+                  number: 80
 ```
 
-Before applying the example, make sure any `Directory` host paths already exist. Paths using `DirectoryOrCreate` are created by Raind if missing.
+Apply:
 
 ```sh
-mkdir -p /home/workshop/raind-demo/raw
 raind resource apply -f manifest.yaml
 ```
 
-## Minimal examples
+List Services and Ingresses:
 
-### Namespace
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: demo
+```sh
+raind resource service ls --namespace demo
+raind resource ingress ls --namespace demo
 ```
 
-### Pod
+HTTP Ingress access:
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: app
-spec:
-  containers:
-    - name: app
-      image: alpine:latest
-      command: ["/bin/sh", "-c"]
-      args: ["echo hello; sleep infinity"]
-      tty: true
+```sh
+curl -H 'Host: demo.local' http://127.0.0.1:7780/
 ```
 
-### ReplicaSet
+HTTPS Ingress access:
 
-```yaml
-apiVersion: apps/v1
-kind: ReplicaSet
-metadata:
-  name: app-rs
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: app-rs
-  template:
-    metadata:
-      labels:
-        app: app-rs
-    spec:
-      containers:
-        - name: app
-          image: alpine:latest
-          command: ["/bin/sh", "-c"]
-          args: ["sleep infinity"]
+```sh
+curl -k --resolve demo.local:7443:127.0.0.1 https://demo.local:7443/
 ```
 
-### Deployment
+Remove:
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: app-deploy
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: app
-  template:
-    metadata:
-      labels:
-        app: app
-    spec:
-      containers:
-        - name: web
-          image: nginx:latest
+```sh
+raind resource rm -f manifest.yaml
 ```
-
-### Service
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: app-svc
-spec:
-  selector:
-    app: app
-  ports:
-    - port: 8080
-      targetPort: 80
-      protocol: TCP
-```
-
-## Implementation notes
-
-- The current manifest support is intentionally a Kubernetes-style subset, not full Kubernetes API compatibility.
-- Unknown fields may be accepted by YAML decoding but ignored by Raind.
-- `raind resource rm -f` identifies resources by `kind`, `metadata.name`, and `metadata.namespace` where applicable.
-- `Namespace` deletion is deferred until after other resources in the manifest are processed, so a manifest can remove workload resources before removing the namespace.
-- For ReplicaSet and Deployment, top-level `metadata.namespace` is the namespace used by Raind. Template namespace is not used as the owning resource namespace.
