@@ -48,6 +48,63 @@ func TestNetworkServiceCreateBridgeStoresIPAMThenCreatesBridgeAndDnsRedirect(t *
 	assert.Equal(t, 1, policyHandler.commitCalls)
 }
 
+func TestNetworkServiceRemoveNetworkDeletesDnsRedirectRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		dnsProxyAddr: "10.166.254.254",
+		networkList: []ipam.NetworkList{
+			{Interface: "raind1", NumContainers: 0},
+		},
+	}
+	commands := &fakeNetworkCommandFactory{}
+	policyHandler := &fakePolicyService{}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: policyHandler}
+
+	err := service.RemoveNetwork(ServiceRemoveNetworkModel{Bridge: "raind1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"raind1"}, ipamHandler.removedBridges)
+	assert.Equal(t, []networkCommandCall{
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-D", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-D", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "ip", args: []string{"link", "show", "raind1"}},
+		{name: "ip", args: []string{"link", "del", "raind1"}},
+	}, commands.calls)
+	assert.Equal(t, 1, policyHandler.commitCalls)
+}
+
+func TestNetworkServiceRemoveNetworkIgnoresMissingDnsRedirectRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		dnsProxyAddr: "10.166.254.254",
+		networkList: []ipam.NetworkList{
+			{Interface: "raind1", NumContainers: 0},
+		},
+	}
+	commands := &fakeNetworkCommandFactory{
+		runErrors: []error{
+			errors.New("udp rule not found"),
+			errors.New("tcp rule not found"),
+			nil,
+			nil,
+		},
+	}
+	policyHandler := &fakePolicyService{}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: policyHandler}
+
+	err := service.RemoveNetwork(ServiceRemoveNetworkModel{Bridge: "raind1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []networkCommandCall{
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "ip", args: []string{"link", "show", "raind1"}},
+		{name: "ip", args: []string{"link", "del", "raind1"}},
+	}, commands.calls)
+	assert.Equal(t, []string{"raind1"}, ipamHandler.removedBridges)
+	assert.Equal(t, 1, policyHandler.commitCalls)
+}
+
 func TestNetworkServiceCreateBridgeRollsBackIPAMWhenBridgeCreationFails(t *testing.T) {
 	ipamHandler := &fakeNetworkIpamHandler{}
 	commands := &fakeNetworkCommandFactory{
