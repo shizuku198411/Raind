@@ -1,47 +1,110 @@
 # Raind - Bottle
-Bottle is an orchestration feature that manages and operates multiple containers as a single group.
 
-## Definition File
-To create a Bottle, prepare a definition file `<any-filename>.yaml`.
+A `Bottle` is a Raind-native orchestration format for managing multiple containers as a single group.
+
+Unlike Kubernetes-style resources, Bottle manifests are Raind-specific. They are useful when you want a compact multi-container definition with dependency ordering, shared network setup, and explicit east-west policy rules.
+
+## Supported Manifest
+
+Bottle manifests do not use `apiVersion` / `kind`. The top-level fields are:
 
 ```yaml
 bottle:
-  name: wordpress   # bottle name
+services:
+policies:
+```
+
+## Supported Fields
+
+### Bottle Metadata
+
+| Field | Required | Description |
+|---|---:|---|
+| `bottle.name` | yes | Bottle name. |
+
+### Services
+
+`services` is a map whose keys are service names.
+
+| Field | Required | Description |
+|---|---:|---|
+| `image` | yes | Container image. |
+| `command` | no | Command array. |
+| `env` | no | Environment variables as `KEY=value` strings. |
+| `ports` | no | Port mappings such as `8080:80`. |
+| `mount` | no | Mount strings such as `/host:/container[:options]`. |
+| `device` / `devices` | no | Device mappings. Both names are supported and merged. |
+| `capAdd` / `cap-add` | no | Capabilities to add. Both names are supported and merged. |
+| `capDrop` / `cap-drop` | no | Capabilities to drop. Both names are supported and merged. |
+| `network` | no | Explicit network name. |
+| `tty` | no | Allocate a TTY. |
+| `depends_on` | no | Service startup dependencies. |
+
+### Policies
+
+`policies` defines explicit communication rules between Bottle services.
+
+| Field | Required | Description |
+|---|---:|---|
+| `type` | yes | Policy type, for example `east-west`. |
+| `source` | yes | Source service name. |
+| `destination` | yes | Destination service name. |
+| `protocol` | no | Protocol such as `tcp`. |
+| `dest_port` | no | Destination port. |
+| `comment` | no | Human-readable comment. |
+
+## Complete Example
+
+```yaml
+bottle:
+  name: wordpress
 
 services:
-  client:           # service#1
-    image: alpine   # image
-    tty: true       # TTY attach
-    depends_on:     # dependencies
+  client:
+    image: alpine:latest
+    command:
+      - /bin/sh
+    tty: true
+    depends_on:
       - wp
-  wp:               # service#2
-    image: wordpress
-    env:            # environment variables
+
+  wp:
+    image: wordpress:latest
+    env:
       - WORDPRESS_DB_HOST=db:3306
       - WORDPRESS_DB_USER=wordpress
       - WORDPRESS_DB_PASSWORD=wordpress
       - WORDPRESS_DB_NAME=wordpress
-    ports:         # port forward
+    ports:
       - "11240:80"
+    mount:
+      - "/home/workshop/wordpress:/var/www/html"
+    capAdd:
+      - CAP_NET_BIND_SERVICE
+    cap-drop:
+      - CAP_NET_RAW
     depends_on:
       - db
-  db:              # service#3
-    image: mysql
+
+  db:
+    image: mysql:latest
     env:
       - MYSQL_ROOT_PASSWORD=wordpress
       - MYSQL_DATABASE=wordpress
       - MYSQL_USER=wordpress
       - MYSQL_PASSWORD=wordpress
-    mount:         # mount
-      - "/mnt/db:/var/lib/mysql"
+    mount:
+      - "/home/workshop/mysql:/var/lib/mysql"
+    devices:
+      - "/dev/null:/dev/null"
 
 policies:
-  - type: east-west                 # policy type
-    source: wp                      # source service
-    destination: db                 # destination service
-    protocol: tcp                   # protocol
-    dest_port: 3306                 # destination port
-    comment: "wp -> db 3306/tcp"    # comment
+  - type: east-west
+    source: wp
+    destination: db
+    protocol: tcp
+    dest_port: 3306
+    comment: "wp -> db 3306/tcp"
 
   - type: east-west
     source: client
@@ -51,99 +114,45 @@ policies:
     comment: "client -> wp 80/tcp"
 ```
 
-In Raind, **container-to-container traffic is denied by default**.  
-Therefore, the required communications must be explicitly allowed under `policies:`.
+## Create
 
-## Create Bottle
-Create a Bottle from the definition file.
+Create a Bottle from a definition file:
 
-```
-$ raind bottle create -f /path/to/bottle.yaml
-bottle: wordpress created
+```sh
+raind bottle create -f bottle.yaml
 ```
 
-## Show Bottle
-List Bottles.
+## List / Show
 
-```
-$ raind bottle ls
-BOTTLE ID     BOTTLE NAME  SERVICES  STATUS
-01kgv7wn56v6  wordpress    3         created
+```sh
+raind bottle ls
+raind bottle show wordpress
 ```
 
-To view details, use the `show` subcommand.
+## Start / Stop / Delete
 
-```
-$ raind bottle show wordpress
-BOTTLE ID    01kgv7wn56v6
-BOTTLE NAME  wordpress
-CREATED AT   2026-02-07T14:06:14.976263167+09:00
-START ORDER  db, wp, client
-
-SERVICES
-CONTAINER ID  IMAGE             COMMAND                  CREATED        STATUS   PORTS                  NAME
-01kgv7wwd2rz  alpine:latest     "/bin/sh"                1 minutes ago  created                         wordpress-client
-01kgv7wng48d  mysql:latest      "docker-entrypoint.sh..."  1 minutes ago  created                         wordpress-db
-01kgv7wr11sr  wordpress:latest  "docker-entrypoint.sh..."  1 minutes ago  created  0.0.0.0:11240->80/tcp  wordpress-wp
-
-SERVICE [1]   client
-CONTAINER ID  01kgv7wwd2rz
-IMAGE         alpine:latest
-COMMAND       /bin/sh
-ENV           -
-PORTS         -
-MOUNT         -
-NETWORK       raind01kgv7wn56
-TTY           true
-DEPENDS ON    wp
-
-SERVICE [2]   db
-CONTAINER ID  01kgv7wng48d
-IMAGE         mysql:latest
-COMMAND       docker-entrypoint.sh mysqld
-ENV           MYSQL_ROOT_PASSWORD=wordpress, MYSQL_DATABASE=wordpress, MYSQL_USER=wordpress, MYSQL_PASSWORD=wordpress
-PORTS         -
-MOUNT         /mnt/db:/var/lib/mysql
-NETWORK       raind01kgv7wn56
-TTY           false
-DEPENDS ON    -
-
-SERVICE [3]   wp
-CONTAINER ID  01kgv7wr11sr
-IMAGE         wordpress:latest
-COMMAND       docker-entrypoint.sh apache2-foreground
-ENV           WORDPRESS_DB_HOST=db:3306, WORDPRESS_DB_USER=wordpress, WORDPRESS_DB_PASSWORD=wordpress, WORDPRESS_DB_NAME=wordpress
-PORTS         11240:80
-MOUNT         -
-NETWORK       raind01kgv7wn56
-TTY           false
-DEPENDS ON    db
-
-POLICIES
-ID                          TYPE       SOURCE  DESTINATION  PROTOCOL  DPORT  COMMENT
-01kgv7wn56v60a736vq2b64spa  east-west  wp      db           tcp       3306   wp -> db 3306/tcp
-01kgv7wn5br4r3q38ysebzwa0h  east-west  client  wp           tcp       80     client -> wp 80/tcp
+```sh
+raind bottle start wordpress
+raind bottle stop wordpress
+raind bottle delete wordpress
 ```
 
-## Start Bottle
-Bottles are not started immediately after creation, so use `start`.
+## Behavior
 
-```
-$ raind bottle start wordpress
-bottle: wordpress started
+Raind calculates a startup order from `depends_on`. Dependencies must reference known service names, and dependency cycles are rejected.
 
-$ raind bottle ls
-BOTTLE ID     BOTTLE NAME  SERVICES  STATUS
-01kgv7wn56v6  wordpress    3         running
-```
+When a Bottle needs an isolated group network, Raind can create a Bottle network and attach the generated containers to it. Services can also specify an explicit `network`.
 
-## Stop and Remove Bottle
-Stop with `stop`, remove with `rm`.
+## Policy Notes
 
-```
-$ raind bottle stop wordpress
-bottle: wordpress stopped
+Raind's Bottle model is designed for explicit east-west traffic policy. In typical Bottle usage, container-to-container traffic should be declared through `policies` instead of relying on implicit access.
 
-$ raind bottle rm wordpress
-bottle: wordpress deleted
-```
+## Notes
+
+- `bottle.name` is required.
+- `services` must contain at least one service.
+- `depends_on` controls startup ordering.
+- `device` and `devices` are aliases and are merged.
+- `capAdd` and `cap-add` are aliases and are merged.
+- `capDrop` and `cap-drop` are aliases and are merged.
+- Bottle is Raind-native and is not a Kubernetes resource.
