@@ -192,6 +192,8 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 			if err := h.ssmHandler.StoreService(serviceId, ssm.ServiceInfo{
 				Name:      manifest.Name,
 				Namespace: manifest.Namespace,
+				Type:      manifest.Type,
+				ClusterIP: manifest.ClusterIP,
 				Selector:  manifest.Selector,
 				Ports:     manifest.Ports,
 			}); err != nil {

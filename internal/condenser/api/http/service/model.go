@@ -3,6 +3,8 @@ package service
 type CreateServiceRequest struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
+	Type      string            `json:"type"`
+	ClusterIP string            `json:"clusterIP,omitempty"`
 	Selector  map[string]string `json:"selector"`
 	Ports     []ServicePort     `json:"ports"`
 }
@@ -21,6 +23,8 @@ type ServiceSummary struct {
 	ServiceId string        `json:"serviceId"`
 	Name      string        `json:"name"`
 	Namespace string        `json:"namespace"`
+	Type      string        `json:"type"`
+	ClusterIP string        `json:"clusterIP,omitempty"`
 	Ports     []ServicePort `json:"ports"`
 	CreatedAt string        `json:"createdAt"`
 }

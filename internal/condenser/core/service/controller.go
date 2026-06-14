@@ -23,7 +23,7 @@ func NewServiceController() *ServiceController {
 		commandFactory:   utils.NewCommandFactory(),
 		interval:         5 * time.Second,
 		lastState:        map[string]string{},
-		lastPorts:        map[string][]ssm.ServicePort{},
+		lastServices:     map[string]ssm.ServiceInfo{},
 	}
 }
 
@@ -35,7 +35,7 @@ type ServiceController struct {
 	commandFactory   utils.CommandFactory
 	interval         time.Duration
 	lastState        map[string]string
-	lastPorts        map[string][]ssm.ServicePort
+	lastServices     map[string]ssm.ServiceInfo
 }
 
 func (c *ServiceController) Start() {
@@ -68,8 +68,11 @@ func (c *ServiceController) reconcileOnce() error {
 			}
 			stateKey := c.buildStateKey(svc, endpoints)
 			if prev := c.lastState[svc.ServiceId]; prev != stateKey {
+				if prevSvc, ok := c.lastState[svc.ServiceId]; ok {
+					c.cleanupService(prevSvc)
+				}
 				c.lastState[svc.ServiceId] = stateKey
-				c.lastPorts[svc.ServiceId] = svc.Ports
+				c.lastServices[svc.ServiceId] = svc
 				if err := c.applyRules(svc, endpoints); err != nil {
 					log.Printf("service controller apply failed: serviceId=%s err=%v", svc.ServiceId, err)
 				}
@@ -83,7 +86,7 @@ func (c *ServiceController) reconcileOnce() error {
 		if !c.serviceExists(serviceId, services) {
 			c.cleanupService(serviceId)
 			delete(c.lastState, serviceId)
-			delete(c.lastPorts, serviceId)
+			delete(c.lastServices, serviceId)
 		}
 	}
 
@@ -156,6 +159,10 @@ func itoa(v int) string {
 
 func (c *ServiceController) buildStateKey(svc ssm.ServiceInfo, endpoints []svcEndpoint) string {
 	var parts []string
+	parts = append(parts, "type="+serviceType(svc))
+	if svc.ClusterIP != "" {
+		parts = append(parts, "clusterIP="+svc.ClusterIP)
+	}
 	for _, p := range svc.Ports {
 		proto := strings.ToLower(p.Protocol)
 		parts = append(parts, fmt.Sprintf("%d:%d/%s", p.Port, p.TargetPort, proto))
@@ -183,8 +190,8 @@ func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpo
 		if err := c.flushChain(chain); err != nil {
 			return err
 		}
-		_ = c.deleteJumpRule(chain, proto, port.Port)
-		if err := c.addJumpRule(chain, proto, port.Port); err != nil {
+		_ = c.deleteServiceJumpRule(svc, chain, proto, port.Port)
+		if err := c.addServiceJumpRule(svc, chain, proto, port.Port); err != nil {
 			return err
 		}
 		if len(endpoints) == 0 {
@@ -207,6 +214,24 @@ func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpo
 	return nil
 }
 
+func serviceType(svc ssm.ServiceInfo) string {
+	return ssm.NormalizeServiceType(svc.Type)
+}
+
+func (c *ServiceController) addServiceJumpRule(svc ssm.ServiceInfo, chain, proto string, port int) error {
+	if serviceType(svc) == ssm.ServiceTypeClusterIP {
+		return c.addClusterIPJumpRule(chain, svc.ClusterIP, proto, port)
+	}
+	return c.addNodePortJumpRule(chain, proto, port)
+}
+
+func (c *ServiceController) deleteServiceJumpRule(svc ssm.ServiceInfo, chain, proto string, port int) error {
+	if serviceType(svc) == ssm.ServiceTypeClusterIP {
+		return c.deleteClusterIPJumpRule(chain, svc.ClusterIP, proto, port)
+	}
+	return c.deleteNodePortJumpRule(chain, proto, port)
+}
+
 func (c *ServiceController) serviceChainName(serviceId string, port int) string {
 	id := serviceId
 	if len(id) > 8 {
@@ -225,17 +250,21 @@ func (c *ServiceController) serviceExists(serviceId string, list []ssm.ServiceIn
 }
 
 func (c *ServiceController) cleanupService(serviceId string) {
-	ports := c.lastPorts[serviceId]
-	if len(ports) == 0 {
+	svc, ok := c.lastServices[serviceId]
+	if !ok {
 		return
 	}
-	for _, p := range ports {
+	c.cleanupServiceRules(svc)
+}
+
+func (c *ServiceController) cleanupServiceRules(svc ssm.ServiceInfo) {
+	for _, p := range svc.Ports {
 		if p.Port == 0 {
 			continue
 		}
-		chain := c.serviceChainName(serviceId, p.Port)
-		_ = c.deleteJumpRule(chain, "tcp", p.Port)
-		_ = c.deleteJumpRule(chain, "udp", p.Port)
+		chain := c.serviceChainName(svc.ServiceId, p.Port)
+		_ = c.deleteServiceJumpRule(svc, chain, "tcp", p.Port)
+		_ = c.deleteServiceJumpRule(svc, chain, "udp", p.Port)
 		_ = c.flushChain(chain)
 		_ = c.deleteChain(chain)
 	}
@@ -257,7 +286,7 @@ func (c *ServiceController) flushChain(chain string) error {
 	return cmd.Run()
 }
 
-func (c *ServiceController) deleteJumpRule(chain, proto string, port int) error {
+func (c *ServiceController) deleteNodePortJumpRule(chain, proto string, port int) error {
 	cmd := c.commandFactory.Command(
 		"iptables", "-t", "nat", "-D", "PREROUTING",
 		"-p", proto, "--dport", itoa(port),
@@ -274,7 +303,7 @@ func (c *ServiceController) deleteJumpRule(chain, proto string, port int) error 
 	return nil
 }
 
-func (c *ServiceController) addJumpRule(chain, proto string, port int) error {
+func (c *ServiceController) addNodePortJumpRule(chain, proto string, port int) error {
 	cmd := c.commandFactory.Command(
 		"iptables", "-t", "nat", "-A", "PREROUTING",
 		"-p", proto, "--dport", itoa(port),
@@ -286,6 +315,51 @@ func (c *ServiceController) addJumpRule(chain, proto string, port int) error {
 	cmd = c.commandFactory.Command(
 		"iptables", "-t", "nat", "-A", "OUTPUT",
 		"-m", "addrtype", "--dst-type", "LOCAL",
+		"-p", proto, "--dport", itoa(port),
+		"-j", chain,
+	)
+	return cmd.Run()
+}
+
+func (c *ServiceController) deleteClusterIPJumpRule(chain, clusterIP, proto string, port int) error {
+	if clusterIP == "" {
+		return nil
+	}
+	dst := clusterIP + "/32"
+	cmd := c.commandFactory.Command(
+		"iptables", "-t", "nat", "-D", "PREROUTING",
+		"-d", dst,
+		"-p", proto, "--dport", itoa(port),
+		"-j", chain,
+	)
+	_ = cmd.Run()
+	cmd = c.commandFactory.Command(
+		"iptables", "-t", "nat", "-D", "OUTPUT",
+		"-d", dst,
+		"-p", proto, "--dport", itoa(port),
+		"-j", chain,
+	)
+	_ = cmd.Run()
+	return nil
+}
+
+func (c *ServiceController) addClusterIPJumpRule(chain, clusterIP, proto string, port int) error {
+	if clusterIP == "" {
+		return fmt.Errorf("clusterIP service requires clusterIP")
+	}
+	dst := clusterIP + "/32"
+	cmd := c.commandFactory.Command(
+		"iptables", "-t", "nat", "-A", "PREROUTING",
+		"-d", dst,
+		"-p", proto, "--dport", itoa(port),
+		"-j", chain,
+	)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	cmd = c.commandFactory.Command(
+		"iptables", "-t", "nat", "-A", "OUTPUT",
+		"-d", dst,
 		"-p", proto, "--dport", itoa(port),
 		"-j", chain,
 	)

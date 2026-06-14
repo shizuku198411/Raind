@@ -12,6 +12,7 @@ type ServiceInfoModel struct {
 	ServiceId string             `json:"serviceId"`
 	Name      string             `json:"name"`
 	Namespace string             `json:"namespace"`
+	Type      string             `json:"type"`
 	Ports     []ServicePortModel `json:"ports,omitempty"`
 	CreatedAt time.Time          `json:"createdAt"`
 }

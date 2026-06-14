@@ -13,6 +13,8 @@ import (
 type ServiceManifest struct {
 	Name      string
 	Namespace string
+	Type      string
+	ClusterIP string
 	Selector  map[string]string
 	Ports     []ssm.ServicePort
 }
@@ -30,8 +32,10 @@ type servicePortManifest struct {
 }
 
 type serviceSpec struct {
-	Selector map[string]string     `yaml:"selector"`
-	Ports    []servicePortManifest `yaml:"ports"`
+	Type      string                `yaml:"type"`
+	ClusterIP string                `yaml:"clusterIP"`
+	Selector  map[string]string     `yaml:"selector"`
+	Ports     []servicePortManifest `yaml:"ports"`
 }
 
 type serviceManifest struct {
@@ -100,6 +104,8 @@ func buildServiceManifest(in serviceManifest) ServiceManifest {
 	return ServiceManifest{
 		Name:      in.Metadata.Name,
 		Namespace: in.Metadata.Namespace,
+		Type:      in.Spec.Type,
+		ClusterIP: in.Spec.ClusterIP,
 		Selector:  in.Spec.Selector,
 		Ports:     ports,
 	}

@@ -12,6 +12,8 @@ type ServiceInfo struct {
 	ServiceId string            `json:"serviceId"`
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
+	Type      string            `json:"type"`
+	ClusterIP string            `json:"clusterIP,omitempty"`
 	Selector  map[string]string `json:"selector"`
 	Ports     []ServicePort     `json:"ports"`
 	CreatedAt time.Time         `json:"createdAt"`

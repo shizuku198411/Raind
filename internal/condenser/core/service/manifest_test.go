@@ -14,6 +14,8 @@ kind: Service
 metadata:
   name: web
 spec:
+  type: ClusterIP
+  clusterIP: 10.166.255.10
   selector:
     app: web
   ports:
@@ -28,6 +30,8 @@ spec:
 	require.NoError(t, err)
 	assert.Equal(t, "web", got.Name)
 	assert.Equal(t, "default", got.Namespace)
+	assert.Equal(t, "ClusterIP", got.Type)
+	assert.Equal(t, "10.166.255.10", got.ClusterIP)
 	assert.Equal(t, map[string]string{"app": "web"}, got.Selector)
 	require.Len(t, got.Ports, 2)
 	assert.Equal(t, 80, got.Ports[0].TargetPort)
