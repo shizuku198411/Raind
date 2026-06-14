@@ -364,11 +364,13 @@ func parseMountFlag(mounts []string) ([]spec.MountOption, error) {
 		var opts []string
 		if len(parts) == 3 && parts[2] != "" {
 			opts = strings.Split(parts[2], ",")
-		} else {
+		}
+
+		if !hasBindMountOption(opts) {
 			if fi.IsDir() {
-				opts = append(opts, "bind")
+				opts = append([]string{"bind"}, opts...)
 			} else {
-				opts = append(opts, "rbind", "rprivate")
+				opts = append([]string{"rbind", "rprivate"}, opts...)
 			}
 		}
 
@@ -380,6 +382,15 @@ func parseMountFlag(mounts []string) ([]spec.MountOption, error) {
 		})
 	}
 	return mountOption, nil
+}
+
+func hasBindMountOption(options []string) bool {
+	for _, opt := range options {
+		if opt == "bind" || opt == "rbind" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseCommandFlag(s string) ([]string, error) {
