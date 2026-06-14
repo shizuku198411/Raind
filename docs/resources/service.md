@@ -1,6 +1,19 @@
 # Raind - Service
-A Service is an L4 load balancer for Pods.  
-It selects Pods by label and distributes traffic via iptables (DNAT).
+Raind supports a Kubernetes-style `Service` manifest, but its runtime
+semantics are intentionally simpler than Kubernetes.
+
+In Kubernetes, a Service is primarily a stable L4 endpoint for a set of
+Pods. The default Service type is `ClusterIP`, which is reachable only
+inside the cluster. External exposure is represented by types such as
+`NodePort` and `LoadBalancer`.
+
+Raind currently implements Service as a single-host L4 load-balancing and
+host-port publishing mechanism. A Raind Service selects matching Pods and
+programs iptables rules to forward traffic from the host port to matching
+Pod backends.
+
+Therefore, Raind Service behavior is closer to a simplified single-node
+`NodePort` model than to Kubernetes' default `ClusterIP` model.
 
 ## Manifest Example
 ```yaml
