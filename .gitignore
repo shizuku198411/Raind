@@ -10,4 +10,5 @@ workspace/
 parts/
 .craft/
 prime/
+stage/
 overlay/
