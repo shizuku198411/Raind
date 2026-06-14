@@ -21,9 +21,17 @@ spec:
       labels:
         app: demo
     spec:
+      volumes:
+      - name: data
+        hostPath: /home/user/data
+        type: Directory
       containers:
       - name: nginx
         image: nginx:latest
+        volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
 ```
 
 ## Create
