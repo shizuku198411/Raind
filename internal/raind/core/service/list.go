@@ -68,7 +68,7 @@ func (s *ServiceServiceList) printServiceList(list []ServiceInfoModel) {
 		tabwriter.DiscardEmptyColumns,
 	)
 
-	fmt.Fprintln(w, "SERVICE ID\tNAME\tNAMESPACE\tPORTS\tCREATED")
+	fmt.Fprintln(w, "SERVICE ID\tNAME\tNAMESPACE\tTYPE\tPORTS\tCREATED")
 
 	formatTime := func(t time.Time) string {
 		now := time.Now()
@@ -91,12 +91,14 @@ func (s *ServiceServiceList) printServiceList(list []ServiceInfoModel) {
 	for _, svc := range list {
 		created := formatTime(svc.CreatedAt)
 		ports := formatPorts(svc.Ports)
+		serviceType := formatServiceType(svc.Type)
 		fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			svc.ServiceId,
 			svc.Name,
 			svc.Namespace,
+			serviceType,
 			ports,
 			created,
 		)
@@ -118,4 +120,11 @@ func formatPorts(ports []ServicePortModel) string {
 		items = append(items, fmt.Sprintf("%d->%d/%s", p.Port, p.TargetPort, proto))
 	}
 	return strings.Join(items, ",")
+}
+
+func formatServiceType(serviceType string) string {
+	if strings.TrimSpace(serviceType) == "" {
+		return "ClusterIP"
+	}
+	return serviceType
 }

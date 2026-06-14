@@ -19,3 +19,10 @@ type ClientCertConfig struct {
 	URISANs    []string
 	ValidFor   time.Duration
 }
+
+type ServerCertConfig struct {
+	CommonName  string
+	DNSNames    []string
+	IPAddresses []net.IP
+	ValidFor    time.Duration
+}

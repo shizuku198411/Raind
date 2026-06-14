@@ -9,4 +9,5 @@ type NetworkServiceHandler interface {
 	CreateForwardingRule(containerId string, parameter ServiceNetworkModel) error
 	CreateRedirectDnsTrafficRule(forwarderIf string, forwarderAddr string) error
 	RemoveForwardingRule(containerId string, parameter ServiceNetworkModel) error
+	RemoveRedirectDnsTrafficRule(forwarderIf string, forwarderAddr string) error
 }

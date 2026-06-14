@@ -10,9 +10,11 @@ import (
 
 	apimodel "raind/internal/condenser/api/http/utils"
 	"raind/internal/condenser/core/container"
+	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
 	coreService "raind/internal/condenser/core/service"
+	"raind/internal/condenser/store/ism"
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/ssm"
 	"raind/internal/condenser/utils"
@@ -28,6 +30,7 @@ func NewRequestHandler() *RequestHandler {
 		namespaceHandler: corenamespace.NewNamespaceService(),
 		psmHandler:       psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 		ssmHandler:       ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
+		ismHandler:       ism.NewIsmManager(ism.NewIsmStore(utils.IsmStorePath)),
 	}
 }
 
@@ -37,6 +40,7 @@ type RequestHandler struct {
 	namespaceHandler corenamespace.NamespaceServiceHandler
 	psmHandler       psm.PsmHandler
 	ssmHandler       ssm.SsmHandler
+	ismHandler       ism.IsmHandler
 }
 
 // CreatePod godoc
@@ -114,6 +118,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 	var replicaSetResults []ApplyReplicaSetResult
 	var deploymentResults []ApplyDeploymentResult
 	var serviceResults []ApplyServiceResult
+	var ingressResults []ApplyIngressResult
 	var namespaceResults []ApplyNamespaceResult
 	var rollback []func()
 	rollbackApplied := func() {
@@ -171,6 +176,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				_, _ = h.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: info.Name})
 			})
 			namespaceResults = append(namespaceResults, ApplyNamespaceResult{Name: info.Name, Network: info.Network})
+
 		case "Service":
 			manifest, err := coreService.DecodeK8sServiceManifest(rawBytes)
 			if err != nil {
@@ -192,6 +198,8 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 			if err := h.ssmHandler.StoreService(serviceId, ssm.ServiceInfo{
 				Name:      manifest.Name,
 				Namespace: manifest.Namespace,
+				Type:      manifest.Type,
+				ClusterIP: manifest.ClusterIP,
 				Selector:  manifest.Selector,
 				Ports:     manifest.Ports,
 			}); err != nil {
@@ -207,6 +215,47 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				Name:      manifest.Name,
 				Namespace: manifest.Namespace,
 			})
+
+		case "Ingress":
+			manifest, err := coreIngress.DecodeK8sIngressManifest(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusBadRequest, invalidYAMLErrorMessage(err), nil)
+				return
+			}
+			if h.ismHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusBadRequest, "name already used by other ingress", nil)
+				return
+			}
+			if len(manifest.TLSHosts) > 0 {
+				if err := coreIngress.NewTLSManager().EnsureHosts(manifest.TLSHosts); err != nil {
+					rollbackApplied()
+					apimodel.RespondFail(w, http.StatusInternalServerError, "ingress tls certificate create failed: "+err.Error(), nil)
+					return
+				}
+			}
+			ingressId := utils.NewUlid()
+			if err := h.ismHandler.StoreIngress(ingressId, ism.IngressInfo{
+				Name:      manifest.Name,
+				Namespace: manifest.Namespace,
+				Rules:     manifest.Rules,
+				TLSHosts:  manifest.TLSHosts,
+			}); err != nil {
+				rollbackApplied()
+				apimodel.RespondFail(w, http.StatusInternalServerError, "ingress store failed: "+err.Error(), nil)
+				return
+			}
+			rollback = append(rollback, func() {
+				_ = h.ismHandler.RemoveIngress(ingressId)
+			})
+			ingressResults = append(ingressResults, ApplyIngressResult{
+				IngressId: ingressId,
+				Name:      manifest.Name,
+				Namespace: manifest.Namespace,
+				TLSHosts:  manifest.TLSHosts,
+			})
+
 		case "Pod", "ReplicaSet", "Deployment":
 			manifests, err := pod.DecodeK8sManifests(rawBytes)
 			if err != nil || len(manifests) == 0 {
@@ -362,6 +411,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				Name:         m.Name,
 				ContainerIds: containerIds,
 			})
+
 		default:
 			rollbackApplied()
 			apimodel.RespondFail(w, http.StatusBadRequest, "unsupported kind: "+kind, nil)
@@ -374,6 +424,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 		ReplicaSets: replicaSetResults,
 		Deployments: deploymentResults,
 		Services:    serviceResults,
+		Ingresses:   ingressResults,
 		Namespaces:  namespaceResults,
 	})
 }
@@ -397,6 +448,7 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 	var rsResults []DeleteReplicaSetResult
 	var deployResults []DeleteDeploymentResult
 	var svcResults []DeleteServiceResult
+	var ingressResults []DeleteIngressResult
 	var namespaceResults []DeleteNamespaceResult
 	var pendingNamespaceDeletes []string
 
@@ -463,6 +515,43 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 				apimodel.RespondFail(w, http.StatusNotFound, "service not found", nil)
 				return
 			}
+
+		case "Ingress":
+			manifest, err := coreIngress.DecodeK8sIngressManifest(rawBytes)
+			if err != nil {
+				apimodel.RespondFail(w, http.StatusBadRequest, invalidYAMLErrorMessage(err), nil)
+				return
+			}
+			list, err := h.ismHandler.GetIngressList()
+			if err != nil {
+				apimodel.RespondFail(w, http.StatusInternalServerError, "list failed: "+err.Error(), nil)
+				return
+			}
+			var removed bool
+			for _, in := range list {
+				if in.Name != manifest.Name || in.Namespace != manifest.Namespace {
+					continue
+				}
+				if err := h.ismHandler.RemoveIngress(in.IngressId); err != nil {
+					apimodel.RespondFail(w, http.StatusInternalServerError, "remove failed: "+err.Error(), nil)
+					return
+				}
+				if err := coreIngress.NewTLSManager().RemoveHostsIfUnused(in.TLSHosts, activeTLSHostsExcept(list, in.IngressId)); err != nil {
+					apimodel.RespondFail(w, http.StatusInternalServerError, "ingress tls certificate cleanup failed: "+err.Error(), nil)
+					return
+				}
+				ingressResults = append(ingressResults, DeleteIngressResult{
+					IngressId: in.IngressId,
+					Name:      in.Name,
+					Namespace: in.Namespace,
+				})
+				removed = true
+			}
+			if !removed {
+				apimodel.RespondFail(w, http.StatusNotFound, "ingress not found", nil)
+				return
+			}
+
 		case "Deployment":
 			manifests, err := pod.DecodeK8sManifests(rawBytes)
 			if err != nil || len(manifests) == 0 {
@@ -495,6 +584,7 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 				apimodel.RespondFail(w, http.StatusNotFound, "deployment not found", nil)
 				return
 			}
+
 		case "ReplicaSet":
 			manifests, err := pod.DecodeK8sManifests(rawBytes)
 			if err != nil || len(manifests) == 0 {
@@ -527,6 +617,7 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 				apimodel.RespondFail(w, http.StatusNotFound, "replicaset not found", nil)
 				return
 			}
+
 		case "Pod":
 			manifests, err := pod.DecodeK8sManifests(rawBytes)
 			if err != nil || len(manifests) == 0 {
@@ -559,6 +650,7 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 				apimodel.RespondFail(w, http.StatusNotFound, "pod not found", nil)
 				return
 			}
+
 		default:
 			apimodel.RespondFail(w, http.StatusBadRequest, "unsupported kind: "+kind, nil)
 			return
@@ -578,6 +670,7 @@ func (h *RequestHandler) DeleteResourceYaml(w http.ResponseWriter, r *http.Reque
 		ReplicaSets: rsResults,
 		Deployments: deployResults,
 		Services:    svcResults,
+		Ingresses:   ingressResults,
 		Namespaces:  namespaceResults,
 	})
 }
@@ -603,6 +696,17 @@ type namespaceMeta struct {
 	Name        string            `yaml:"name"`
 	Labels      map[string]string `yaml:"labels"`
 	Annotations map[string]string `yaml:"annotations"`
+}
+
+func activeTLSHostsExcept(ingresses []ism.IngressInfo, excludedIngressId string) []string {
+	var hosts []string
+	for _, in := range ingresses {
+		if in.IngressId == excludedIngressId {
+			continue
+		}
+		hosts = append(hosts, in.TLSHosts...)
+	}
+	return hosts
 }
 
 func (h *RequestHandler) ensureResourceNameAvailable(name, namespace string) error {

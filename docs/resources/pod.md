@@ -1,50 +1,159 @@
 # Raind - Pod
-A Pod is an orchestration unit that groups multiple containers.  
-Containers in the same Pod share Network/UTS/IPC namespaces.  
-An infra (pause) container keeps the namespaces stable so containers share the same IP/hostname.
 
-## Manifest Example
+A `Pod` is a workload unit that groups one or more containers.
+
+Raind Pods use an infra container to keep shared namespaces stable. Containers in the same Pod share the Pod network, IPC, and UTS namespaces, so they behave as a single workload unit with a stable Pod IP.
+
+## Supported Resource
+
+```yaml
+apiVersion: v1
+kind: Pod
+```
+
+## Supported Fields
+
+### Metadata
+
+| Field | Required | Description |
+|---|---:|---|
+| `metadata.name` | yes | Pod name. |
+| `metadata.namespace` | no | Namespace. Defaults to `default`. |
+| `metadata.labels` | no | Labels used by ReplicaSet, Deployment, and Service selectors. |
+| `metadata.annotations` | no | Stored with the Pod metadata. |
+
+### Pod Spec
+
+| Field | Required | Description |
+|---|---:|---|
+| `spec.containers` | yes | List of container specs. |
+| `spec.volumes` | no | Host directory volumes. Only `hostPath` is currently supported. |
+
+### Container Spec
+
+| Field | Required | Description |
+|---|---:|---|
+| `name` | no | Container name inside the Pod. |
+| `image` | yes | Container image. |
+| `command` | no | Command array. |
+| `args` | no | Arguments appended to `command`. |
+| `env` | no | Environment variables as `name` / `value` entries. |
+| `ports` | no | Container ports. `hostPort` creates a host port mapping. |
+| `mount` | no | Raind low-level mount strings such as `/host:/container[:options]`. |
+| `volumeMounts` | no | Kubernetes-style volume mounts referencing `spec.volumes`. |
+| `securityContext.capabilities.add` | no | Linux capabilities to add. |
+| `securityContext.capabilities.drop` | no | Linux capabilities to drop. |
+| `tty` | no | Allocate a TTY for the container. |
+
+### HostPath Volumes
+
+Raind currently supports Kubernetes-style `hostPath` directory volumes.
+
+| Field | Required | Description |
+|---|---:|---|
+| `volumes[].name` | yes | Volume name. |
+| `volumes[].hostPath.path` | yes | Absolute host path. |
+| `volumes[].hostPath.type` | no | Supported values: `Directory`, `DirectoryOrCreate`. Empty is treated as `Directory`. |
+
+Supported `hostPath.type` values:
+
+| Type | Behavior |
+|---|---|
+| `Directory` | The host path must already exist and must be a directory. |
+| `DirectoryOrCreate` | Raind creates the directory if it does not exist. |
+
+Unsupported hostPath types include `File`, `FileOrCreate`, `Socket`, `CharDevice`, and `BlockDevice`.
+
+### Volume Mounts
+
+| Field | Required | Description |
+|---|---:|---|
+| `volumeMounts[].name` | yes | Name of a volume defined in `spec.volumes`. |
+| `volumeMounts[].mountPath` | yes | Absolute path inside the container. |
+| `volumeMounts[].readOnly` | no | When true, the bind mount is read-only. |
+
+## Complete Example
+
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
   name: demo-pod
-  namespace: default
+  namespace: demo
   labels:
     app: demo
+    tier: web
+  annotations:
+    raind.dev/example: pod
 spec:
+  volumes:
+    - name: html
+      hostPath:
+        path: /home/workshop/demo-html
+        type: DirectoryOrCreate
   containers:
-  - name: web
-    image: nginx:latest
-  - name: sidecar
-    image: alpine:latest
-    tty: true
+    - name: web
+      image: nginx:latest
+      ports:
+        - containerPort: 80
+          hostPort: 8080
+      volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+          readOnly: true
+      securityContext:
+        capabilities:
+          add:
+            - CAP_NET_BIND_SERVICE
+          drop:
+            - CAP_NET_RAW
+    - name: sidecar
+      image: alpine:latest
+      command:
+        - /bin/sh
+        - -c
+      args:
+        - while true; do date; sleep 30; done
+      env:
+        - name: APP_ENV
+          value: demo
+      tty: true
 ```
 
 ## Create
-Creating via manifest is recommended.
-```
-$ raind resource apply -f /path/to/pod.yaml
-resource: demo-pod applied
+
+Create from a manifest:
+
+```sh
+raind resource apply -f pod.yaml
 ```
 
-To create only the Pod metadata, use:
-```
-$ raind resource pod create -n demo-pod -l app=demo
-pod: <pod-id> created
+Create only Pod metadata directly:
+
+```sh
+raind resource pod create -n demo-pod -l app=demo
 ```
 
-## List/Start/Stop/Remove
-```
-$ raind resource pod ls
-$ raind resource pod ls --namespace default
-$ raind resource pod start <pod-id>
-$ raind resource pod stop <pod-id>
-$ raind resource pod rm <pod-id>
+## List / Start / Stop / Remove
+
+```sh
+raind resource pod ls
+raind resource pod ls --namespace demo
+raind resource pod start <pod-id>
+raind resource pod stop <pod-id>
+raind resource pod rm <pod-id>
 ```
 
 ## Remove via Manifest
+
+```sh
+raind resource rm -f pod.yaml
 ```
-$ raind resource rm -f /path/to/pod.yaml
-pod: demo-pod removed
-```
+
+## Notes
+
+- `metadata.namespace` defaults to `default`.
+- Pod containers share the Pod network namespace through the infra container.
+- `ports[].hostPort` publishes a container port on the host. Prefer a Service for workload-level exposure.
+- `hostPath.path` and `volumeMounts.mountPath` must be absolute paths.
+- Only host directory mounts are supported through Kubernetes-style `volumes`.

@@ -72,7 +72,16 @@ func (s *NetworkService) CreateNewNetwork(param ServiceNewNetworkModel) (err err
 	}
 	rollback.CreateBridgeInterface = true
 
-	// 3. refresh policy
+	// 3. Setup DNS redirect for the newly-created network
+	_, dnsProxyAddr, _, err := s.ipamHandler.GetDnsProxyInfo()
+	if err != nil {
+		return err
+	}
+	if err := s.CreateRedirectDnsTrafficRule(param.Bridge, dnsProxyAddr); err != nil {
+		return err
+	}
+
+	// 4. refresh policy
 	err = s.policyHandler.CommitPolicy()
 	if err != nil {
 		return err
@@ -94,21 +103,59 @@ func (s *NetworkService) RemoveNetwork(param ServiceRemoveNetworkModel) error {
 			return fmt.Errorf("network: %s contains existing container", param.Bridge)
 		}
 	}
-	// 1. remove bridge
+
+	// 1. remove DNS redirect rules
+	_, dnsProxyAddr, _, err := s.ipamHandler.GetDnsProxyInfo()
+	if err != nil {
+		return err
+	}
+	if err := s.RemoveRedirectDnsTrafficRule(param.Bridge, dnsProxyAddr); err != nil {
+		return err
+	}
+
+	// 2. remove bridge
 	if err := s.RemoveBridgeInterface(param.Bridge); err != nil {
 		return err
 	}
 
-	// 2. remove store
+	// 3. remove store
 	if err := s.ipamHandler.RemoveBridge(param.Bridge); err != nil {
 		return err
 	}
 
-	// 3. refresh policy
+	// 4. refresh policy
 	if err := s.policyHandler.CommitPolicy(); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func (s *NetworkService) RemoveRedirectDnsTrafficRule(forwarderIf string, forwarderAddr string) error {
+	if err := s.removeRedirectDnsTrafficRule(forwarderIf, forwarderAddr, "udp"); err != nil {
+		return err
+	}
+	if err := s.removeRedirectDnsTrafficRule(forwarderIf, forwarderAddr, "tcp"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *NetworkService) removeRedirectDnsTrafficRule(forwarderIf string, forwarderAddr string, proto string) error {
+	args := []string{"PREROUTING", "-i", forwarderIf, "-p", proto, "--dport", "53", "-j", "DNAT", "--to-destination", forwarderAddr + ":1053"}
+
+	// Treat a missing rule as success. This keeps network deletion idempotent and
+	// allows cleanup to proceed for networks created before DNS redirect cleanup
+	// was implemented.
+	check := s.commandFactory.Command("iptables", append([]string{"-t", "nat", "-C"}, args...)...)
+	if err := check.Run(); err != nil {
+		return nil
+	}
+
+	remove := s.commandFactory.Command("iptables", append([]string{"-t", "nat", "-D"}, args...)...)
+	if err := remove.Run(); err != nil {
+		return err
+	}
 	return nil
 }
 

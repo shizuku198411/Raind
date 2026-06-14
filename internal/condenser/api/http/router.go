@@ -14,6 +14,7 @@ import (
 	containerHandler "raind/internal/condenser/api/http/container"
 	hookHandler "raind/internal/condenser/api/http/hook"
 	imageHandler "raind/internal/condenser/api/http/image"
+	ingressHandler "raind/internal/condenser/api/http/ingress"
 	"raind/internal/condenser/api/http/logger"
 	logHandler "raind/internal/condenser/api/http/logs"
 	namespaceHandler "raind/internal/condenser/api/http/namespace"
@@ -63,13 +64,12 @@ func NewApiRouter() *chi.Mux {
 	podHandler := podHandler.NewRequestHandler()
 	serviceHandler := serviceHandler.NewRequestHandler()
 	namespaceHandler := namespaceHandler.NewRequestHandler()
+	ingressHandler := ingressHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// SPIFFE
-	r.Use(RequireCLIIdentity)
 	// LOGGER
 	node, _ := os.Hostname()
 	r.Use(logger.LoggerMiddleware(
@@ -77,6 +77,8 @@ func NewApiRouter() *chi.Mux {
 		"condenser",
 		node,
 	))
+	// SPIFFE
+	r.Use(RequireCLIIdentity)
 
 	// == v1 ==
 	// == bottles ==
@@ -137,6 +139,9 @@ func NewApiRouter() *chi.Mux {
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/services/{serviceId}", serviceHandler.GetServiceById) // get service detail
 	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/services/{serviceId}", serviceHandler.RemoveService)
 
+	// == ingresses ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/ingresses", ingressHandler.GetIngressList) // list ingress
+
 	// == namespaces ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces", namespaceHandler.GetNamespaceList)
 	r.With(RequireCLIScope(ScopeResourceWrite)).Post("/v1/namespaces", namespaceHandler.CreateNamespace)
@@ -174,8 +179,6 @@ func NewHookRouter() *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// SPIFFE
-	r.Use(RequireSPIFFE("spiffe://raind/container"))
 	// LOGGER
 	node, _ := os.Hostname()
 	r.Use(logger.LoggerMiddleware(
@@ -183,6 +186,8 @@ func NewHookRouter() *chi.Mux {
 		"condenser",
 		node,
 	))
+	// SPIFFE
+	r.Use(RequireSPIFFE("spiffe://raind/container"))
 
 	// == hook ==
 	r.Post("/v1/hooks/droplet", hookHandler.ApplyHook)

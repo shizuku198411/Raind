@@ -75,7 +75,14 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 		}
 		fmt.Printf("service: %s removed\n", id)
 	}
-	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
+	for _, in := range result.Ingresses {
+		id := in.IngressId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", in.Namespace, in.Name)
+		}
+		fmt.Printf("ingress: %s removed\n", id)
+	}
+	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("no resources removed")
 	}
 }

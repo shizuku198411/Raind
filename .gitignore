@@ -7,3 +7,8 @@ webui/dist/
 workspace/
 .workshop.lock
 *.snap
+parts/
+.craft/
+prime/
+stage/
+overlay/

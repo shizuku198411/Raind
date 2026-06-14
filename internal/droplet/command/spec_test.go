@@ -34,6 +34,8 @@ func TestParseMountFlagDetectsDirectoryAndFileDefaults(t *testing.T) {
 		dir + ":/mnt/dir",
 		file + ":/mnt/file",
 		dir + ":/mnt/explicit:ro,bind",
+		dir + ":/mnt/readonly:ro",
+		file + ":/mnt/file-readonly:ro",
 	})
 
 	// == assert ==
@@ -42,6 +44,8 @@ func TestParseMountFlagDetectsDirectoryAndFileDefaults(t *testing.T) {
 		{Source: dir, Destination: "/mnt/dir", Type: "", Options: []string{"bind"}},
 		{Source: file, Destination: "/mnt/file", Type: "bind", Options: []string{"rbind", "rprivate"}},
 		{Source: dir, Destination: "/mnt/explicit", Type: "", Options: []string{"ro", "bind"}},
+		{Source: dir, Destination: "/mnt/readonly", Type: "", Options: []string{"bind", "ro"}},
+		{Source: file, Destination: "/mnt/file-readonly", Type: "bind", Options: []string{"rbind", "rprivate", "ro"}},
 	}, mounts)
 }
 

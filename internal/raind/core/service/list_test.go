@@ -15,6 +15,25 @@ func TestPrintServiceListPrintsHeaderWhenEmpty(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "SERVICE ID")
+	assert.Contains(t, out, "TYPE")
+}
+
+func TestPrintServiceListPrintsServiceType(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceServiceList{}).printServiceList([]ServiceInfoModel{
+			{ServiceId: "svc-1", Name: "internal", Namespace: "demo", Type: "ClusterIP", Ports: []ServicePortModel{{Port: 80, TargetPort: 8080}}},
+			{ServiceId: "svc-2", Name: "public", Namespace: "demo", Type: "NodePort", Ports: []ServicePortModel{{Port: 8081, TargetPort: 80}}},
+		})
+	})
+
+	assert.Contains(t, out, "ClusterIP")
+	assert.Contains(t, out, "NodePort")
+}
+
+func TestFormatServiceTypeDefaultsToClusterIP(t *testing.T) {
+	assert.Equal(t, "ClusterIP", formatServiceType(""))
+	assert.Equal(t, "ClusterIP", formatServiceType("   "))
+	assert.Equal(t, "NodePort", formatServiceType("NodePort"))
 }
 
 func TestFormatPortsDefaultsProtocolAndEmptyValue(t *testing.T) {

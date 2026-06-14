@@ -56,6 +56,8 @@ func (h *RequestHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 	if err := h.ssmHandler.StoreService(serviceId, ssm.ServiceInfo{
 		Name:      manifest.Name,
 		Namespace: manifest.Namespace,
+		Type:      manifest.Type,
+		ClusterIP: manifest.ClusterIP,
 		Selector:  manifest.Selector,
 		Ports:     manifest.Ports,
 	}); err != nil {
@@ -97,6 +99,8 @@ func (h *RequestHandler) GetServiceList(w http.ResponseWriter, r *http.Request) 
 			ServiceId: s.ServiceId,
 			Name:      s.Name,
 			Namespace: s.Namespace,
+			Type:      s.Type,
+			ClusterIP: s.ClusterIP,
 			Ports:     ports,
 			CreatedAt: s.CreatedAt.Format(time.RFC3339),
 		})

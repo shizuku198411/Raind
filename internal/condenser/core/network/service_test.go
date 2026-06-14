@@ -13,10 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNetworkServiceCreateBridgeStoresIPAMThenCreatesBridge(t *testing.T) {
-	ipamHandler := &fakeNetworkIpamHandler{}
+func TestNetworkServiceCreateBridgeStoresIPAMThenCreatesBridgeAndDnsRedirect(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{dnsProxyAddr: "10.166.254.254"}
 	commands := &fakeNetworkCommandFactory{
-		runErrors: []error{errors.New("not found"), nil, nil, nil},
+		runErrors: []error{
+			errors.New("not found"),
+			nil,
+			nil,
+			nil,
+			errors.New("not found"),
+			nil,
+			errors.New("not found"),
+			nil,
+		},
 	}
 	policyHandler := &fakePolicyService{}
 	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: policyHandler}
@@ -31,7 +40,68 @@ func TestNetworkServiceCreateBridgeStoresIPAMThenCreatesBridge(t *testing.T) {
 		{name: "ip", args: []string{"link", "add", "raind1", "type", "bridge"}},
 		{name: "ip", args: []string{"addr", "add", "10.166.1.254/24", "dev", "raind1"}},
 		{name: "ip", args: []string{"link", "set", "raind1", "up"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-A", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-A", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
 	}, commands.calls)
+	assert.Equal(t, 1, policyHandler.commitCalls)
+}
+
+func TestNetworkServiceRemoveNetworkDeletesDnsRedirectRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		dnsProxyAddr: "10.166.254.254",
+		networkList: []ipam.NetworkList{
+			{Interface: "raind1", NumContainers: 0},
+		},
+	}
+	commands := &fakeNetworkCommandFactory{}
+	policyHandler := &fakePolicyService{}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: policyHandler}
+
+	err := service.RemoveNetwork(ServiceRemoveNetworkModel{Bridge: "raind1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"raind1"}, ipamHandler.removedBridges)
+	assert.Equal(t, []networkCommandCall{
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-D", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-D", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "ip", args: []string{"link", "show", "raind1"}},
+		{name: "ip", args: []string{"link", "del", "raind1"}},
+	}, commands.calls)
+	assert.Equal(t, 1, policyHandler.commitCalls)
+}
+
+func TestNetworkServiceRemoveNetworkIgnoresMissingDnsRedirectRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		dnsProxyAddr: "10.166.254.254",
+		networkList: []ipam.NetworkList{
+			{Interface: "raind1", NumContainers: 0},
+		},
+	}
+	commands := &fakeNetworkCommandFactory{
+		runErrors: []error{
+			errors.New("udp rule not found"),
+			errors.New("tcp rule not found"),
+			nil,
+			nil,
+		},
+	}
+	policyHandler := &fakePolicyService{}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: policyHandler}
+
+	err := service.RemoveNetwork(ServiceRemoveNetworkModel{Bridge: "raind1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []networkCommandCall{
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "udp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-p", "tcp", "--dport", "53", "-j", "DNAT", "--to-destination", "10.166.254.254:1053"}},
+		{name: "ip", args: []string{"link", "show", "raind1"}},
+		{name: "ip", args: []string{"link", "del", "raind1"}},
+	}, commands.calls)
+	assert.Equal(t, []string{"raind1"}, ipamHandler.removedBridges)
 	assert.Equal(t, 1, policyHandler.commitCalls)
 }
 
@@ -135,6 +205,7 @@ type fakeNetworkIpamHandler struct {
 	storedBridges  []string
 	removedBridges []string
 	networkList    []ipam.NetworkList
+	dnsProxyAddr   string
 }
 
 func (f *fakeNetworkIpamHandler) Allocate(string, string) (string, error) { return "", nil }
@@ -161,7 +232,11 @@ func (f *fakeNetworkIpamHandler) GetBridgeAddr(string) (string, error) {
 	return "", nil
 }
 func (f *fakeNetworkIpamHandler) GetDnsProxyInfo() (string, string, []string, error) {
-	return "", "", nil, nil
+	addr := f.dnsProxyAddr
+	if addr == "" {
+		addr = "10.166.254.254"
+	}
+	return "raindDns", addr, []string{"8.8.8.8"}, nil
 }
 func (f *fakeNetworkIpamHandler) GetContainerAddress(string) (string, string, string, error) {
 	return "", "", "", nil

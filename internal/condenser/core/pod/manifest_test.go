@@ -1,6 +1,9 @@
 package pod
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,7 +11,8 @@ import (
 )
 
 func TestDecodeK8sManifestsDecodesPod(t *testing.T) {
-	body := []byte(`
+	hostPath := t.TempDir()
+	body := []byte(fmt.Sprintf(`
 apiVersion: v1
 kind: Pod
 metadata:
@@ -19,7 +23,8 @@ spec:
   volumes:
     - name: data
       hostPath:
-        path: /host/data
+        path: %s
+        type: Directory
   containers:
     - name: app
       image: alpine:latest
@@ -40,7 +45,7 @@ spec:
           add: ["CAP_NET_ADMIN"]
           drop: ["CAP_NET_RAW"]
       tty: true
-`)
+`, hostPath))
 
 	got, err := DecodeK8sManifests(body)
 
@@ -54,7 +59,7 @@ spec:
 	assert.Equal(t, []string{"/bin/sh", "-c", "echo ok"}, c.Command)
 	assert.Equal(t, []string{"A=B"}, c.Env)
 	assert.Equal(t, []string{"8080:80"}, c.Port)
-	assert.Equal(t, []string{"/host/data:/data:ro"}, c.Mount)
+	assert.Equal(t, []string{hostPath + ":/data:ro"}, c.Mount)
 	assert.True(t, c.Tty)
 }
 
@@ -189,4 +194,116 @@ func TestDecodeK8sManifestsRejectsUnsupportedKind(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported kind")
+}
+
+func TestDecodeK8sManifestsCreatesHostPathDirectory(t *testing.T) {
+	base := t.TempDir()
+	hostPath := filepath.Join(base, "created")
+	body := []byte(fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  volumes:
+    - name: data
+      hostPath:
+        path: %s
+        type: DirectoryOrCreate
+  containers:
+    - name: app
+      image: alpine:latest
+      volumeMounts:
+        - name: data
+          mountPath: /data
+`, hostPath))
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.DirExists(t, hostPath)
+	require.Len(t, got, 1)
+	require.Len(t, got[0].Containers, 1)
+	assert.Equal(t, []string{hostPath + ":/data"}, got[0].Containers[0].Mount)
+}
+
+func TestDecodeK8sManifestsRejectsRelativeHostPath(t *testing.T) {
+	body := []byte(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  volumes:
+    - name: data
+      hostPath:
+        path: relative/data
+        type: Directory
+  containers:
+    - name: app
+      image: alpine:latest
+      volumeMounts:
+        - name: data
+          mountPath: /data
+`)
+
+	_, err := DecodeK8sManifests(body)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hostPath.path must be absolute")
+}
+
+func TestDecodeK8sManifestsRejectsRelativeMountPath(t *testing.T) {
+	hostPath := t.TempDir()
+	body := []byte(fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  volumes:
+    - name: data
+      hostPath:
+        path: %s
+        type: Directory
+  containers:
+    - name: app
+      image: alpine:latest
+      volumeMounts:
+        - name: data
+          mountPath: data
+`, hostPath))
+
+	_, err := DecodeK8sManifests(body)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mountPath must be absolute")
+}
+
+func TestDecodeK8sManifestsRejectsUnsupportedHostPathType(t *testing.T) {
+	hostPath := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(hostPath, []byte("x"), 0644))
+	body := []byte(fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  volumes:
+    - name: data
+      hostPath:
+        path: %s
+        type: File
+  containers:
+    - name: app
+      image: alpine:latest
+      volumeMounts:
+        - name: data
+          mountPath: /data
+`, hostPath))
+
+	_, err := DecodeK8sManifests(body)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported hostPath.type")
 }

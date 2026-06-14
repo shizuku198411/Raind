@@ -461,6 +461,7 @@ func (f *fakeNetworkService) CreateForwardingRule(string, network.ServiceNetwork
 	return nil
 }
 func (f *fakeNetworkService) CreateRedirectDnsTrafficRule(string, string) error { return nil }
+func (f *fakeNetworkService) RemoveRedirectDnsTrafficRule(string, string) error { return nil }
 func (f *fakeNetworkService) RemoveForwardingRule(string, network.ServiceNetworkModel) error {
 	return nil
 }
