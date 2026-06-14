@@ -67,7 +67,10 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 	for _, svc := range result.Services {
 		fmt.Printf("service: %s applied\n", svc.ServiceId)
 	}
-	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 {
+	for _, in := range result.Ingresses {
+		fmt.Printf("ingress: %s applied\n", in.IngressId)
+	}
+	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("resource applied")
 	}
 }

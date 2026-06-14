@@ -37,6 +37,7 @@ type ApplyPodResponse struct {
 	ReplicaSets []ApplyReplicaSetResult `json:"replicasets"`
 	Deployments []ApplyDeploymentResult `json:"deployments"`
 	Services    []ApplyServiceResult    `json:"services"`
+	Ingresses   []ApplyIngressResult    `json:"ingresses"`
 	Namespaces  []ApplyNamespaceResult  `json:"namespaces"`
 }
 
@@ -50,6 +51,12 @@ type ApplyPodResult struct {
 
 type ApplyServiceResult struct {
 	ServiceId string `json:"serviceId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type ApplyIngressResult struct {
+	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
@@ -77,6 +84,7 @@ type DeleteResourcesResponse struct {
 	ReplicaSets []DeleteReplicaSetResult `json:"replicasets"`
 	Deployments []DeleteDeploymentResult `json:"deployments"`
 	Services    []DeleteServiceResult    `json:"services"`
+	Ingresses   []DeleteIngressResult    `json:"ingresses"`
 	Namespaces  []DeleteNamespaceResult  `json:"namespaces"`
 }
 
@@ -94,6 +102,12 @@ type DeleteReplicaSetResult struct {
 
 type DeleteServiceResult struct {
 	ServiceId string `json:"serviceId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type DeleteIngressResult struct {
+	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }

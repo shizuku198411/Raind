@@ -9,6 +9,7 @@ import (
 	httpapi "raind/internal/condenser/api/http"
 	"raind/internal/condenser/buildinfo"
 	"raind/internal/condenser/core/cert"
+	"raind/internal/condenser/core/ingress"
 	"raind/internal/condenser/core/pod"
 	"raind/internal/condenser/core/service"
 	"raind/internal/condenser/dns"
@@ -122,6 +123,13 @@ func main() {
 	go func() {
 		log.Printf("[*] service controller start")
 		service.NewServiceController().Start()
+	}()
+
+	// ingress gateway
+	go func() {
+		if err := ingress.NewGateway().Start(); err != nil {
+			log.Printf("ingress gateway stopped: %v", err)
+		}
 	}()
 
 	// forwarder

@@ -77,6 +77,7 @@ func NewApp() *cli.App {
 					resourcecommand.CommandReplicaSet(),
 					resourcecommand.CommandDeployment(),
 					resourcecommand.CommandService(),
+					resourcecommand.CommandIngress(),
 					resourcecommand.CommandNamespace(),
 				},
 			},

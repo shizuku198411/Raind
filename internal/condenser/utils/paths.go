@@ -14,6 +14,7 @@ const (
 	PsmStorePath  = "/etc/raind/store/psm.json"
 	IlmStorePath  = "/etc/raind/store/ilm.json"
 	SsmStorePath  = "/etc/raind/store/ssm.json"
+	IsmStorePath  = "/etc/raind/store/ism.json"
 	NpmStorePath  = "/etc/raind/store/npm.json"
 	BsmStorePath  = "/etc/raind/store/bsm.json"
 	NsmStorePath  = "/etc/raind/store/nsm.json"

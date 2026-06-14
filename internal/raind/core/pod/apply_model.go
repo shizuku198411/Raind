@@ -9,6 +9,7 @@ type ApplyResponseDataModel struct {
 	ReplicaSets []ReplicaSetInfo `json:"replicasets"`
 	Deployments []DeploymentInfo `json:"deployments"`
 	Services    []ServiceInfo    `json:"services"`
+	Ingresses   []IngressInfo    `json:"ingresses"`
 	Namespaces  []NamespaceInfo  `json:"namespaces"`
 }
 
@@ -35,6 +36,12 @@ type DeploymentInfo struct {
 
 type ServiceInfo struct {
 	ServiceId string `json:"serviceId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type IngressInfo struct {
+	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
