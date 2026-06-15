@@ -88,6 +88,7 @@ func (h *RequestHandler) CreateContainer(w http.ResponseWriter, r *http.Request)
 			Tty:      req.Tty,
 			Name:     req.Name,
 			PodId:    req.PodId,
+			Rootless: req.Rootless,
 			Progress: progress,
 		},
 	)
@@ -450,5 +451,4 @@ func (h *RequestHandler) GetContainerLogPath(w http.ResponseWriter, r *http.Requ
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "log path", logPath)
-	return
 }

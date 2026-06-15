@@ -61,4 +61,5 @@ type ConfigOptions struct {
 	Net       NetOption
 	Image     ImageOption
 	Hooks     HookLifecycleOption
+	Rootless  bool
 }

@@ -84,9 +84,10 @@ type LinuxSpecObject struct {
 }
 
 type AnnotationObject struct {
-	Version string `json:"io.raind.runtime.annotation.version"`
-	Net     string `json:"io.raind.net.config"`
-	Image   string `json:"io.raind.image.config"`
+	Version  string `json:"io.raind.runtime.annotation.version"`
+	Net      string `json:"io.raind.net.config"`
+	Image    string `json:"io.raind.image.config"`
+	Rootless string `json:"io.raind.rootless,omitempty"`
 }
 
 type HookObject struct {
@@ -149,4 +150,9 @@ type ImageConfigObject struct {
 
 type SpecHash struct {
 	Sha256 string `json:"sha256"`
+}
+
+// Annotation: io.raind.rootless
+type RootlessConfigObject struct {
+	Enabled bool `json:"enabled"`
 }

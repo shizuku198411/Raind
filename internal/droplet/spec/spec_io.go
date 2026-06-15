@@ -330,13 +330,24 @@ func buildHookSpec(opts ConfigOptions) HookLifecycleObject {
 	return hookLifeCycleObject
 }
 
+func buildRootlessSpec(opts ConfigOptions) RootlessConfigObject {
+	return RootlessConfigObject{
+		Enabled: opts.Rootless,
+	}
+}
+
 func buildAnnotationSpec(opts ConfigOptions) AnnotationObject {
 	netSpec, _ := utils.JsonToString(buildNetSpec(opts))
 	imageSpec, _ := utils.JsonToString(buildImageSpec(opts))
+	rootlessSpec := ""
+	if opts.Rootless {
+		rootlessSpec, _ = utils.JsonToString(buildRootlessSpec(opts))
+	}
 	return AnnotationObject{
-		Version: oci.AnnotationVersion,
-		Net:     netSpec,
-		Image:   imageSpec,
+		Version:  oci.AnnotationVersion,
+		Net:      netSpec,
+		Image:    imageSpec,
+		Rootless: rootlessSpec,
 	}
 }
 

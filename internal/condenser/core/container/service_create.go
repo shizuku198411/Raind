@@ -21,6 +21,9 @@ import (
 
 // == service: create ==
 func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string, err error) {
+	if createParameter.Rootless && createParameter.PodId != "" {
+		return "", fmt.Errorf("rootless mode is currently supported for single containers only")
+	}
 	if createParameter.PodId != "" && !createParameter.IsPodInfra {
 		if err := s.ensurePodInfra(createParameter.PodId, createParameter.Network); err != nil {
 			return "", err
@@ -456,6 +459,9 @@ func (s *ContainerService) createContainerSpec(
 		}
 	} else {
 		namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
+		if createParameter.Rootless {
+			namespace = append(namespace, "user")
+		}
 	}
 
 	// hostname
@@ -593,6 +599,7 @@ func (s *ContainerService) createContainerSpec(
 		Mount:                  mount,
 		CapAdd:                 createParameter.CapAdd,
 		CapDrop:                createParameter.CapDrop,
+		Rootless:               createParameter.Rootless,
 		HostInterface:          hostInterface,
 		BridgeInterface:        bridge,
 		ContainerInterface:     containerInterface,

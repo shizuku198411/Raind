@@ -315,8 +315,7 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	cmd.SetStderr(f)
 
 	// apply SysProcAttr
-	nsConfig := buildNamespaceConfig(spec)
-	procAttr := buildProcAttrForRootContainer(nsConfig)
+	procAttr := buildProcAttrForContainer(spec)
 	sysProcAttr := buildSysProcAttr(procAttr)
 	sysProcAttr.Setsid = true
 	cmd.SetSysProcAttr(sysProcAttr)

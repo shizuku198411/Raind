@@ -59,6 +59,11 @@ func commandSpec() *cli.Command {
 				Name:  "hostname",
 				Usage: "container hostname",
 			},
+			&cli.BoolFlag{
+				Name:  "rootless",
+				Usage: "mark this spec as rootless and request non-root host-ID mapping",
+				Value: false,
+			},
 
 			// network
 			&cli.StringFlag{
@@ -193,6 +198,9 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	// rootfs
 	rootfs := ctx.String("rootfs")
 
+	// rootless
+	rootless := ctx.Bool("rootless")
+
 	// mount
 	mounts, err := parseMountFlag(ctx.StringSlice("mount"))
 	if err != nil {
@@ -222,6 +230,9 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 		return spec.ConfigOptions{}, err
 	}
 	namespace = mergeNamespaceOptions(namespace, namespaceWithPath)
+	if rootless && !hasNamespaceOption(namespace, "user") {
+		namespace = append(namespace, spec.NamespaceOption{Type: "user"})
+	}
 
 	// hostname
 	hostname := ctx.String("hostname")
@@ -280,8 +291,9 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	}
 
 	return spec.ConfigOptions{
-		Rootfs: rootfs,
-		Mounts: mounts,
+		Rootfs:   rootfs,
+		Rootless: rootless,
+		Mounts:   mounts,
 		Process: spec.ProcessOption{
 			Cwd:     cwd,
 			Env:     env,
@@ -500,4 +512,13 @@ func parseHookFlag(command []string, env []string) ([]spec.HookOption, error) {
 		hooks[i].Env = append(hooks[i].Env, v)
 	}
 	return hooks, nil
+}
+
+func hasNamespaceOption(items []spec.NamespaceOption, nsType string) bool {
+	for _, item := range items {
+		if item.Type == nsType {
+			return true
+		}
+	}
+	return false
 }
