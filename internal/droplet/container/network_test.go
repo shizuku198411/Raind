@@ -8,6 +8,7 @@ import (
 	"raind/internal/droplet/utils"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,15 +87,16 @@ func TestContainerNetworkControllerPrepareRunsExpectedCommands(t *testing.T) {
 
 	// == assert ==
 	require.NoError(t, err)
-	require.Len(t, factory.commands, 8)
-	assertNetworkCommand(t, factory.commands[0], networkCommand("ip", "link", "add", "name", "veth-container", "type", "veth", "peer", "name", "veth-host", "netns", "4242"))
-	assertNetworkCommand(t, factory.commands[1], networkCommand("ip", "link", "set", "veth-container", "master", "raind0"))
-	assertNetworkCommand(t, factory.commands[2], networkCommand("ip", "link", "set", "veth-container", "up"))
-	assertNetworkCommand(t, factory.commands[3], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "lo", "up"))
-	assertNetworkCommand(t, factory.commands[4], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "veth-host", "name", "eth0"))
-	assertNetworkCommand(t, factory.commands[5], networkCommand("nsenter", "-t", "4242", "-n", "ip", "addr", "add", "10.166.0.2/24", "dev", "eth0"))
-	assertNetworkCommand(t, factory.commands[6], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "eth0", "up"))
-	assertNetworkCommand(t, factory.commands[7], networkCommand("nsenter", "-t", "4242", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
+	require.Len(t, factory.commands, 9)
+	assertNetworkCommand(t, factory.commands[0], networkCommand("ip", "link", "add", "name", "veth-container", "type", "veth", "peer", "name", "rp_container-1"))
+	assertNetworkCommand(t, factory.commands[1], networkCommand("ip", "link", "set", "rp_container-1", "netns", "4242"))
+	assertNetworkCommand(t, factory.commands[2], networkCommand("ip", "link", "set", "veth-container", "master", "raind0"))
+	assertNetworkCommand(t, factory.commands[3], networkCommand("ip", "link", "set", "veth-container", "up"))
+	assertNetworkCommand(t, factory.commands[4], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "lo", "up"))
+	assertNetworkCommand(t, factory.commands[5], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "rp_container-1", "name", "eth0"))
+	assertNetworkCommand(t, factory.commands[6], networkCommand("nsenter", "-t", "4242", "-n", "ip", "addr", "add", "10.166.0.2/24", "dev", "eth0"))
+	assertNetworkCommand(t, factory.commands[7], networkCommand("nsenter", "-t", "4242", "-n", "ip", "link", "set", "eth0", "up"))
+	assertNetworkCommand(t, factory.commands[8], networkCommand("nsenter", "-t", "4242", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
 }
 
 func TestContainerNetworkControllerPrepareEntersUserNamespaceForRootless(t *testing.T) {
@@ -102,6 +104,9 @@ func TestContainerNetworkControllerPrepareEntersUserNamespaceForRootless(t *test
 	factory := &fakeNetworkCommandFactory{}
 	controller := &containerNetworkController{
 		commandFactory: factory,
+		waitProcessNetns: func(string, int, time.Duration, time.Duration) error {
+			return nil
+		},
 	}
 	annotation := spec.AnnotationObject{
 		Net: `{
@@ -123,12 +128,21 @@ func TestContainerNetworkControllerPrepareEntersUserNamespaceForRootless(t *test
 
 	// == assert ==
 	require.NoError(t, err)
-	require.Len(t, factory.commands, 8)
-	assertNetworkCommand(t, factory.commands[3], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "lo", "up"))
-	assertNetworkCommand(t, factory.commands[4], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "veth-host", "name", "eth0"))
-	assertNetworkCommand(t, factory.commands[5], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "addr", "add", "10.166.0.2/24", "dev", "eth0"))
-	assertNetworkCommand(t, factory.commands[6], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "eth0", "up"))
-	assertNetworkCommand(t, factory.commands[7], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
+	require.Len(t, factory.commands, 14)
+	assertNetworkCommand(t, factory.commands[0], networkCommand("ip", "link", "add", "name", "veth-container", "type", "veth", "peer", "name", "rp_container-1"))
+	assertNetworkCommand(t, factory.commands[1], networkCommand("sh", "-c", "umount \"/run/netns/rn_rp_container-1\" 2>/dev/null || true; rm -f \"/run/netns/rn_rp_container-1\""))
+	assertNetworkCommand(t, factory.commands[2], networkCommand("mkdir", "-p", "/run/netns"))
+	assertNetworkCommand(t, factory.commands[3], networkCommand("touch", "/run/netns/rn_rp_container-1"))
+	assertNetworkCommand(t, factory.commands[4], networkCommand("mount", "--bind", "/proc/4242/ns/net", "/run/netns/rn_rp_container-1"))
+	assertNetworkCommand(t, factory.commands[5], networkCommand("ip", "link", "set", "rp_container-1", "netns", "rn_rp_container-1"))
+	assertNetworkCommand(t, factory.commands[6], networkCommand("sh", "-c", "umount \"/run/netns/rn_rp_container-1\" 2>/dev/null || true; rm -f \"/run/netns/rn_rp_container-1\""))
+	assertNetworkCommand(t, factory.commands[7], networkCommand("ip", "link", "set", "veth-container", "master", "raind0"))
+	assertNetworkCommand(t, factory.commands[8], networkCommand("ip", "link", "set", "veth-container", "up"))
+	assertNetworkCommand(t, factory.commands[9], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "-n", "ip", "link", "set", "lo", "up"))
+	assertNetworkCommand(t, factory.commands[10], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "-n", "ip", "link", "set", "rp_container-1", "name", "eth0"))
+	assertNetworkCommand(t, factory.commands[11], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "-n", "ip", "addr", "add", "10.166.0.2/24", "dev", "eth0"))
+	assertNetworkCommand(t, factory.commands[12], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "-n", "ip", "link", "set", "eth0", "up"))
+	assertNetworkCommand(t, factory.commands[13], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
 }
 
 func TestContainerNetworkControllerPrepareSkipsWhenNetworkAnnotationIsEmpty(t *testing.T) {
@@ -185,7 +199,8 @@ func TestContainerNetworkControllerPrepareStopsOnCommandFailure(t *testing.T) {
 
 	// == assert ==
 	require.Error(t, err)
-	assert.Equal(t, "ip failed", err.Error())
+	assert.Contains(t, err.Error(), "network command move_veth_peer_to_netns failed")
+	assert.Contains(t, err.Error(), "ip failed")
 	require.Len(t, factory.commands, 2)
 	assert.Equal(t, 1, factory.commands[0].runs)
 	assert.Equal(t, 1, factory.commands[1].runs)

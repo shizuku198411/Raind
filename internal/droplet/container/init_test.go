@@ -21,6 +21,8 @@ type fakeInitSyscallHandler struct {
 	envs           []string
 	mounts         []initMountCall
 	mkdirs         []string
+	mkdirAlls      []string
+	openFiles      []string
 	pivotRoots     [][2]string
 	chdirs         []string
 	unmounts       []string
@@ -68,6 +70,11 @@ func (f *fakeInitSyscallHandler) Mkdir(path string, mode uint32) error {
 	return nil
 }
 
+func (f *fakeInitSyscallHandler) MkdirAll(path string, perm os.FileMode) error {
+	f.mkdirAlls = append(f.mkdirAlls, path)
+	return nil
+}
+
 func (f *fakeInitSyscallHandler) PivotRoot(newroot string, putold string) error {
 	f.pivotRoots = append(f.pivotRoots, [2]string{newroot, putold})
 	return nil
@@ -109,6 +116,11 @@ func (f *fakeInitSyscallHandler) Create(name string) (*os.File, error) {
 	return os.CreateTemp("", "raind-init-create-*")
 }
 
+func (f *fakeInitSyscallHandler) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+	f.openFiles = append(f.openFiles, name)
+	return os.CreateTemp("", "raind-init-openfile-*")
+}
+
 func (f *fakeInitSyscallHandler) Lstat(name string) (os.FileInfo, error) {
 	if f.existing != nil && f.existing[name] {
 		tmp, err := os.CreateTemp("", "raind-init-lstat-*")
@@ -145,6 +157,31 @@ func TestContainerInitSpecSecureLoadValidatesHashLoadsSpecAndRemovesHash(t *test
 	require.NoError(t, err)
 	assert.Equal(t, containerSpec, got)
 	assert.NoFileExists(t, utils.ConfigFileHashPath(containerId))
+}
+
+func TestShouldIgnoreSpecHashRemoveErrorReturnsTrueForRootlessPermissionError(t *testing.T) {
+	// == setup ==
+	containerSpec := minimalCreateSpec()
+	containerSpec.Annotations.Rootless = `{"enabled":true}`
+	err := &os.PathError{Op: "remove", Path: "/etc/raind/container/container-1/config_hash.json", Err: syscall.EACCES}
+
+	// == exercise ==
+	got := shouldIgnoreSpecHashRemoveError(containerSpec, err)
+
+	// == assert ==
+	assert.True(t, got)
+}
+
+func TestShouldIgnoreSpecHashRemoveErrorReturnsFalseForPrivilegedPermissionError(t *testing.T) {
+	// == setup ==
+	containerSpec := minimalCreateSpec()
+	err := &os.PathError{Op: "remove", Path: "/etc/raind/container/container-1/config_hash.json", Err: syscall.EACCES}
+
+	// == exercise ==
+	got := shouldIgnoreSpecHashRemoveError(containerSpec, err)
+
+	// == assert ==
+	assert.False(t, got)
 }
 
 func TestContainerInitLookEntrypointPathResolvesFromPATH(t *testing.T) {
@@ -218,6 +255,25 @@ func TestRootContainerEnvPreparerSetupOverlayBuildsMountData(t *testing.T) {
 		{source: "overlay", target: "/rootfs", fstype: "overlay", flags: 0, data: "lowerdir=/l1:/l2,upperdir=/upper,workdir=/work"},
 		{source: "", target: "/rootfs", fstype: "", flags: syscall.MS_PRIVATE | syscall.MS_REC, data: ""},
 	}, syscalls.mounts)
+}
+
+func TestRootContainerEnvPreparerSetupOverlaySeedsManagedFileTargets(t *testing.T) {
+	// == setup ==
+	syscalls := &fakeInitSyscallHandler{}
+	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
+	imageAnnotation := `{"rootfsType":"overlay","imageLayer":["/l1"],"upperDir":"/upper","workDir":"/work"}`
+
+	// == exercise ==
+	err := preparer.setupOverlay("/rootfs", imageAnnotation)
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/upper/etc", "/upper/etc", "/upper/etc"}, syscalls.mkdirAlls)
+	assert.Equal(t, []string{
+		"/upper/etc/resolv.conf",
+		"/upper/etc/hostname",
+		"/upper/etc/hosts",
+	}, syscalls.openFiles)
 }
 
 func TestRootContainerEnvPreparerMountStdDeviceCreatesAndMountsDevices(t *testing.T) {

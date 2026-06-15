@@ -3,8 +3,11 @@ package container
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
+	"strings"
+	"time"
 )
 
 // newContainerNetworkController constructs a containerNetworkController with
@@ -13,7 +16,8 @@ import (
 // during container initialization.
 func newContainerNetworkController() *containerNetworkController {
 	return &containerNetworkController{
-		commandFactory: &utils.ExecCommandFactory{},
+		commandFactory:   &utils.ExecCommandFactory{},
+		waitProcessNetns: waitProcessNetnsReady,
 	}
 }
 
@@ -28,7 +32,8 @@ type containerNetworkPreparer interface {
 // containerNetworkPreparer. It sets up a veth pair, attaches it to the
 // host bridge, and configures the container network namespace.
 type containerNetworkController struct {
-	commandFactory utils.CommandFactory
+	commandFactory   utils.CommandFactory
+	waitProcessNetns func(containerId string, pid int, timeout time.Duration, pollInterval time.Duration) error
 }
 
 // prepare configures networking for the given container process.
@@ -50,6 +55,16 @@ func (c *containerNetworkController) prepare(containerId string, pid int, annota
 
 	if networkConfig.Interface.Name == "" || networkConfig.Interface.IPv4.Address == "" {
 		return nil
+	}
+
+	if rootless {
+		waitProcessNetns := c.waitProcessNetns
+		if waitProcessNetns == nil {
+			waitProcessNetns = waitProcessNetnsReady
+		}
+		if err := waitProcessNetns(containerId, pid, 3*time.Second, 20*time.Millisecond); err != nil {
+			return err
+		}
 	}
 
 	// 2. create veth pair
@@ -104,11 +119,43 @@ func (c *containerNetworkController) createVethPair(containerId string, pid int,
 	// 2. move peer to container netns
 	netnsTarget := pidStr
 	if rootless {
-		netnsTarget = buildProcessNetnsPath(pid)
+		netnsName := buildRootlessNetnsName(containerId)
+		netnsPath := buildNamedNetnsPath(netnsName)
+
+		cleanupNetns := c.commandFactory.Command("sh", "-c", fmt.Sprintf("umount %q 2>/dev/null || true; rm -f %q", netnsPath, netnsPath))
+		if err := runNetworkCommand("cleanup_container_netns", cleanupNetns); err != nil {
+			return err
+		}
+
+		ensureNetnsDir := c.commandFactory.Command("mkdir", "-p", "/run/netns")
+		if err := runNetworkCommand("ensure_netns_dir", ensureNetnsDir); err != nil {
+			return err
+		}
+
+		ensureNetnsFile := c.commandFactory.Command("touch", netnsPath)
+		if err := runNetworkCommand("ensure_netns_file", ensureNetnsFile); err != nil {
+			return err
+		}
+
+		bindNetns := c.commandFactory.Command("mount", "--bind", buildProcessNetnsPath(pid), netnsPath)
+		if err := runNetworkCommand("bind_container_netns", bindNetns); err != nil {
+			return err
+		}
+
+		netnsTarget = netnsName
 	}
+
 	movePeerToNetns := c.commandFactory.Command("ip", "link", "set", containerVethName, "netns", netnsTarget)
 	if err := runNetworkCommand("move_veth_peer_to_netns", movePeerToNetns); err != nil {
 		return err
+	}
+
+	if rootless {
+		netnsPath := buildNamedNetnsPath(buildRootlessNetnsName(containerId))
+		cleanupNetns := c.commandFactory.Command("sh", "-c", fmt.Sprintf("umount %q 2>/dev/null || true; rm -f %q", netnsPath, netnsPath))
+		if err := runNetworkCommand("cleanup_container_netns", cleanupNetns); err != nil {
+			return err
+		}
 	}
 
 	// 3. attach veth to bridge
@@ -143,7 +190,7 @@ func (c *containerNetworkController) setupContainerNetns(containerId string, pid
 	nsenterArgs := func(args ...string) []string {
 		base := []string{"-t", pidStr}
 		if rootless {
-			base = append(base, "-U", "--setuid", "0", "--setgid", "0", "--keep-caps")
+			base = append(base, "-U", "--setuid", "0", "--setgid", "0")
 		}
 		base = append(base, "-n")
 		return append(base, args...)
@@ -187,6 +234,55 @@ func (c *containerNetworkController) setupContainerNetns(containerId string, pid
 	return nil
 }
 
+func waitProcessNetnsReady(containerId string, pid int, timeout time.Duration, pollInterval time.Duration) error {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	if pollInterval <= 0 {
+		pollInterval = 20 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(timeout)
+	netnsPath := buildProcessNetnsPath(pid)
+	procPath := fmt.Sprintf("/proc/%d", pid)
+	var lastErr error
+
+	for {
+		if _, err := os.Stat(netnsPath); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"container init network namespace is not available: pid=%d proc=%q netns=%q last_error=%v init_log_tail=%q",
+				pid,
+				procPath,
+				netnsPath,
+				lastErr,
+				readInitLogTail(containerId, 4096),
+			)
+		}
+
+		time.Sleep(pollInterval)
+	}
+}
+
+func readInitLogTail(containerId string, maxBytes int) string {
+	if maxBytes <= 0 {
+		maxBytes = 4096
+	}
+	data, err := os.ReadFile(utils.InitLogPath(containerId))
+	if err != nil {
+		return fmt.Sprintf("read init log failed: %v", err)
+	}
+	if len(data) > maxBytes {
+		data = data[len(data)-maxBytes:]
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func buildContainerVethPeerName(containerId string) string {
 	if len(containerId) > 12 {
 		containerId = containerId[:12]
@@ -196,6 +292,14 @@ func buildContainerVethPeerName(containerId string) string {
 
 func buildProcessNetnsPath(pid int) string {
 	return fmt.Sprintf("/proc/%d/ns/net", pid)
+}
+
+func buildRootlessNetnsName(containerId string) string {
+	return "rn_" + buildContainerVethPeerName(containerId)
+}
+
+func buildNamedNetnsPath(netnsName string) string {
+	return "/run/netns/" + netnsName
 }
 
 func isRootlessAnnotation(annotation spec.AnnotationObject) bool {

@@ -189,10 +189,16 @@ func (c *ContainerInit) specSecureLoad(containerId string) (spec.Spec, error) {
 
 	// 5. remove hash file
 	if err := os.Remove(fileHashPath); err != nil {
-		return spec.Spec{}, err
+		if !shouldIgnoreSpecHashRemoveError(specFile, err) {
+			return spec.Spec{}, err
+		}
 	}
 
 	return specFile, nil
+}
+
+func shouldIgnoreSpecHashRemoveError(containerSpec spec.Spec, err error) bool {
+	return err != nil && os.IsPermission(err) && isRootlessSpec(containerSpec)
 }
 
 func (c *ContainerInit) lookEntrypointPath(arg0 string, env []string) (string, error) {
@@ -401,6 +407,18 @@ func (p *rootContainerEnvPreparer) setupOverlay(rootfs string, imageAnnotation s
 	lowerDir := strings.Join(imageConfig.ImageLayer, ":")
 	upperDir := imageConfig.UpperDir
 	workDir := imageConfig.WorkDir
+
+	// The runtime later bind-mounts managed files such as /etc/hosts over
+	// the container rootfs. Some images do not contain these files in the
+	// lower layers. Once the overlay is mounted, creating missing targets
+	// under the merged root can fail for rootless containers when the merged
+	// view is read-only from the namespace perspective. Seed the targets in
+	// the overlay upperdir before mounting so the bind destinations already
+	// exist in the merged rootfs.
+	if err := p.ensureOverlayManagedFileTargets(upperDir); err != nil {
+		return fmt.Errorf("prepare overlay managed file targets: %w", err)
+	}
+
 	mountData := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir)
 
 	// overlay
@@ -413,6 +431,34 @@ func (p *rootContainerEnvPreparer) setupOverlay(rootfs string, imageAnnotation s
 		return fmt.Errorf("mount overlay propagation failed: target=%q flags=0x%x: %w", mountTarget, syscall.MS_PRIVATE|syscall.MS_REC, err)
 	}
 
+	return nil
+}
+
+func (p *rootContainerEnvPreparer) ensureOverlayManagedFileTargets(upperDir string) error {
+	for _, destination := range []string{"/etc/resolv.conf", "/etc/hostname", "/etc/hosts"} {
+		target, err := securePath(upperDir, destination)
+		if err != nil {
+			return err
+		}
+
+		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("create managed target parent %q: %w", filepath.Dir(target), err)
+		}
+
+		if _, err := p.syscallHandler.Stat(target); err == nil {
+			continue
+		} else if !p.syscallHandler.IsNotExist(err) {
+			return fmt.Errorf("stat managed target %q: %w", target, err)
+		}
+
+		f, err := p.syscallHandler.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("create managed target %q: %w", target, err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("close managed target %q: %w", target, err)
+		}
+	}
 	return nil
 }
 

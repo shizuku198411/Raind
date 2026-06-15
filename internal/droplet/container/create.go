@@ -144,6 +144,19 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	if err != nil {
 		return err
 	}
+	if isRootlessSpec(spec) {
+		stage = "prepare_rootless_fifo"
+		err = prepareRootlessFifo(fifo)
+		if err != nil {
+			return err
+		}
+
+		stage = "prepare_rootless_writable_filesystem"
+		err = prepareRootlessWritableFilesystem(spec)
+		if err != nil {
+			return err
+		}
+	}
 
 	// 5. execute init subcommand
 	var (
