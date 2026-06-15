@@ -173,6 +173,17 @@ assert_output_contains() {
   fi
 }
 
+
+assert_sudo_path_exists() {
+  local path="$1"
+  sudo_cmd test -e "${path}" || fail "expected path to exist: ${path}"
+}
+
+assert_sudo_path_absent() {
+  local path="$1"
+  sudo_cmd test ! -e "${path}" || fail "expected path to be absent: ${path}"
+}
+
 extract_created_id() {
   local name="$1"
   awk '/: .* (created|applied)$/ || /: .* created / { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
@@ -247,8 +258,13 @@ test_image() {
   assert_output_contains image-ls "busybox"
   assert_output_contains image-ls "nginx"
   assert_output_contains image-ls "local/e2e-image-${SUFFIX}"
+
+  local built_cache="/etc/raind/image/layers/e2e-image-${SUFFIX}/latest/rootless-shifted"
+  sudo_cmd mkdir -p "${built_cache}/sentinel"
+  assert_sudo_path_exists "${built_cache}/sentinel"
   run_raind image-rm image rm "${tag}"
   assert_output_contains image-rm "remove completed"
+  assert_sudo_path_absent "${built_cache}"
 }
 
 test_network() {
@@ -319,6 +335,41 @@ test_container_deploy() {
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
   run_raind_allow_empty container-rm container rm "${cid}"
+}
+
+test_rootless_container_cache() {
+  local first_port=$((18600 + SUFFIX % 1000))
+  local second_port=$((19600 + SUFFIX % 1000))
+  local first_id
+  local second_id
+  local nginx_cache="/etc/raind/image/layers/library/nginx/latest/rootless-shifted"
+
+  log "rootless container cache test"
+  sudo_cmd rm -rf "${nginx_cache}"
+
+  run_raind rootless-run-first container run --rootless --name "e2e-rootless-a-${SUFFIX}" -p "${first_port}:80" nginx:latest
+  assert_output_contains rootless-run-first "creating rootless shifted layer cache"
+  wait_http_ok "http://${HOST_ADDR}:${first_port}/"
+  first_id="$(extract_created_id rootless-run-first)"
+  if [[ -z "${first_id}" ]]; then
+    first_id="e2e-rootless-a-${SUFFIX}"
+  fi
+  assert_sudo_path_exists "${nginx_cache}"
+  assert_sudo_path_exists "${nginx_cache}/uid_100000_gid_100000_size_65536_v1/.raind-rootless-shift-complete"
+  run_raind_allow_empty rootless-stop-first container stop "${first_id}"
+  run_raind_allow_empty rootless-rm-first container rm "${first_id}"
+
+  run_raind rootless-run-second container run --rootless --name "e2e-rootless-b-${SUFFIX}" -p "${second_port}:80" nginx:latest
+  assert_output_contains rootless-run-second "rootless shifted layer cache found"
+  wait_http_ok "http://${HOST_ADDR}:${second_port}/"
+  second_id="$(extract_created_id rootless-run-second)"
+  if [[ -z "${second_id}" ]]; then
+    second_id="e2e-rootless-b-${SUFFIX}"
+  fi
+  run_raind_allow_empty rootless-logs-second container logs --line 80 "${second_id}"
+  assert_output_contains rootless-logs-second "start worker process"
+  run_raind_allow_empty rootless-stop-second container stop "${second_id}"
+  run_raind_allow_empty rootless-rm-second container rm "${second_id}"
 }
 
 test_bottle_deploy() {
@@ -633,6 +684,7 @@ main() {
   test_network
   test_policy
   test_container_deploy
+  test_rootless_container_cache
   test_bottle_deploy
   test_resource_namespace
   test_resource_pod

@@ -73,6 +73,22 @@ assert_sudo_path_absent() {
   sudo_cmd test ! -e "${path}" || fail "expected path to be absent: ${path}"
 }
 
+wait_sudo_file_contains() {
+  local path="$1"
+  local expected="$2"
+  local attempts="${3:-50}"
+
+  for _ in $(seq 1 "${attempts}"); do
+    if sudo_cmd test -f "${path}" && sudo_cmd grep -q "${expected}" "${path}"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  sudo_cmd cat "${path}" >&2 2>/dev/null || true
+  return 1
+}
+
 assert_audit_event() {
   local cid="$1"
   local event="$2"
@@ -240,6 +256,36 @@ runtime_prerequisites_available() {
   sudo_cmd test -w /sys/fs/cgroup || return 1
 }
 
+running_in_initial_user_namespace() {
+  local uid_map
+
+  uid_map="$(cat /proc/self/uid_map 2>/dev/null || true)"
+  [[ "$(printf '%s\n' "${uid_map}" | awk 'NF { count++ } END { print count + 0 }')" == "1" ]] || return 1
+  printf '%s\n' "${uid_map}" | awk '
+    NF == 3 && $1 == "0" && $2 == "0" && $3 >= "4294967295" { ok = 1 }
+    END { exit ok ? 0 : 1 }
+  '
+}
+
+rootless_runtime_prerequisites_available() {
+  runtime_prerequisites_available || return 1
+  have_cmd nsenter || return 1
+  sudo_cmd test -w /run || return 1
+
+  # Workshop can itself run inside an outer user namespace. In that nested
+  # environment, droplet can create the rootless init process, but the init
+  # process may fail while mounting sysfs with EPERM. That is an environment
+  # capability limitation rather than a rootless runtime lifecycle regression,
+  # so skip this integration scenario unless the test process is in the initial
+  # user namespace. Unit tests and the raind e2e test still cover the rootless
+  # config/cache behavior in less privileged environments.
+  running_in_initial_user_namespace || return 1
+
+  if sudo_cmd test -f /proc/sys/kernel/unprivileged_userns_clone; then
+    [[ "$(sudo_cmd cat /proc/sys/kernel/unprivileged_userns_clone)" != "0" ]] || return 1
+  fi
+}
+
 setup_cgroup() {
   local cid="$1"
   local parent="/sys/fs/cgroup/raind"
@@ -300,6 +346,58 @@ prepare_runtime_fixture() {
   # programs even when the runtime lifecycle itself is usable. Keep this E2E
   # focused on the droplet command lifecycle and cover seccomp behavior in
   # dedicated unit tests.
+  sudo_cmd jq '.linux.seccomp.syscalls = []' "${container_dir}/config.json" \
+    | sudo_cmd tee "${container_dir}/config.json.tmp" >/dev/null
+  sudo_cmd mv "${container_dir}/config.json.tmp" "${container_dir}/config.json"
+}
+
+prepare_rootless_runtime_fixture() {
+  local cid="$1"
+  local container_dir="/etc/raind/container/${cid}"
+  local rootfs="${container_dir}/merged"
+  local layer="${E2E_WORK_DIR}/image/layers/rootless/${cid}/rootfs"
+  local upper="${container_dir}/diff"
+  local work="${container_dir}/work"
+
+  log "prepare rootless runtime fixture: ${cid}"
+  cleanup_runtime_fixture "${cid}"
+  sudo_cmd rm -rf "$(dirname "${layer}")"
+
+  sudo_cmd mkdir -p \
+    "${container_dir}/etc" \
+    "${container_dir}/logs" \
+    "${rootfs}" \
+    "${upper}" \
+    "${work}" \
+    "${layer}/bin" \
+    "${layer}/dev" \
+    "${layer}/etc" \
+    "${layer}/proc" \
+    "${layer}/run" \
+    "${layer}/sys" \
+    "${layer}/tmp"
+  sudo_cmd cp "$(command -v busybox)" "${layer}/bin/busybox"
+  sudo_cmd ln -sf busybox "${layer}/bin/sh"
+  sudo_cmd ln -sf busybox "${layer}/bin/sleep"
+  sudo_cmd chmod 0755 "${layer}/bin/busybox"
+  sudo_cmd sh -c "printf 'nameserver 8.8.8.8\n' > '${container_dir}/etc/resolv.conf'"
+  sudo_cmd sh -c "printf '127.0.0.1 localhost\n' > '${container_dir}/etc/hosts'"
+  sudo_cmd sh -c "printf '%s\n' '${cid}' > '${container_dir}/etc/hostname'"
+  setup_cgroup "${cid}"
+
+  sudo_droplet spec \
+    --rootless \
+    --rootfs "${rootfs}" \
+    --cwd "/" \
+    --command "/bin/sh -c 'sleep 300'" \
+    --ns "mount" --ns "uts" --ns "ipc" --ns "pid" --ns "cgroup" \
+    --hostname "${cid}" \
+    --if_name "" --if_addr "" \
+    --image_layer "${layer}" \
+    --upper_dir "${upper}" \
+    --work_dir "${work}" \
+    --output "${container_dir}"
+
   sudo_cmd jq '.linux.seccomp.syscalls = []' "${container_dir}/config.json" \
     | sudo_cmd tee "${container_dir}/config.json.tmp" >/dev/null
   sudo_cmd mv "${container_dir}/config.json.tmp" "${container_dir}/config.json"
@@ -437,6 +535,60 @@ run_runtime_lifecycle_e2e() {
   trap - EXIT
 }
 
+run_rootless_runtime_lifecycle_e2e() {
+  local cid="${RUNTIME_CID}-rootless"
+  local pid
+  local cache_root="${E2E_WORK_DIR}/image/layers/rootless/${cid}/rootless-shifted/uid_100000_gid_100000_size_65536_v1"
+
+  if ! rootless_runtime_prerequisites_available; then
+    if [[ "${REQUIRE_RUNTIME}" == "1" ]]; then
+      fail "rootless runtime e2e prerequisites are not available in this workshop"
+    fi
+    log "skip rootless runtime lifecycle e2e: required privileges/tools are unavailable"
+    return
+  fi
+
+  trap 'cleanup_runtime_fixture "${RUNTIME_CID}-rootless"' EXIT
+
+  prepare_rootless_runtime_fixture "${cid}"
+
+  log "droplet create rootless"
+  sudo_droplet create "${cid}"
+  assert_runtime_state "${cid}" "created"
+  assert_sudo_path_exists "${cache_root}/rootfs"
+  assert_sudo_file_exists "${cache_root}/.raind-rootless-shift-complete"
+  sudo_cmd jq -e '.annotations["io.raind.rootless"] | fromjson | .enabled == true' \
+    "/etc/raind/container/${cid}/config.json" >/dev/null || fail "rootless annotation missing"
+  sudo_cmd jq -e --arg cache "${cache_root}/rootfs" \
+    '.annotations["io.raind.image.config"] | fromjson | .imageLayer[0] == $cache' \
+    "/etc/raind/container/${cid}/config.json" >/dev/null || fail "rootless cache not written to config"
+
+  log "droplet start rootless"
+  sudo_droplet start "${cid}"
+  assert_runtime_state "${cid}" "running"
+  pid="$(sudo_droplet state "${cid}" | jq -r '.pid')"
+  sudo_cmd grep -q '^[[:space:]]*0[[:space:]]*100000[[:space:]]*65536' "/proc/${pid}/uid_map" || {
+    dump_runtime_debug "${cid}"
+    fail "unexpected rootless uid_map"
+  }
+  sudo_droplet exec "${cid}" /bin/sh -c "echo rootless-ok > /tmp/rootless-test && cat /tmp/rootless-test"
+  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/exec.log" "rootless-ok" || {
+    dump_runtime_debug "${cid}"
+    fail "rootless exec/write check failed"
+  }
+
+  log "droplet kill rootless"
+  sudo_droplet kill "${cid}" TERM
+  assert_runtime_state "${cid}" "stopped"
+
+  log "droplet delete rootless"
+  sudo_droplet delete "${cid}"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/state.json"
+
+  cleanup_runtime_fixture "${cid}"
+  trap - EXIT
+}
+
 main() {
   require_workshop
   mkdir -p "${E2E_WORK_DIR}"
@@ -451,6 +603,7 @@ main() {
       ;;
     1|true|yes|auto)
       run_runtime_lifecycle_e2e
+      run_rootless_runtime_lifecycle_e2e
       ;;
     *)
       fail "invalid RAIND_DROPLET_E2E_RUNTIME value: ${RUN_RUNTIME}"

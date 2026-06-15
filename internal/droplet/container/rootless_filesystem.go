@@ -13,6 +13,8 @@ import (
 	"raind/internal/droplet/utils"
 )
 
+var rootlessLchown = os.Lchown
+
 // prepareRootlessShiftedImageLayers rewrites overlay lowerdirs to rootless
 // shifted layer caches whose on-disk UID/GID ownership is translated into the
 // rootless user namespace mapping. The original image layer directories are
@@ -247,7 +249,7 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 		if err := os.Mkdir(dst, copyModeBits(mode)); err != nil && !os.IsExist(err) {
 			return err
 		}
-		if err := os.Lchown(dst, shiftedUID, shiftedGID); err != nil {
+		if err := rootlessLchown(dst, shiftedUID, shiftedGID); err != nil {
 			return err
 		}
 		if err := os.Chmod(dst, copyModeBits(mode)); err != nil {
@@ -273,13 +275,13 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 		if err := os.Symlink(target, dst); err != nil {
 			return err
 		}
-		return os.Lchown(dst, shiftedUID, shiftedGID)
+		return rootlessLchown(dst, shiftedUID, shiftedGID)
 
 	case mode.IsRegular():
 		if err := copyRegularFile(src, dst, copyModeBits(mode)); err != nil {
 			return err
 		}
-		if err := os.Lchown(dst, shiftedUID, shiftedGID); err != nil {
+		if err := rootlessLchown(dst, shiftedUID, shiftedGID); err != nil {
 			return err
 		}
 		if err := os.Chmod(dst, copyModeBits(mode)); err != nil {
@@ -291,7 +293,7 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 		if err := syscall.Mknod(dst, uint32(stat.Mode), int(stat.Rdev)); err != nil {
 			return err
 		}
-		return os.Lchown(dst, shiftedUID, shiftedGID)
+		return rootlessLchown(dst, shiftedUID, shiftedGID)
 
 	case mode.Type()&os.ModeSocket != 0:
 		// Sockets cannot be meaningfully copied into an image snapshot. Image
@@ -352,7 +354,7 @@ func chownPathTree(root string, uid int, gid int) error {
 		if err != nil {
 			return err
 		}
-		if err := os.Lchown(path, uid, gid); err != nil {
+		if err := rootlessLchown(path, uid, gid); err != nil {
 			return err
 		}
 		return nil

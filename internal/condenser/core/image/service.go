@@ -112,7 +112,11 @@ func (s *ImageService) Remove(removeParameter ServiceRemoveModel) error {
 	if err != nil {
 		return err
 	}
-	if err := s.removeRootlessShiftedLayerCache(bundlePath); err != nil {
+	rootfsPath, err := s.ilmHandler.GetRootfsPath(repo, ref)
+	if err != nil {
+		return err
+	}
+	if err := s.removeRootlessShiftedLayerCaches(bundlePath, rootfsPath); err != nil {
 		return err
 	}
 	if err := s.filesystemHandler.RemoveAll(bundlePath); err != nil {
@@ -127,15 +131,32 @@ func (s *ImageService) Remove(removeParameter ServiceRemoveModel) error {
 	return nil
 }
 
-func (s *ImageService) removeRootlessShiftedLayerCache(bundlePath string) error {
-	if bundlePath == "" {
-		return nil
-	}
-	cachePath := filepath.Join(bundlePath, "rootless-shifted")
-	if err := s.filesystemHandler.RemoveAll(cachePath); err != nil {
-		return fmt.Errorf("remove rootless shifted layer cache %q: %w", cachePath, err)
+func (s *ImageService) removeRootlessShiftedLayerCaches(bundlePath, rootfsPath string) error {
+	seen := map[string]struct{}{}
+	for _, cachePath := range rootlessShiftedLayerCachePaths(bundlePath, rootfsPath) {
+		if cachePath == "" {
+			continue
+		}
+		if _, ok := seen[cachePath]; ok {
+			continue
+		}
+		seen[cachePath] = struct{}{}
+		if err := s.filesystemHandler.RemoveAll(cachePath); err != nil {
+			return fmt.Errorf("remove rootless shifted layer cache %q: %w", cachePath, err)
+		}
 	}
 	return nil
+}
+
+func rootlessShiftedLayerCachePaths(bundlePath, rootfsPath string) []string {
+	paths := []string{}
+	if bundlePath != "" {
+		paths = append(paths, filepath.Join(bundlePath, "rootless-shifted"))
+	}
+	if rootfsPath != "" {
+		paths = append(paths, filepath.Join(filepath.Dir(rootfsPath), "rootless-shifted"))
+	}
+	return paths
 }
 
 func (s *ImageService) parseImageRef(imageStr string) (repository, reference string, err error) {

@@ -33,7 +33,7 @@ func TestImageServicePullStoresImageAfterRegistryPull(t *testing.T) {
 }
 
 func TestImageServiceRemoveDeletesBundleAndStoreEntry(t *testing.T) {
-	ilmHandler := &fakeImageIlmHandler{bundlePath: "/bundle"}
+	ilmHandler := &fakeImageIlmHandler{bundlePath: "/bundle", rootfsPath: "/bundle/rootfs"}
 	fsHandler := &fakeImageFilesystemHandler{}
 	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
 
@@ -43,6 +43,21 @@ func TestImageServiceRemoveDeletesBundleAndStoreEntry(t *testing.T) {
 	assert.Equal(t, []string{"/bundle/rootless-shifted", "/bundle"}, fsHandler.removedAll)
 	assert.Equal(t, "library/alpine", ilmHandler.removedRepo)
 	assert.Equal(t, "latest", ilmHandler.removedRef)
+}
+
+func TestImageServiceRemoveDeletesRootlessCacheBesideRootfs(t *testing.T) {
+	ilmHandler := &fakeImageIlmHandler{bundlePath: "/image/bundle", rootfsPath: "/image/layers/local/app/latest/rootfs"}
+	fsHandler := &fakeImageFilesystemHandler{}
+	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
+
+	err := service.Remove(ServiceRemoveModel{Image: "local/app:latest"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/image/bundle/rootless-shifted",
+		"/image/layers/local/app/latest/rootless-shifted",
+		"/image/bundle",
+	}, fsHandler.removedAll)
 }
 
 func TestImageServiceStatusRemovesStaleEntryWhenManifestMissing(t *testing.T) {
