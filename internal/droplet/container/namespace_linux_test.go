@@ -118,11 +118,13 @@ func TestBuildRootUserNamespaceIDMapReturnsIdentityMapOnlyWhenUserNamespaceEnabl
 
 func TestBuildSysProcAttrCopiesProcAttrFields(t *testing.T) {
 	// == setup ==
+	credential := &syscall.Credential{Uid: 0, Gid: 0, NoSetGroups: true}
 	procAttr := procAttr{
 		cloneFlags:    uintptr(syscall.CLONE_NEWNET),
 		uidMap:        []syscall.SysProcIDMap{{ContainerID: 0, HostID: 1000, Size: 1}},
 		gidMap:        []syscall.SysProcIDMap{{ContainerID: 0, HostID: 1000, Size: 1}},
 		setGroupsFlag: true,
+		credential:    credential,
 	}
 
 	// == exercise ==
@@ -133,4 +135,32 @@ func TestBuildSysProcAttrCopiesProcAttrFields(t *testing.T) {
 	assert.Equal(t, procAttr.uidMap, sysProcAttr.UidMappings)
 	assert.Equal(t, procAttr.gidMap, sysProcAttr.GidMappings)
 	assert.True(t, sysProcAttr.GidMappingsEnableSetgroups)
+	assert.Same(t, credential, sysProcAttr.Credential)
+}
+
+func TestBuildProcAttrForRootlessContainerStartsAsUserNamespaceRoot(t *testing.T) {
+	// == setup ==
+	containerSpec := spec.Spec{
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{
+				{Type: "user"},
+			},
+		},
+		Annotations: spec.AnnotationObject{
+			Rootless: `{"enabled":true}`,
+		},
+	}
+
+	// == exercise ==
+	procAttr := buildProcAttrForContainer(containerSpec)
+
+	// == assert ==
+	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.uidMap)
+	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.gidMap)
+	assert.False(t, procAttr.setGroupsFlag)
+	if assert.NotNil(t, procAttr.credential) {
+		assert.Equal(t, uint32(0), procAttr.credential.Uid)
+		assert.Equal(t, uint32(0), procAttr.credential.Gid)
+		assert.True(t, procAttr.credential.NoSetGroups)
+	}
 }

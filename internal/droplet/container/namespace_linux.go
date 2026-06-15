@@ -23,6 +23,7 @@ type procAttr struct {
 	uidMap        []syscall.SysProcIDMap
 	gidMap        []syscall.SysProcIDMap
 	setGroupsFlag bool
+	credential    *syscall.Credential
 }
 
 // buildSysProcAttr converts the given procAttr into a syscall.SysProcAttr,
@@ -38,6 +39,7 @@ func buildSysProcAttr(procAttr procAttr) *syscall.SysProcAttr {
 		UidMappings:                procAttr.uidMap,
 		GidMappings:                procAttr.gidMap,
 		GidMappingsEnableSetgroups: procAttr.setGroupsFlag,
+		Credential:                 procAttr.credential,
 	}
 }
 
@@ -72,11 +74,25 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 	cloneFlags := buildCloneFlags(nsConfig)
 	uidMap, gidMap := buildRootUserNamespaceIDMap(nsConfig)
 	setGroupsFlag := nsConfig.user
+	var credential *syscall.Credential
+
 	if isRootlessSpec(containerSpec) {
 		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig)
 		// Rootless mappings should not allow setgroups in the child user namespace.
 		// Leaving this false makes Go write "deny" before gid_map.
 		setGroupsFlag = false
+
+		// Start the init process as uid/gid 0 inside the newly-created user namespace.
+		// With the rootless map below, that namespace root maps to an unprivileged
+		// host uid/gid such as 10000:10000. Without this, the child may start with
+		// an unmapped overflow id and later fail to switch to namespace root with EPERM.
+		if nsConfig.user {
+			credential = &syscall.Credential{
+				Uid:         0,
+				Gid:         0,
+				NoSetGroups: true,
+			}
+		}
 	}
 
 	return procAttr{
@@ -84,6 +100,7 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 		uidMap:        uidMap,
 		gidMap:        gidMap,
 		setGroupsFlag: setGroupsFlag,
+		credential:    credential,
 	}
 }
 

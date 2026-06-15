@@ -97,6 +97,40 @@ func TestContainerNetworkControllerPrepareRunsExpectedCommands(t *testing.T) {
 	assertNetworkCommand(t, factory.commands[7], networkCommand("nsenter", "-t", "4242", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
 }
 
+func TestContainerNetworkControllerPrepareEntersUserNamespaceForRootless(t *testing.T) {
+	// == setup ==
+	factory := &fakeNetworkCommandFactory{}
+	controller := &containerNetworkController{
+		commandFactory: factory,
+	}
+	annotation := spec.AnnotationObject{
+		Net: `{
+			"hostInterface": "veth-host",
+			"bridgeInterface": "raind0",
+			"interface": {
+				"name": "veth-container",
+				"ipv4": {
+					"address": "10.166.0.2/24",
+					"gateway": "10.166.0.1"
+				}
+			}
+		}`,
+		Rootless: `{"enabled":true}`,
+	}
+
+	// == exercise ==
+	err := controller.prepare("container-1", 4242, annotation)
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, factory.commands, 8)
+	assertNetworkCommand(t, factory.commands[3], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "lo", "up"))
+	assertNetworkCommand(t, factory.commands[4], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "veth-host", "name", "eth0"))
+	assertNetworkCommand(t, factory.commands[5], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "addr", "add", "10.166.0.2/24", "dev", "eth0"))
+	assertNetworkCommand(t, factory.commands[6], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "link", "set", "eth0", "up"))
+	assertNetworkCommand(t, factory.commands[7], networkCommand("nsenter", "-t", "4242", "-U", "--setuid", "0", "--setgid", "0", "--keep-caps", "-n", "ip", "route", "add", "default", "via", "10.166.0.1"))
+}
+
 func TestContainerNetworkControllerPrepareSkipsWhenNetworkAnnotationIsEmpty(t *testing.T) {
 	// == setup ==
 	factory := &fakeNetworkCommandFactory{}
