@@ -220,6 +220,14 @@ run_cli_checks() {
   assert_output_contains help "policy"
   assert_output_contains help "logs"
 
+  run_raind container-run-help container run --help
+  assert_output_contains container-run-help "rootless-mode"
+  assert_output_contains container-run-help "login-root"
+
+  run_raind container-create-help container create --help
+  assert_output_contains container-create-help "rootless-mode"
+  assert_output_contains container-create-help "login-root"
+
   run_raind completion-bash completion bash
   assert_output_contains completion-bash "_raind_complete"
 
@@ -243,6 +251,8 @@ run_cli_checks() {
   assert_raind_fails invalid-top-level definitely-not-a-command
   assert_raind_fails invalid-subcommand container definitely-not-a-subcommand
   assert_raind_fails invalid-policy-type policy ls --type invalid
+  assert_raind_fails invalid-rootless-run-mode container run --rootless-mode invalid-mode busybox:latest true
+  assert_raind_fails invalid-rootless-create-mode container create --rootless-mode invalid-mode busybox:latest true
   assert_raind_fails unknown-container-stop container stop unknown-e2e-container
   assert_raind_fails unknown-container-rm container rm unknown-e2e-container
   assert_raind_fails image-status-missing image rm ""

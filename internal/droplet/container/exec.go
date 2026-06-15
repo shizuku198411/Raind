@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"raind/internal/droplet/logs"
+	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
 	"slices"
@@ -19,6 +20,7 @@ func NewContainerExec() *ContainerExec {
 		commandFactory:         utils.NewCommandFactory(),
 		containerStatusManager: status.NewStatusHandler(),
 		syscallHandler:         utils.NewSyscallHandler(),
+		specLoader:             newFileSpecLoader(),
 	}
 }
 
@@ -37,6 +39,7 @@ type ContainerExec struct {
 	commandFactory         utils.CommandFactory
 	containerStatusManager status.ContainerStatusManager
 	syscallHandler         utils.KernelSyscallHandler
+	specLoader             specLoader
 }
 
 // Exec runs the given entrypoint inside the target container.
@@ -93,6 +96,12 @@ func (c *ContainerExec) Exec(opt ExecOption) (err error) {
 		return err
 	}
 
+	stage = "load_spec"
+	containerSpec, err := c.specLoader.loadFile(opt.ContainerId)
+	if err != nil {
+		return err
+	}
+
 	// 3. prepare entrypoint with nsenter
 	if opt.Tty {
 		stage = "exec_shim"
@@ -102,7 +111,7 @@ func (c *ContainerExec) Exec(opt ExecOption) (err error) {
 		}
 	} else {
 		stage = "exec_nsenter"
-		err = c.executeNsenter(containerPid, opt)
+		err = c.executeNsenter(containerPid, containerSpec, opt)
 		if err != nil {
 			return err
 		}
@@ -111,25 +120,45 @@ func (c *ContainerExec) Exec(opt ExecOption) (err error) {
 	return nil
 }
 
-func (c *ContainerExec) executeNsenter(containerPid int, opt ExecOption) error {
-	nsenterCommand := []string{"nsenter", "-t", strconv.Itoa(containerPid), "--all"}
-	commandStr := slices.Concat(nsenterCommand, opt.Entrypoint)
-	cmd := c.commandFactory.Command(commandStr[0], commandStr[1:]...)
-	// set stdout/stderr to log files
-	logPath := utils.ExecLogPath(opt.ContainerId)
-	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0640)
+func (c *ContainerExec) executeNsenter(containerPid int, containerSpec spec.Spec, opt ExecOption) error {
+	entrypoint, err := resolveExecEntrypoint(strconv.Itoa(containerPid), containerSpec, opt.Entrypoint)
 	if err != nil {
 		return err
 	}
+
+	nsenterCommand := buildExecNsenterCommand(strconv.Itoa(containerPid), containerSpec)
+	commandStr := slices.Concat(nsenterCommand, entrypoint)
+	cmd := c.commandFactory.Command(commandStr[0], commandStr[1:]...)
+	cmd.SetEnv(containerSpec.Process.Env)
+
+	// set stdout/stderr to log files
+	logPath := utils.ExecLogPath(opt.ContainerId)
+	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	cmd.SetStdout(f)
 	cmd.SetStderr(f)
 
-	// execute entrypoint
-	if err := cmd.Start(); err != nil {
-		return err
+	// execute entrypoint and wait so callers can observe command failures.
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("exec command failed: %w: output=%q", err, readSmallLog(logPath))
 	}
 
 	return nil
+}
+
+func readSmallLog(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	const max = 4096
+	if len(b) > max {
+		b = b[len(b)-max:]
+	}
+	return string(b)
 }
 
 func (c *ContainerExec) executeShim(containerPid int, opt ExecOption) error {

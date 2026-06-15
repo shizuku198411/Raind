@@ -390,12 +390,73 @@ prepare_rootless_runtime_fixture() {
     --rootfs "${rootfs}" \
     --cwd "/" \
     --command "/bin/sh -c 'sleep 300'" \
-    --ns "mount" --ns "uts" --ns "ipc" --ns "pid" --ns "cgroup" \
+    --ns "mount" --ns "uts" --ns "ipc" --ns "pid" --ns "user" --ns "cgroup" \
     --hostname "${cid}" \
     --if_name "" --if_addr "" \
     --image_layer "${layer}" \
     --upper_dir "${upper}" \
     --work_dir "${work}" \
+    --output "${container_dir}"
+
+  sudo_cmd jq '.linux.seccomp.syscalls = []' "${container_dir}/config.json" \
+    | sudo_cmd tee "${container_dir}/config.json.tmp" >/dev/null
+  sudo_cmd mv "${container_dir}/config.json.tmp" "${container_dir}/config.json"
+}
+
+prepare_login_rootless_runtime_fixture() {
+  local cid="$1"
+  local login_uid="$2"
+  local login_gid="$3"
+  local bind_dir="$4"
+  local container_dir="/etc/raind/container/${cid}"
+  local rootfs="${container_dir}/merged"
+  local layer="${E2E_WORK_DIR}/image/layers/rootless/${cid}/rootfs"
+  local upper="${container_dir}/diff"
+  local work="${container_dir}/work"
+
+  log "prepare login-root rootless runtime fixture: ${cid}"
+  cleanup_runtime_fixture "${cid}"
+  sudo_cmd rm -rf "$(dirname "${layer}")"
+  rm -rf "${bind_dir}"
+  mkdir -p "${bind_dir}"
+  chmod 0775 "${bind_dir}"
+
+  sudo_cmd mkdir -p \
+    "${container_dir}/etc" \
+    "${container_dir}/logs" \
+    "${rootfs}" \
+    "${upper}" \
+    "${work}" \
+    "${layer}/bin" \
+    "${layer}/dev" \
+    "${layer}/etc" \
+    "${layer}/proc" \
+    "${layer}/run" \
+    "${layer}/sys" \
+    "${layer}/tmp"
+  sudo_cmd cp "$(command -v busybox)" "${layer}/bin/busybox"
+  sudo_cmd ln -sf busybox "${layer}/bin/sh"
+  sudo_cmd ln -sf busybox "${layer}/bin/sleep"
+  sudo_cmd chmod 0755 "${layer}/bin/busybox"
+  sudo_cmd sh -c "printf 'nameserver 8.8.8.8\n' > '${container_dir}/etc/resolv.conf'"
+  sudo_cmd sh -c "printf '127.0.0.1 localhost\n' > '${container_dir}/etc/hosts'"
+  sudo_cmd sh -c "printf '%s\n' '${cid}' > '${container_dir}/etc/hostname'"
+  setup_cgroup "${cid}"
+
+  sudo_droplet spec \
+    --rootless-mode login-root \
+    --rootless-root-uid "${login_uid}" \
+    --rootless-root-gid "${login_gid}" \
+    --rootfs "${rootfs}" \
+    --cwd "/" \
+    --command "/bin/sh -c 'sleep 300'" \
+    --ns "mount" --ns "uts" --ns "ipc" --ns "pid" --ns "user" --ns "cgroup" \
+    --hostname "${cid}" \
+    --if_name "" --if_addr "" \
+    --image_layer "${layer}" \
+    --upper_dir "${upper}" \
+    --work_dir "${work}" \
+    --mount "${bind_dir}:/data:rw" \
     --output "${container_dir}"
 
   sudo_cmd jq '.linux.seccomp.syscalls = []' "${container_dir}/config.json" \
@@ -589,6 +650,93 @@ run_rootless_runtime_lifecycle_e2e() {
   trap - EXIT
 }
 
+
+run_login_rootless_runtime_lifecycle_e2e() {
+  local cid="${RUNTIME_CID}-login-rootless"
+  local pid
+  local login_uid
+  local login_gid
+  local bind_dir="${E2E_WORK_DIR}/bind/${cid}"
+  local cache_root
+  local host_owner
+
+  if ! rootless_runtime_prerequisites_available; then
+    if [[ "${REQUIRE_RUNTIME}" == "1" ]]; then
+      fail "login-root rootless runtime e2e prerequisites are not available in this workshop"
+    fi
+    log "skip login-root rootless runtime lifecycle e2e: required privileges/tools are unavailable"
+    return
+  fi
+
+  login_uid="$(id -u)"
+  login_gid="$(id -g)"
+  if [[ "${login_uid}" == "0" || "${login_gid}" == "0" ]]; then
+    log "skip login-root rootless runtime lifecycle e2e: needs a non-root login user"
+    return
+  fi
+
+  cache_root="${E2E_WORK_DIR}/image/layers/rootless/${cid}/rootless-shifted/mode_login-root_rootuid_${login_uid}_rootgid_${login_gid}_uid_100000_gid_100000_size_65536_v1"
+
+  trap 'cleanup_runtime_fixture "${RUNTIME_CID}-login-rootless"; rm -rf "${E2E_WORK_DIR}/bind/${RUNTIME_CID}-login-rootless"' EXIT
+
+  prepare_login_rootless_runtime_fixture "${cid}" "${login_uid}" "${login_gid}" "${bind_dir}"
+
+  log "droplet create login-root rootless"
+  sudo_droplet create "${cid}"
+  assert_runtime_state "${cid}" "created"
+  assert_sudo_path_exists "${cache_root}/rootfs"
+  assert_sudo_file_exists "${cache_root}/.raind-rootless-shift-complete"
+  sudo_cmd jq -e \
+    --argjson uid "${login_uid}" \
+    --argjson gid "${login_gid}" \
+    '.annotations["io.raind.rootless"] | fromjson | .enabled == true and .mode == "login-root" and .hostRootUID == $uid and .hostRootGID == $gid' \
+    "/etc/raind/container/${cid}/config.json" >/dev/null || fail "login-root rootless annotation missing"
+  sudo_cmd jq -e --arg cache "${cache_root}/rootfs" \
+    '.annotations["io.raind.image.config"] | fromjson | .imageLayer[0] == $cache' \
+    "/etc/raind/container/${cid}/config.json" >/dev/null || fail "login-root rootless cache not written to config"
+
+  log "droplet start login-root rootless"
+  sudo_droplet start "${cid}"
+  assert_runtime_state "${cid}" "running"
+  pid="$(sudo_droplet state "${cid}" | jq -r '.pid')"
+  sudo_cmd grep -q "^[[:space:]]*0[[:space:]]*${login_uid}[[:space:]]*1" "/proc/${pid}/uid_map" || {
+    dump_runtime_debug "${cid}"
+    fail "unexpected login-root uid_map root entry"
+  }
+  sudo_cmd grep -q '^[[:space:]]*1[[:space:]]*100000[[:space:]]*65535' "/proc/${pid}/uid_map" || {
+    dump_runtime_debug "${cid}"
+    fail "unexpected login-root uid_map subordinate entry"
+  }
+  sudo_cmd grep -q "^[[:space:]]*0[[:space:]]*${login_gid}[[:space:]]*1" "/proc/${pid}/gid_map" || {
+    dump_runtime_debug "${cid}"
+    fail "unexpected login-root gid_map root entry"
+  }
+  sudo_cmd grep -q '^[[:space:]]*1[[:space:]]*100000[[:space:]]*65535' "/proc/${pid}/gid_map" || {
+    dump_runtime_debug "${cid}"
+    fail "unexpected login-root gid_map subordinate entry"
+  }
+
+  sudo_droplet exec "${cid}" /bin/sh -c "echo login-root-ok > /data/hello.txt && cat /data/hello.txt"
+  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/exec.log" "login-root-ok" || {
+    dump_runtime_debug "${cid}"
+    fail "login-root rootless bind write check failed"
+  }
+  host_owner="$(stat -c '%u:%g' "${bind_dir}/hello.txt")"
+  [[ "${host_owner}" == "${login_uid}:${login_gid}" ]] || fail "unexpected login-root bind file owner: ${host_owner}, expected ${login_uid}:${login_gid}"
+
+  log "droplet kill login-root rootless"
+  sudo_droplet kill "${cid}" TERM
+  assert_runtime_state "${cid}" "stopped"
+
+  log "droplet delete login-root rootless"
+  sudo_droplet delete "${cid}"
+  assert_sudo_path_absent "/etc/raind/container/${cid}/state.json"
+
+  cleanup_runtime_fixture "${cid}"
+  rm -rf "${bind_dir}"
+  trap - EXIT
+}
+
 main() {
   require_workshop
   mkdir -p "${E2E_WORK_DIR}"
@@ -604,6 +752,7 @@ main() {
     1|true|yes|auto)
       run_runtime_lifecycle_e2e
       run_rootless_runtime_lifecycle_e2e
+      run_login_rootless_runtime_lifecycle_e2e
       ;;
     *)
       fail "invalid RAIND_DROPLET_E2E_RUNTIME value: ${RUN_RUNTIME}"
