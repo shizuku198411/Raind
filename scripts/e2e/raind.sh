@@ -221,6 +221,20 @@ assert_output_contains() {
   fi
 }
 
+wait_file_contains() {
+  local path="$1"
+  local pattern="$2"
+
+  for _ in $(seq 1 100); do
+    if [[ -f "${path}" ]] && grep -q "${pattern}" "${path}"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  return 1
+}
+
 
 assert_sudo_path_exists() {
   local path="$1"
@@ -442,6 +456,58 @@ test_rootless_container_cache() {
   assert_output_contains rootless-logs-second "start worker process"
   run_raind_allow_empty rootless-stop-second container stop "${second_id}"
   run_raind_allow_empty rootless-rm-second container rm "${second_id}"
+}
+
+test_login_rootless_bind_mount() {
+  local cid
+  local login_uid
+  local login_gid
+  local bind_dir="${E2E_WORK_DIR}/login-root-bind"
+  local cache_root
+  local shifted_cache_root="/etc/raind/image/layers/library/nginx/latest/rootless-shifted/uid_100000_gid_100000_size_65536_v1"
+  local host_owner
+  local name="e2e-login-root-${SUFFIX}"
+
+  log "login-root rootless bind mount test"
+  login_uid="$(id -u)"
+  login_gid="$(id -g)"
+  if [[ "${login_uid}" == "0" || "${login_gid}" == "0" ]]; then
+    log "skip login-root rootless bind mount test: needs a non-root login user"
+    return
+  fi
+
+  rm -rf "${bind_dir}"
+  mkdir -p "${bind_dir}"
+  chmod 0775 "${bind_dir}"
+
+  cache_root="/etc/raind/image/layers/library/nginx/latest/rootless-shifted/mode_login-root_rootuid_${login_uid}_rootgid_${login_gid}_uid_100000_gid_100000_size_65536_v1"
+  sudo_cmd rm -rf "${cache_root}"
+  assert_sudo_path_exists "${shifted_cache_root}/.raind-rootless-shift-complete"
+
+  run_raind login-root-create container create --rootless-mode login-root --name "${name}" -v "${bind_dir}:/data" nginx:latest /bin/sh -c "sleep 60"
+  cid="$(extract_created_id login-root-create)"
+  [[ -n "${cid}" ]] || fail "login-root container id not found"
+  run_raind login-root-start container start "${cid}"
+  assert_output_contains login-root-start "started"
+  assert_sudo_path_exists "${cache_root}/rootfs"
+  assert_sudo_path_exists "${cache_root}/.raind-rootless-shift-complete"
+  assert_sudo_path_exists "${shifted_cache_root}/.raind-rootless-shift-complete"
+
+  run_raind_allow_empty login-root-exec container exec "${cid}" /bin/sh -c "echo login-root-e2e > /data/hello.txt && cat /data/hello.txt"
+  if ! wait_file_contains "${bind_dir}/hello.txt" "login-root-e2e"; then
+    printf '%s\n' "--- ${E2E_WORK_DIR}/login-root-exec.out ---" >&2
+    cat "${E2E_WORK_DIR}/login-root-exec.out" >&2 || true
+    run_raind_allow_empty login-root-logs container logs --line 80 "${cid}" || true
+    printf '%s\n' "--- ${E2E_WORK_DIR}/login-root-logs.out ---" >&2
+    cat "${E2E_WORK_DIR}/login-root-logs.out" >&2 || true
+    fail "login-root bind file was not created with expected content on host"
+  fi
+  host_owner="$(stat -c '%u:%g' "${bind_dir}/hello.txt")"
+  [[ "${host_owner}" == "${login_uid}:${login_gid}" ]] || fail "unexpected login-root bind file owner: ${host_owner}, expected ${login_uid}:${login_gid}"
+
+  run_raind_allow_empty login-root-stop container stop "${cid}"
+  run_raind_allow_empty login-root-rm container rm "${cid}"
+  rm -rf "${bind_dir}"
 }
 
 test_bottle_deploy() {
@@ -764,6 +830,7 @@ main() {
   test_policy
   test_container_deploy
   test_rootless_container_cache
+  test_login_rootless_bind_mount
   test_bottle_deploy
   test_resource_namespace
   test_resource_pod

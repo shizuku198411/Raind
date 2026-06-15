@@ -64,6 +64,21 @@ func commandSpec() *cli.Command {
 				Usage: "mark this spec as rootless and request non-root host-ID mapping",
 				Value: false,
 			},
+			&cli.StringFlag{
+				Name:  "rootless-mode",
+				Usage: "rootless ID mapping mode [shifted-root|login-root]",
+				Value: spec.RootlessModeShiftedRoot,
+			},
+			&cli.IntFlag{
+				Name:  "rootless-root-uid",
+				Usage: "host UID mapped to container uid 0 in login-root mode",
+				Value: 0,
+			},
+			&cli.IntFlag{
+				Name:  "rootless-root-gid",
+				Usage: "host GID mapped to container gid 0 in login-root mode",
+				Value: 0,
+			},
 
 			// network
 			&cli.StringFlag{
@@ -199,7 +214,12 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	rootfs := ctx.String("rootfs")
 
 	// rootless
-	rootless := ctx.Bool("rootless")
+	rootless, rootlessMode, err := rootlessOptionsFromSpecCLI(ctx)
+	if err != nil {
+		return spec.ConfigOptions{}, err
+	}
+	rootlessRootUID := ctx.Int("rootless-root-uid")
+	rootlessRootGID := ctx.Int("rootless-root-gid")
 
 	// mount
 	mounts, err := parseMountFlag(ctx.StringSlice("mount"))
@@ -291,9 +311,12 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	}
 
 	return spec.ConfigOptions{
-		Rootfs:   rootfs,
-		Rootless: rootless,
-		Mounts:   mounts,
+		Rootfs:          rootfs,
+		Rootless:        rootless,
+		RootlessMode:    rootlessMode,
+		RootlessRootUID: rootlessRootUID,
+		RootlessRootGID: rootlessRootGID,
+		Mounts:          mounts,
 		Process: spec.ProcessOption{
 			Cwd:     cwd,
 			Env:     env,

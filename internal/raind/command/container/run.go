@@ -65,6 +65,11 @@ func CommandRun() *cli.Command {
 				Usage: "run the container with a user namespace and non-root host ID mapping",
 				Value: false,
 			},
+			&cli.StringFlag{
+				Name:  "rootless-mode",
+				Usage: "rootless ID mapping mode [shifted-root|login-root]",
+				Value: "shifted-root",
+			},
 		},
 		Action: runRun,
 	}
@@ -100,24 +105,30 @@ func runRun(ctx *cli.Context) error {
 	opt_tty := ctx.Bool("tty")
 	opt_rm := ctx.Bool("rm")
 	opt_name := ctx.String("name")
-	opt_rootless := ctx.Bool("rootless")
+	opt_rootless, opt_rootlessMode, opt_rootlessRootUID, opt_rootlessRootGID, err := rootlessOptionsFromCLI(ctx)
+	if err != nil {
+		return err
+	}
 
 	service := container.NewServiceContainerRun()
 	if err := service.Run(
 		container.ServiceRunModel{
-			Image:    image,
-			Command:  command,
-			Network:  opt_network,
-			Volume:   opt_volume,
-			Publish:  opt_publish,
-			Device:   opt_device,
-			Env:      opt_env,
-			CapAdd:   opt_capAdd,
-			CapDrop:  opt_capDrop,
-			Tty:      opt_tty,
-			Rm:       opt_rm,
-			Name:     opt_name,
-			Rootless: opt_rootless,
+			Image:           image,
+			Command:         command,
+			Network:         opt_network,
+			Volume:          opt_volume,
+			Publish:         opt_publish,
+			Device:          opt_device,
+			Env:             opt_env,
+			CapAdd:          opt_capAdd,
+			CapDrop:         opt_capDrop,
+			Tty:             opt_tty,
+			Rm:              opt_rm,
+			Name:            opt_name,
+			Rootless:        opt_rootless,
+			RootlessMode:    opt_rootlessMode,
+			RootlessRootUID: opt_rootlessRootUID,
+			RootlessRootGID: opt_rootlessRootGID,
 		},
 	); err != nil {
 		return err

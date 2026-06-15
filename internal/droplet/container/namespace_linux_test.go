@@ -1,6 +1,8 @@
 package container
 
 import (
+	"os"
+
 	"raind/internal/droplet/spec"
 	"syscall"
 	"testing"
@@ -163,4 +165,27 @@ func TestBuildProcAttrForRootlessContainerStartsAsUserNamespaceRoot(t *testing.T
 		assert.Equal(t, uint32(0), procAttr.credential.Gid)
 		assert.True(t, procAttr.credential.NoSetGroups)
 	}
+}
+
+func TestBuildRootlessUserNamespaceIDMapMapsContainerRootToLoginUser(t *testing.T) {
+	// == setup ==
+	t.Setenv("RAIND_ROOTLESS_UID_BASE", "200000")
+	t.Setenv("RAIND_ROOTLESS_GID_BASE", "300000")
+	t.Setenv("RAIND_ROOTLESS_ID_MAP_SIZE", "65536")
+
+	// == exercise ==
+	uidMap, gidMap := buildRootlessUserNamespaceIDMap(namespaceConfig{user: true}, spec.RootlessConfigObject{
+		Enabled: true,
+		Mode:    spec.RootlessModeLoginRoot,
+	})
+
+	// == assert ==
+	assert.Equal(t, []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: os.Getuid(), Size: 1},
+		{ContainerID: 1, HostID: 200000, Size: 65535},
+	}, uidMap)
+	assert.Equal(t, []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: os.Getgid(), Size: 1},
+		{ContainerID: 1, HostID: 300000, Size: 65535},
+	}, gidMap)
 }

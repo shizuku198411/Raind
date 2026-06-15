@@ -15,7 +15,7 @@ func reportRootlessShiftedLayerCacheProgress(createParameter ServiceCreateModel,
 	}
 
 	uidBase, gidBase, mapSize := rootlessCacheIDMapConfig()
-	cacheRoot, err := rootlessShiftedLayerCacheRoot(imageLayer, uidBase, gidBase, mapSize)
+	cacheRoot, err := rootlessShiftedLayerCacheRootForKey(imageLayer, rootlessShiftedLayerCacheKey(createParameter.RootlessMode, uidBase, gidBase, mapSize, createParameter.RootlessRootUID, createParameter.RootlessRootGID))
 	if err != nil {
 		return
 	}
@@ -37,6 +37,10 @@ func rootlessCacheIDMapConfig() (uidBase int, gidBase int, mapSize int) {
 }
 
 func rootlessShiftedLayerCacheRoot(src string, uidBase int, gidBase int, mapSize int) (string, error) {
+	return rootlessShiftedLayerCacheRootForKey(src, rootlessShiftedLayerCacheKey("", uidBase, gidBase, mapSize, 0, 0))
+}
+
+func rootlessShiftedLayerCacheRootForKey(src string, cacheKey string) (string, error) {
 	if src == "" {
 		return "", fmt.Errorf("empty rootfs layer path")
 	}
@@ -45,10 +49,13 @@ func rootlessShiftedLayerCacheRoot(src string, uidBase int, gidBase int, mapSize
 		return "", fmt.Errorf("rootless shifted cache requires layer rootfs path, got %q", src)
 	}
 	bundleDir := filepath.Dir(cleanSrc)
-	return filepath.Join(bundleDir, "rootless-shifted", rootlessShiftedLayerCacheKey(uidBase, gidBase, mapSize)), nil
+	return filepath.Join(bundleDir, "rootless-shifted", cacheKey), nil
 }
 
-func rootlessShiftedLayerCacheKey(uidBase int, gidBase int, mapSize int) string {
+func rootlessShiftedLayerCacheKey(mode string, uidBase int, gidBase int, mapSize int, rootUID int, rootGID int) string {
+	if mode == "login-root" {
+		return fmt.Sprintf("mode_%s_rootuid_%d_rootgid_%d_uid_%d_gid_%d_size_%d_v1", mode, rootUID, rootGID, uidBase, gidBase, mapSize)
+	}
 	return fmt.Sprintf("uid_%d_gid_%d_size_%d_v1", uidBase, gidBase, mapSize)
 }
 

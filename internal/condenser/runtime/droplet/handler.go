@@ -38,6 +38,15 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 	}
 	if specParameter.Rootless {
 		args = append(args, "--rootless")
+		if specParameter.RootlessMode != "" {
+			args = append(args, "--rootless-mode", specParameter.RootlessMode)
+		}
+		if specParameter.RootlessRootUID > 0 {
+			args = append(args, "--rootless-root-uid", strconv.Itoa(specParameter.RootlessRootUID))
+		}
+		if specParameter.RootlessRootGID > 0 {
+			args = append(args, "--rootless-root-gid", strconv.Itoa(specParameter.RootlessRootGID))
+		}
 	}
 	for _, v := range specParameter.Namespace {
 		args = slices.Concat(args, []string{"--ns", v})

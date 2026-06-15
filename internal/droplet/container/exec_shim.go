@@ -90,10 +90,24 @@ func (c *ContainerExecShim) Execute(containerId string, containerPid string, ent
 		return err
 	}
 
+	stage = "load_spec"
+	spec, err = c.specLoader.loadFile(containerId)
+	if err != nil {
+		logger.Printf("load spec failed: %v", err)
+		return err
+	}
+
+	resolvedEntrypoint, err := resolveExecEntrypoint(containerPid, spec, entrypoint)
+	if err != nil {
+		logger.Printf("resolve entrypoint failed: %v", err)
+		return err
+	}
+
 	// 4. prepare nsenter command
-	nsenterCommand := []string{"nsenter", "-t", containerPid, "--all"}
-	commandStr := slices.Concat(nsenterCommand, entrypoint)
+	nsenterCommand := buildExecNsenterCommand(containerPid, spec)
+	commandStr := slices.Concat(nsenterCommand, resolvedEntrypoint)
 	cmd := c.commandFactory.Command(commandStr[0], commandStr[1:]...)
+	cmd.SetEnv(spec.Process.Env)
 	// set stdio to tty
 	cmd.SetStdin(tty)
 	cmd.SetStdout(tty)

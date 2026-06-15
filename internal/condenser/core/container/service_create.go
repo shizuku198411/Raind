@@ -21,6 +21,7 @@ import (
 
 // == service: create ==
 func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string, err error) {
+	createParameter = normalizeRootlessCreateParameter(createParameter)
 	if createParameter.Rootless && createParameter.PodId != "" {
 		return "", fmt.Errorf("rootless mode is currently supported for single containers only")
 	}
@@ -601,6 +602,9 @@ func (s *ContainerService) createContainerSpec(
 		CapAdd:                 createParameter.CapAdd,
 		CapDrop:                createParameter.CapDrop,
 		Rootless:               createParameter.Rootless,
+		RootlessMode:           createParameter.RootlessMode,
+		RootlessRootUID:        createParameter.RootlessRootUID,
+		RootlessRootGID:        createParameter.RootlessRootGID,
 		HostInterface:          hostInterface,
 		BridgeInterface:        bridge,
 		ContainerInterface:     containerInterface,

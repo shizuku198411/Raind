@@ -2,6 +2,7 @@ package container
 
 import (
 	"os"
+	"raind/internal/droplet/spec"
 	"syscall"
 )
 
@@ -122,11 +123,7 @@ func (c *containerFifoHandler) writeFifo(path string) error {
 // UID/GID 0 inside the namespace, which maps to the configured host UID/GID
 // range (100000:100000 by default). Keeping the FIFO mode at 0600 is fine as
 // long as the FIFO owner is the host ID that represents namespace root.
-func prepareRootlessFifo(path string) error {
-	uid, gid := rootlessHostRootID()
+func prepareRootlessFifo(path string, rootlessConfig spec.RootlessConfigObject) error {
+	uid, gid := rootlessHostRootID(rootlessConfig)
 	return os.Chown(path, uid, gid)
-}
-
-func rootlessHostRootID() (uid int, gid int) {
-	return envInt("RAIND_ROOTLESS_UID_BASE", 100000), envInt("RAIND_ROOTLESS_GID_BASE", 100000)
 }

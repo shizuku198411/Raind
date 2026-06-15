@@ -1,17 +1,20 @@
 package runtime
 
 type SpecModel struct {
-	Rootfs    string
-	Cwd       string
-	Command   string
-	Namespace []string
-	NSPath    []string
-	Hostname  string
-	Env       []string
-	Mount     []string
-	CapAdd    []string
-	CapDrop   []string
-	Rootless  bool
+	Rootfs          string
+	Cwd             string
+	Command         string
+	Namespace       []string
+	NSPath          []string
+	Hostname        string
+	Env             []string
+	Mount           []string
+	CapAdd          []string
+	CapDrop         []string
+	Rootless        bool
+	RootlessMode    string
+	RootlessRootUID int
+	RootlessRootGID int
 
 	HostInterface          string
 	BridgeInterface        string
