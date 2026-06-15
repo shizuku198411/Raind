@@ -142,3 +142,45 @@ func TestRootlessShiftedLayerCacheReadyRequiresRootfsAndMarker(t *testing.T) {
 	require.NoError(t, os.WriteFile(marker, []byte("complete\n"), 0o644))
 	assert.True(t, rootlessShiftedLayerCacheReady(rootfs, marker))
 }
+
+func TestShiftRootlessIDsMapsLoginRootSeparately(t *testing.T) {
+	policy := rootlessIDMapPolicy{
+		mode:    spec.RootlessModeLoginRoot,
+		uidBase: 200000,
+		gidBase: 300000,
+		mapSize: 65536,
+		rootUID: os.Getuid(),
+		rootGID: os.Getgid(),
+	}
+
+	uid, gid, err := shiftRootlessIDs("/rootfs/root-owned", 0, 0, policy)
+	require.NoError(t, err)
+	assert.Equal(t, os.Getuid(), uid)
+	assert.Equal(t, os.Getgid(), gid)
+
+	uid, gid, err = shiftRootlessIDs("/rootfs/user-owned", 1, 1, policy)
+	require.NoError(t, err)
+	assert.Equal(t, 200000, uid)
+	assert.Equal(t, 300000, gid)
+}
+
+func TestRootlessShiftedLayerCacheKeySeparatesLoginRootCache(t *testing.T) {
+	shifted := rootlessShiftedLayerCacheKey(rootlessIDMapPolicy{
+		mode:    spec.RootlessModeShiftedRoot,
+		uidBase: 100000,
+		gidBase: 100000,
+		mapSize: 65536,
+	})
+	login := rootlessShiftedLayerCacheKey(rootlessIDMapPolicy{
+		mode:    spec.RootlessModeLoginRoot,
+		uidBase: 100000,
+		gidBase: 100000,
+		mapSize: 65536,
+		rootUID: os.Getuid(),
+		rootGID: os.Getgid(),
+	})
+
+	assert.Equal(t, "uid_100000_gid_100000_size_65536_v1", shifted)
+	assert.NotEqual(t, shifted, login)
+	assert.Contains(t, login, "mode_login-root")
+}

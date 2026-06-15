@@ -21,9 +21,15 @@ var rootlessLchown = os.Lchown
 // shared runtime state and must not be chowned in place; changing them would
 // break rootful containers and other rootless mappings. Instead, each lowerdir
 // is cached under the image bundle and every filesystem object's owner is
-// translated from container ID N to host ID base+N on first rootless use.
-func prepareRootlessShiftedImageLayers(containerId string, containerSpec spec.Spec) (spec.Spec, error) {
-	if !isRootlessSpec(containerSpec) {
+// translated according to the rootless ID mapping policy on first rootless use.
+func prepareRootlessShiftedImageLayers(containerId string, containerSpec spec.Spec, rootlessConfigs ...spec.RootlessConfigObject) (spec.Spec, error) {
+	rootlessConfig := spec.RootlessConfigObject{}
+	if len(rootlessConfigs) > 0 {
+		rootlessConfig = rootlessConfigs[0]
+	} else if cfg, ok := rootlessConfigFromSpec(containerSpec); ok {
+		rootlessConfig = cfg
+	}
+	if !rootlessConfig.Enabled {
 		return containerSpec, nil
 	}
 
@@ -35,14 +41,13 @@ func prepareRootlessShiftedImageLayers(containerId string, containerSpec spec.Sp
 		return containerSpec, nil
 	}
 
-	uidBase, gidBase, mapSize := rootlessIDMapConfig()
-
+	policy := rootlessIDMapPolicyFromConfig(rootlessConfig)
 	shiftedLayers := make([]string, 0, len(imageConfig.ImageLayer))
 	for _, layer := range imageConfig.ImageLayer {
 		if layer == "" {
 			continue
 		}
-		shiftedLayer, err := prepareRootlessShiftedLayerCache(layer, uidBase, gidBase, mapSize)
+		shiftedLayer, err := prepareRootlessShiftedLayerCache(layer, policy)
 		if err != nil {
 			return spec.Spec{}, fmt.Errorf("prepare rootless shifted layer cache for %q: %w", layer, err)
 		}
@@ -74,11 +79,12 @@ func rewriteContainerSpecAndHash(containerId string, containerSpec spec.Spec) er
 
 // prepareRootlessWritableFilesystem makes host-owned container filesystem
 // paths writable by the init process after it enters the rootless user
-// namespace. Namespace root maps to the configured host UID/GID range, so the
-// overlay upper/work directories and rootfs mount target must be owned by that
-// host identity before the init process attempts overlay setup.
+// namespace. Namespace root maps to the selected host UID/GID, so the overlay
+// upper/work directories and rootfs mount target must be owned by that host
+// identity before the init process attempts overlay setup.
 func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
-	if !isRootlessSpec(containerSpec) {
+	rootlessConfig, ok := rootlessConfigFromSpec(containerSpec)
+	if !ok {
 		return nil
 	}
 
@@ -87,7 +93,7 @@ func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
 		return err
 	}
 
-	uid, gid := rootlessHostRootID()
+	uid, gid := rootlessHostRootID(rootlessConfig)
 	for _, path := range []string{imageConfig.UpperDir, imageConfig.WorkDir, containerSpec.Root.Path} {
 		if path == "" {
 			continue
@@ -100,8 +106,8 @@ func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
 	return nil
 }
 
-func prepareRootlessShiftedLayerCache(src string, uidBase int, gidBase int, mapSize int) (string, error) {
-	cacheRoot, err := rootlessShiftedLayerCacheRoot(src, uidBase, gidBase, mapSize)
+func prepareRootlessShiftedLayerCache(src string, policy rootlessIDMapPolicy) (string, error) {
+	cacheRoot, err := rootlessShiftedLayerCacheRootForPolicy(src, policy)
 	if err != nil {
 		return "", err
 	}
@@ -140,7 +146,7 @@ func prepareRootlessShiftedLayerCache(src string, uidBase int, gidBase int, mapS
 	defer os.RemoveAll(tmpRoot)
 
 	tmpRootfs := filepath.Join(tmpRoot, "rootfs")
-	if err := copyShiftedRootfsTree(src, tmpRootfs, uidBase, gidBase, mapSize); err != nil {
+	if err := copyShiftedRootfsTree(src, tmpRootfs, policy); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(rootlessShiftedLayerCompleteMarker(tmpRoot), []byte("complete\n"), 0o644); err != nil {
@@ -171,6 +177,15 @@ func waitRootlessShiftedLayerCache(rootfsPath string, completeMarker string, tim
 }
 
 func rootlessShiftedLayerCacheRoot(src string, uidBase int, gidBase int, mapSize int) (string, error) {
+	return rootlessShiftedLayerCacheRootForPolicy(src, rootlessIDMapPolicy{
+		mode:    spec.RootlessModeShiftedRoot,
+		uidBase: uidBase,
+		gidBase: gidBase,
+		mapSize: mapSize,
+	})
+}
+
+func rootlessShiftedLayerCacheRootForPolicy(src string, policy rootlessIDMapPolicy) (string, error) {
 	if src == "" {
 		return "", fmt.Errorf("empty rootfs layer path")
 	}
@@ -179,11 +194,14 @@ func rootlessShiftedLayerCacheRoot(src string, uidBase int, gidBase int, mapSize
 		return "", fmt.Errorf("rootless shifted cache requires layer rootfs path, got %q", src)
 	}
 	bundleDir := filepath.Dir(cleanSrc)
-	return filepath.Join(bundleDir, "rootless-shifted", rootlessShiftedLayerCacheKey(uidBase, gidBase, mapSize)), nil
+	return filepath.Join(bundleDir, "rootless-shifted", rootlessShiftedLayerCacheKey(policy)), nil
 }
 
-func rootlessShiftedLayerCacheKey(uidBase int, gidBase int, mapSize int) string {
-	return fmt.Sprintf("uid_%d_gid_%d_size_%d_v1", uidBase, gidBase, mapSize)
+func rootlessShiftedLayerCacheKey(policy rootlessIDMapPolicy) string {
+	if policy.mode == spec.RootlessModeLoginRoot {
+		return fmt.Sprintf("mode_%s_rootuid_%d_rootgid_%d_uid_%d_gid_%d_size_%d_v1", policy.mode, policy.rootUID, policy.rootGID, policy.uidBase, policy.gidBase, policy.mapSize)
+	}
+	return fmt.Sprintf("uid_%d_gid_%d_size_%d_v1", policy.uidBase, policy.gidBase, policy.mapSize)
 }
 
 func rootlessShiftedLayerCompleteMarker(cacheRoot string) string {
@@ -213,7 +231,7 @@ func rootlessIDMapConfig() (uidBase int, gidBase int, mapSize int) {
 	return envInt("RAIND_ROOTLESS_UID_BASE", 100000), envInt("RAIND_ROOTLESS_GID_BASE", 100000), envInt("RAIND_ROOTLESS_ID_MAP_SIZE", 65536)
 }
 
-func copyShiftedRootfsTree(src string, dst string, uidBase int, gidBase int, mapSize int) error {
+func copyShiftedRootfsTree(src string, dst string, policy rootlessIDMapPolicy) error {
 	srcInfo, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -225,10 +243,10 @@ func copyShiftedRootfsTree(src string, dst string, uidBase int, gidBase int, map
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	return copyShiftedPath(src, dst, uidBase, gidBase, mapSize)
+	return copyShiftedPath(src, dst, policy)
 }
 
-func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize int) error {
+func copyShiftedPath(src string, dst string, policy rootlessIDMapPolicy) error {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -238,7 +256,7 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 	if !ok {
 		return fmt.Errorf("stat %q is not syscall.Stat_t", src)
 	}
-	shiftedUID, shiftedGID, err := shiftRootlessIDs(src, int(stat.Uid), int(stat.Gid), uidBase, gidBase, mapSize)
+	shiftedUID, shiftedGID, err := shiftRootlessIDs(src, int(stat.Uid), int(stat.Gid), policy)
 	if err != nil {
 		return err
 	}
@@ -261,7 +279,7 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 			return err
 		}
 		for _, entry := range entries {
-			if err := copyShiftedPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), uidBase, gidBase, mapSize); err != nil {
+			if err := copyShiftedPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), policy); err != nil {
 				return err
 			}
 		}
@@ -305,14 +323,40 @@ func copyShiftedPath(src string, dst string, uidBase int, gidBase int, mapSize i
 	}
 }
 
-func shiftRootlessIDs(path string, uid int, gid int, uidBase int, gidBase int, mapSize int) (int, int, error) {
-	if uid < 0 || uid >= mapSize {
-		return 0, 0, fmt.Errorf("uid outside rootless map: path=%s uid=%d map_size=%d", path, uid, mapSize)
+func shiftRootlessIDs(path string, uid int, gid int, args ...any) (int, int, error) {
+	policy, err := rootlessIDMapPolicyFromShiftArgs(args...)
+	if err != nil {
+		return 0, 0, err
 	}
-	if gid < 0 || gid >= mapSize {
-		return 0, 0, fmt.Errorf("gid outside rootless map: path=%s gid=%d map_size=%d", path, gid, mapSize)
+	shiftedUID, err := policy.mapUID(path, uid)
+	if err != nil {
+		return 0, 0, err
 	}
-	return uidBase + uid, gidBase + gid, nil
+	shiftedGID, err := policy.mapGID(path, gid)
+	if err != nil {
+		return 0, 0, err
+	}
+	return shiftedUID, shiftedGID, nil
+}
+
+func rootlessIDMapPolicyFromShiftArgs(args ...any) (rootlessIDMapPolicy, error) {
+	if len(args) == 1 {
+		policy, ok := args[0].(rootlessIDMapPolicy)
+		if !ok {
+			return rootlessIDMapPolicy{}, fmt.Errorf("invalid rootless ID map policy argument")
+		}
+		return policy, nil
+	}
+	if len(args) == 3 {
+		uidBase, uidOK := args[0].(int)
+		gidBase, gidOK := args[1].(int)
+		mapSize, sizeOK := args[2].(int)
+		if !uidOK || !gidOK || !sizeOK {
+			return rootlessIDMapPolicy{}, fmt.Errorf("invalid rootless ID map legacy arguments")
+		}
+		return rootlessIDMapPolicy{mode: spec.RootlessModeShiftedRoot, uidBase: uidBase, gidBase: gidBase, mapSize: mapSize}, nil
+	}
+	return rootlessIDMapPolicy{}, fmt.Errorf("invalid rootless ID map arguments")
 }
 
 func copyModeBits(mode fs.FileMode) fs.FileMode {

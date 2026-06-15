@@ -331,8 +331,15 @@ func buildHookSpec(opts ConfigOptions) HookLifecycleObject {
 }
 
 func buildRootlessSpec(opts ConfigOptions) RootlessConfigObject {
+	mode := opts.RootlessMode
+	if mode == "" {
+		mode = RootlessModeShiftedRoot
+	}
 	return RootlessConfigObject{
-		Enabled: opts.Rootless,
+		Enabled:     opts.Rootless,
+		Mode:        mode,
+		HostRootUID: opts.RootlessRootUID,
+		HostRootGID: opts.RootlessRootGID,
 	}
 }
 

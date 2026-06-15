@@ -8,7 +8,6 @@ import (
 
 	"golang.org/x/sys/unix"
 	"raind/internal/droplet/spec"
-	"raind/internal/droplet/utils"
 )
 
 // procAttr represents the low-level process attributes that will be applied
@@ -76,8 +75,8 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 	setGroupsFlag := nsConfig.user
 	var credential *syscall.Credential
 
-	if isRootlessSpec(containerSpec) {
-		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig)
+	if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
+		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig, rootlessConfig)
 		// Rootless mappings should not allow setgroups in the child user namespace.
 		// Leaving this false makes Go write "deny" before gid_map.
 		setGroupsFlag = false
@@ -333,42 +332,32 @@ func buildRootUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []sys
 	return uidMap, gidMap
 }
 
-func buildRootlessUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []syscall.SysProcIDMap) {
+func buildRootlessUserNamespaceIDMap(nsConfig namespaceConfig, rootlessConfig spec.RootlessConfigObject) (uidMap, gidMap []syscall.SysProcIDMap) {
 	if !nsConfig.user {
 		return nil, nil
 	}
 
-	uidBase := envInt("RAIND_ROOTLESS_UID_BASE", 100000)
-	gidBase := envInt("RAIND_ROOTLESS_GID_BASE", 100000)
-	mapSize := envInt("RAIND_ROOTLESS_ID_MAP_SIZE", 65536)
+	policy := rootlessIDMapPolicyFromConfig(rootlessConfig)
+	if policy.mode == spec.RootlessModeLoginRoot {
+		uidMap = []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: policy.rootUID, Size: 1},
+			{ContainerID: 1, HostID: policy.uidBase, Size: policy.mapSize - 1},
+		}
+		gidMap = []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: policy.rootGID, Size: 1},
+			{ContainerID: 1, HostID: policy.gidBase, Size: policy.mapSize - 1},
+		}
+		return uidMap, gidMap
+	}
 
 	uidMap = []syscall.SysProcIDMap{
-		{
-			ContainerID: 0,
-			HostID:      uidBase,
-			Size:        mapSize,
-		},
+		{ContainerID: 0, HostID: policy.uidBase, Size: policy.mapSize},
 	}
 	gidMap = []syscall.SysProcIDMap{
-		{
-			ContainerID: 0,
-			HostID:      gidBase,
-			Size:        mapSize,
-		},
+		{ContainerID: 0, HostID: policy.gidBase, Size: policy.mapSize},
 	}
 
 	return uidMap, gidMap
-}
-
-func isRootlessSpec(containerSpec spec.Spec) bool {
-	if containerSpec.Annotations.Rootless == "" {
-		return false
-	}
-	var rootless spec.RootlessConfigObject
-	if err := utils.StringToJson(containerSpec.Annotations.Rootless, &rootless); err != nil {
-		return false
-	}
-	return rootless.Enabled
 }
 
 func envInt(name string, fallback int) int {

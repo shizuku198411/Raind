@@ -53,13 +53,16 @@ type HookLifecycleOption struct {
 }
 
 type ConfigOptions struct {
-	Rootfs    string
-	Mounts    []MountOption
-	Process   ProcessOption
-	Namespace []NamespaceOption
-	Hostname  string
-	Net       NetOption
-	Image     ImageOption
-	Hooks     HookLifecycleOption
-	Rootless  bool
+	Rootfs          string
+	Mounts          []MountOption
+	Process         ProcessOption
+	Namespace       []NamespaceOption
+	Hostname        string
+	Net             NetOption
+	Image           ImageOption
+	Hooks           HookLifecycleOption
+	Rootless        bool
+	RootlessMode    string
+	RootlessRootUID int
+	RootlessRootGID int
 }

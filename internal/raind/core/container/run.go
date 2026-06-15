@@ -13,18 +13,21 @@ func (s *ServiceContianerRun) Run(param ServiceRunModel) error {
 	serviceCreate := NewServiceContainerCreate()
 	containerId, err := serviceCreate.Create(
 		ServiceCreateModel{
-			Image:    param.Image,
-			Command:  param.Command,
-			Network:  param.Network,
-			Volume:   param.Volume,
-			Publish:  param.Publish,
-			Device:   param.Device,
-			Env:      param.Env,
-			CapAdd:   param.CapAdd,
-			CapDrop:  param.CapDrop,
-			Tty:      param.Tty,
-			Name:     param.Name,
-			Rootless: param.Rootless,
+			Image:           param.Image,
+			Command:         param.Command,
+			Network:         param.Network,
+			Volume:          param.Volume,
+			Publish:         param.Publish,
+			Device:          param.Device,
+			Env:             param.Env,
+			CapAdd:          param.CapAdd,
+			CapDrop:         param.CapDrop,
+			Tty:             param.Tty,
+			Name:            param.Name,
+			Rootless:        param.Rootless,
+			RootlessMode:    param.RootlessMode,
+			RootlessRootUID: param.RootlessRootUID,
+			RootlessRootGID: param.RootlessRootGID,
 		},
 	)
 	if err != nil {

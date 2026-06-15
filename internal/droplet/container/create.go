@@ -111,9 +111,9 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		return err
 	}
 
-	if isRootlessSpec(spec) {
+	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
 		stage = "prepare_rootless_shifted_image_layers"
-		spec, err = prepareRootlessShiftedImageLayers(opt.ContainerId, spec)
+		spec, err = prepareRootlessShiftedImageLayers(opt.ContainerId, spec, rootlessConfig)
 		if err != nil {
 			return err
 		}
@@ -158,9 +158,9 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	if err != nil {
 		return err
 	}
-	if isRootlessSpec(spec) {
+	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
 		stage = "prepare_rootless_fifo"
-		err = prepareRootlessFifo(fifo)
+		err = prepareRootlessFifo(fifo, rootlessConfig)
 		if err != nil {
 			return err
 		}
@@ -338,8 +338,8 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	if err != nil {
 		return -1, err
 	}
-	if isRootlessSpec(spec) {
-		if err := prepareRootlessInitLog(logPath); err != nil {
+	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
+		if err := prepareRootlessInitLog(logPath, rootlessConfig); err != nil {
 			_ = f.Close()
 			return -1, err
 		}
@@ -361,8 +361,8 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	return cmd.Pid(), nil
 }
 
-func prepareRootlessInitLog(path string) error {
-	uid, gid := rootlessHostRootID()
+func prepareRootlessInitLog(path string, rootlessConfig spec.RootlessConfigObject) error {
+	uid, gid := rootlessHostRootID(rootlessConfig)
 	return os.Chown(path, uid, gid)
 }
 

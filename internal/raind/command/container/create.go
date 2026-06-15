@@ -67,6 +67,11 @@ func CommandCreate() *cli.Command {
 				Value: false,
 			},
 			&cli.StringFlag{
+				Name:  "rootless-mode",
+				Usage: "rootless ID mapping mode [shifted-root|login-root]",
+				Value: "shifted-root",
+			},
+			&cli.StringFlag{
 				Name:  "pod",
 				Usage: "pod id",
 				Value: "",
@@ -105,25 +110,31 @@ func runCreate(ctx *cli.Context) error {
 	opt_capDrop := ctx.StringSlice("cap-drop")
 	opt_tty := ctx.Bool("tty")
 	opt_name := ctx.String("name")
-	opt_rootless := ctx.Bool("rootless")
+	opt_rootless, opt_rootlessMode, opt_rootlessRootUID, opt_rootlessRootGID, err := rootlessOptionsFromCLI(ctx)
+	if err != nil {
+		return err
+	}
 	opt_podId := ctx.String("pod")
 
 	service := container.NewServiceContainerCreate()
 	containerId, err := service.Create(
 		container.ServiceCreateModel{
-			Image:    image,
-			Command:  command,
-			Network:  opt_network,
-			Volume:   opt_volume,
-			Publish:  opt_publish,
-			Device:   opt_device,
-			Env:      opt_env,
-			CapAdd:   opt_capAdd,
-			CapDrop:  opt_capDrop,
-			Tty:      opt_tty,
-			Name:     opt_name,
-			Rootless: opt_rootless,
-			PodId:    opt_podId,
+			Image:           image,
+			Command:         command,
+			Network:         opt_network,
+			Volume:          opt_volume,
+			Publish:         opt_publish,
+			Device:          opt_device,
+			Env:             opt_env,
+			CapAdd:          opt_capAdd,
+			CapDrop:         opt_capDrop,
+			Tty:             opt_tty,
+			Name:            opt_name,
+			Rootless:        opt_rootless,
+			RootlessMode:    opt_rootlessMode,
+			RootlessRootUID: opt_rootlessRootUID,
+			RootlessRootGID: opt_rootlessRootGID,
+			PodId:           opt_podId,
 		},
 	)
 	if err != nil {

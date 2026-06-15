@@ -6,24 +6,27 @@ import (
 )
 
 type ServiceCreateModel struct {
-	Image      string
-	Os         string
-	Arch       string
-	Command    []string
-	Port       []string
-	Mount      []string
-	Device     []string
-	Env        []string
-	CapAdd     []string
-	CapDrop    []string
-	Network    string
-	Tty        bool
-	Name       string
-	BottleId   string
-	PodId      string
-	Rootless   bool
-	IsPodInfra bool
-	Progress   image.ProgressFunc
+	Image           string
+	Os              string
+	Arch            string
+	Command         []string
+	Port            []string
+	Mount           []string
+	Device          []string
+	Env             []string
+	CapAdd          []string
+	CapDrop         []string
+	Network         string
+	Tty             bool
+	Name            string
+	BottleId        string
+	PodId           string
+	Rootless        bool
+	RootlessMode    string
+	RootlessRootUID int
+	RootlessRootGID int
+	IsPodInfra      bool
+	Progress        image.ProgressFunc
 }
 
 type ServiceStartModel struct {

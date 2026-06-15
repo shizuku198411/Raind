@@ -152,7 +152,15 @@ type SpecHash struct {
 	Sha256 string `json:"sha256"`
 }
 
+const (
+	RootlessModeShiftedRoot = "shifted-root"
+	RootlessModeLoginRoot   = "login-root"
+)
+
 // Annotation: io.raind.rootless
 type RootlessConfigObject struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool   `json:"enabled"`
+	Mode        string `json:"mode,omitempty"`
+	HostRootUID int    `json:"hostRootUID,omitempty"`
+	HostRootGID int    `json:"hostRootGID,omitempty"`
 }
