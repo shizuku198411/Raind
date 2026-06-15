@@ -502,6 +502,7 @@ func (s *ContainerService) createContainerSpec(
 	if err != nil {
 		return err
 	}
+	reportRootlessShiftedLayerCacheProgress(createParameter, imageLayer)
 	upperDir := filepath.Join(utils.ContainerRootDir, containerId, "diff")
 	workDir := filepath.Join(utils.ContainerRootDir, containerId, "work")
 	outputDir := filepath.Join(utils.ContainerRootDir, containerId)

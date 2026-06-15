@@ -112,6 +112,9 @@ func (s *ImageService) Remove(removeParameter ServiceRemoveModel) error {
 	if err != nil {
 		return err
 	}
+	if err := s.removeRootlessShiftedLayerCache(bundlePath); err != nil {
+		return err
+	}
 	if err := s.filesystemHandler.RemoveAll(bundlePath); err != nil {
 		return err
 	}
@@ -121,6 +124,17 @@ func (s *ImageService) Remove(removeParameter ServiceRemoveModel) error {
 		return err
 	}
 
+	return nil
+}
+
+func (s *ImageService) removeRootlessShiftedLayerCache(bundlePath string) error {
+	if bundlePath == "" {
+		return nil
+	}
+	cachePath := filepath.Join(bundlePath, "rootless-shifted")
+	if err := s.filesystemHandler.RemoveAll(cachePath); err != nil {
+		return fmt.Errorf("remove rootless shifted layer cache %q: %w", cachePath, err)
+	}
 	return nil
 }
 

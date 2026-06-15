@@ -13,13 +13,13 @@ import (
 	"raind/internal/droplet/utils"
 )
 
-// prepareRootlessShiftedImageLayers creates per-container image lowerdir
-// snapshots whose on-disk UID/GID ownership is shifted into the rootless user
-// namespace mapping. The original image layer directories are shared runtime
-// state and must not be chowned in place; changing them would break rootful
-// containers and other rootless mappings. Instead, each lowerdir is copied into
-// the container bundle and every filesystem object's owner is translated from
-// container ID N to host ID base+N.
+// prepareRootlessShiftedImageLayers rewrites overlay lowerdirs to rootless
+// shifted layer caches whose on-disk UID/GID ownership is translated into the
+// rootless user namespace mapping. The original image layer directories are
+// shared runtime state and must not be chowned in place; changing them would
+// break rootful containers and other rootless mappings. Instead, each lowerdir
+// is cached under the image bundle and every filesystem object's owner is
+// translated from container ID N to host ID base+N on first rootless use.
 func prepareRootlessShiftedImageLayers(containerId string, containerSpec spec.Spec) (spec.Spec, error) {
 	if !isRootlessSpec(containerSpec) {
 		return containerSpec, nil
@@ -34,22 +34,15 @@ func prepareRootlessShiftedImageLayers(containerId string, containerSpec spec.Sp
 	}
 
 	uidBase, gidBase, mapSize := rootlessIDMapConfig()
-	snapshotRoot := rootlessShiftedLayerRoot(containerId)
-	if err := os.RemoveAll(snapshotRoot); err != nil {
-		return spec.Spec{}, fmt.Errorf("remove old rootless shifted layer root %q: %w", snapshotRoot, err)
-	}
-	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
-		return spec.Spec{}, fmt.Errorf("create rootless shifted layer root %q: %w", snapshotRoot, err)
-	}
 
 	shiftedLayers := make([]string, 0, len(imageConfig.ImageLayer))
-	for i, layer := range imageConfig.ImageLayer {
+	for _, layer := range imageConfig.ImageLayer {
 		if layer == "" {
 			continue
 		}
-		shiftedLayer := filepath.Join(snapshotRoot, fmt.Sprintf("layer-%d", i))
-		if err := copyShiftedRootfsTree(layer, shiftedLayer, uidBase, gidBase, mapSize); err != nil {
-			return spec.Spec{}, fmt.Errorf("create rootless shifted layer %q from %q: %w", shiftedLayer, layer, err)
+		shiftedLayer, err := prepareRootlessShiftedLayerCache(layer, uidBase, gidBase, mapSize)
+		if err != nil {
+			return spec.Spec{}, fmt.Errorf("prepare rootless shifted layer cache for %q: %w", layer, err)
 		}
 		shiftedLayers = append(shiftedLayers, shiftedLayer)
 	}
@@ -105,8 +98,113 @@ func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
 	return nil
 }
 
-func rootlessShiftedLayerRoot(containerId string) string {
-	return filepath.Join(utils.ContainerDir(containerId), "rootless-lower")
+func prepareRootlessShiftedLayerCache(src string, uidBase int, gidBase int, mapSize int) (string, error) {
+	cacheRoot, err := rootlessShiftedLayerCacheRoot(src, uidBase, gidBase, mapSize)
+	if err != nil {
+		return "", err
+	}
+	cacheRootfs := filepath.Join(cacheRoot, "rootfs")
+	completeMarker := rootlessShiftedLayerCompleteMarker(cacheRoot)
+	if rootlessShiftedLayerCacheReady(cacheRootfs, completeMarker) {
+		return cacheRootfs, nil
+	}
+
+	lockDir := cacheRoot + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockDir), 0o755); err != nil {
+		return "", fmt.Errorf("create rootless shifted layer cache parent %q: %w", filepath.Dir(lockDir), err)
+	}
+	lockTaken, err := tryCreateRootlessCacheLock(lockDir)
+	if err != nil {
+		return "", err
+	}
+	if !lockTaken {
+		if err := waitRootlessShiftedLayerCache(cacheRootfs, completeMarker, 60*time.Second); err != nil {
+			return "", err
+		}
+		return cacheRootfs, nil
+	}
+	defer os.RemoveAll(lockDir)
+
+	// Another creator may have completed the cache before this process acquired
+	// the lock. Re-check while holding the lock directory.
+	if rootlessShiftedLayerCacheReady(cacheRootfs, completeMarker) {
+		return cacheRootfs, nil
+	}
+
+	tmpRoot := fmt.Sprintf("%s.tmp.%d", cacheRoot, os.Getpid())
+	if err := os.RemoveAll(tmpRoot); err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpRoot)
+
+	tmpRootfs := filepath.Join(tmpRoot, "rootfs")
+	if err := copyShiftedRootfsTree(src, tmpRootfs, uidBase, gidBase, mapSize); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(rootlessShiftedLayerCompleteMarker(tmpRoot), []byte("complete\n"), 0o644); err != nil {
+		return "", err
+	}
+
+	if err := os.RemoveAll(cacheRoot); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpRoot, cacheRoot); err != nil {
+		return "", err
+	}
+	return cacheRootfs, nil
+}
+
+func waitRootlessShiftedLayerCache(rootfsPath string, completeMarker string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if rootlessShiftedLayerCacheReady(rootfsPath, completeMarker) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for rootless shifted layer cache: %s", filepath.Dir(rootfsPath))
+}
+
+func rootlessShiftedLayerCacheRoot(src string, uidBase int, gidBase int, mapSize int) (string, error) {
+	if src == "" {
+		return "", fmt.Errorf("empty rootfs layer path")
+	}
+	cleanSrc := filepath.Clean(src)
+	if filepath.Base(cleanSrc) != "rootfs" {
+		return "", fmt.Errorf("rootless shifted cache requires layer rootfs path, got %q", src)
+	}
+	bundleDir := filepath.Dir(cleanSrc)
+	return filepath.Join(bundleDir, "rootless-shifted", rootlessShiftedLayerCacheKey(uidBase, gidBase, mapSize)), nil
+}
+
+func rootlessShiftedLayerCacheKey(uidBase int, gidBase int, mapSize int) string {
+	return fmt.Sprintf("uid_%d_gid_%d_size_%d_v1", uidBase, gidBase, mapSize)
+}
+
+func rootlessShiftedLayerCompleteMarker(cacheRoot string) string {
+	return filepath.Join(cacheRoot, ".raind-rootless-shift-complete")
+}
+
+func rootlessShiftedLayerCacheReady(rootfsPath string, completeMarker string) bool {
+	rootfsInfo, rootfsErr := os.Stat(rootfsPath)
+	if rootfsErr != nil || !rootfsInfo.IsDir() {
+		return false
+	}
+	_, markerErr := os.Stat(completeMarker)
+	return markerErr == nil
+}
+
+func tryCreateRootlessCacheLock(lockDir string) (bool, error) {
+	if err := os.Mkdir(lockDir, 0o755); err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func rootlessIDMapConfig() (uidBase int, gidBase int, mapSize int) {
