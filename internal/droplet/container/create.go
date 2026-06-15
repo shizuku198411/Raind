@@ -111,6 +111,20 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		return err
 	}
 
+	if isRootlessSpec(spec) {
+		stage = "prepare_rootless_shifted_image_layers"
+		spec, err = prepareRootlessShiftedImageLayers(opt.ContainerId, spec)
+		if err != nil {
+			return err
+		}
+
+		stage = "rewrite_rootless_spec"
+		err = rewriteContainerSpecAndHash(opt.ContainerId, spec)
+		if err != nil {
+			return err
+		}
+	}
+
 	// 2. create state.json
 	//      status = creating
 	//      pid = 0
@@ -143,6 +157,19 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	err = c.fifoCreator.createFifo(fifo)
 	if err != nil {
 		return err
+	}
+	if isRootlessSpec(spec) {
+		stage = "prepare_rootless_fifo"
+		err = prepareRootlessFifo(fifo)
+		if err != nil {
+			return err
+		}
+
+		stage = "prepare_rootless_writable_filesystem"
+		err = prepareRootlessWritableFilesystem(spec)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 5. execute init subcommand
@@ -311,12 +338,17 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	if err != nil {
 		return -1, err
 	}
+	if isRootlessSpec(spec) {
+		if err := prepareRootlessInitLog(logPath); err != nil {
+			_ = f.Close()
+			return -1, err
+		}
+	}
 	cmd.SetStdout(f)
 	cmd.SetStderr(f)
 
 	// apply SysProcAttr
-	nsConfig := buildNamespaceConfig(spec)
-	procAttr := buildProcAttrForRootContainer(nsConfig)
+	procAttr := buildProcAttrForContainer(spec)
 	sysProcAttr := buildSysProcAttr(procAttr)
 	sysProcAttr.Setsid = true
 	cmd.SetSysProcAttr(sysProcAttr)
@@ -327,6 +359,11 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	}
 
 	return cmd.Pid(), nil
+}
+
+func prepareRootlessInitLog(path string) error {
+	uid, gid := rootlessHostRootID()
+	return os.Chown(path, uid, gid)
 }
 
 func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string) (int, error) {

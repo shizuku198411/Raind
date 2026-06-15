@@ -109,8 +109,7 @@ func (c *ContainerRun) Run(opt RunOption) error {
 	// when started in non-interactive mode, set stdout/stderr to log files
 
 	// apply SysProcAttr
-	nsConfig := buildNamespaceConfig(spec)
-	procAttr := buildProcAttrForRootContainer(nsConfig)
+	procAttr := buildProcAttrForContainer(spec)
 	sysProcAttr := buildSysProcAttr(procAttr)
 	cmd.SetSysProcAttr(sysProcAttr)
 

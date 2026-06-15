@@ -61,6 +61,11 @@ func CommandCreate() *cli.Command {
 				Usage: "container name",
 				Value: "",
 			},
+			&cli.BoolFlag{
+				Name:  "rootless",
+				Usage: "create the container with a user namespace and non-root host ID mapping",
+				Value: false,
+			},
 			&cli.StringFlag{
 				Name:  "pod",
 				Usage: "pod id",
@@ -100,23 +105,25 @@ func runCreate(ctx *cli.Context) error {
 	opt_capDrop := ctx.StringSlice("cap-drop")
 	opt_tty := ctx.Bool("tty")
 	opt_name := ctx.String("name")
+	opt_rootless := ctx.Bool("rootless")
 	opt_podId := ctx.String("pod")
 
 	service := container.NewServiceContainerCreate()
 	containerId, err := service.Create(
 		container.ServiceCreateModel{
-			Image:   image,
-			Command: command,
-			Network: opt_network,
-			Volume:  opt_volume,
-			Publish: opt_publish,
-			Device:  opt_device,
-			Env:     opt_env,
-			CapAdd:  opt_capAdd,
-			CapDrop: opt_capDrop,
-			Tty:     opt_tty,
-			Name:    opt_name,
-			PodId:   opt_podId,
+			Image:    image,
+			Command:  command,
+			Network:  opt_network,
+			Volume:   opt_volume,
+			Publish:  opt_publish,
+			Device:   opt_device,
+			Env:      opt_env,
+			CapAdd:   opt_capAdd,
+			CapDrop:  opt_capDrop,
+			Tty:      opt_tty,
+			Name:     opt_name,
+			Rootless: opt_rootless,
+			PodId:    opt_podId,
 		},
 	)
 	if err != nil {

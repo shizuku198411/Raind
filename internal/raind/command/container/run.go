@@ -60,6 +60,11 @@ func CommandRun() *cli.Command {
 				Usage: "container name",
 				Value: "",
 			},
+			&cli.BoolFlag{
+				Name:  "rootless",
+				Usage: "run the container with a user namespace and non-root host ID mapping",
+				Value: false,
+			},
 		},
 		Action: runRun,
 	}
@@ -95,22 +100,24 @@ func runRun(ctx *cli.Context) error {
 	opt_tty := ctx.Bool("tty")
 	opt_rm := ctx.Bool("rm")
 	opt_name := ctx.String("name")
+	opt_rootless := ctx.Bool("rootless")
 
 	service := container.NewServiceContainerRun()
 	if err := service.Run(
 		container.ServiceRunModel{
-			Image:   image,
-			Command: command,
-			Network: opt_network,
-			Volume:  opt_volume,
-			Publish: opt_publish,
-			Device:  opt_device,
-			Env:     opt_env,
-			CapAdd:  opt_capAdd,
-			CapDrop: opt_capDrop,
-			Tty:     opt_tty,
-			Rm:      opt_rm,
-			Name:    opt_name,
+			Image:    image,
+			Command:  command,
+			Network:  opt_network,
+			Volume:   opt_volume,
+			Publish:  opt_publish,
+			Device:   opt_device,
+			Env:      opt_env,
+			CapAdd:   opt_capAdd,
+			CapDrop:  opt_capDrop,
+			Tty:      opt_tty,
+			Rm:       opt_rm,
+			Name:     opt_name,
+			Rootless: opt_rootless,
 		},
 	); err != nil {
 		return err

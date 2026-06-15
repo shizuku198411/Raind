@@ -116,3 +116,17 @@ func (c *containerFifoHandler) writeFifo(path string) error {
 
 	return nil
 }
+
+// prepareRootlessFifo makes the startup FIFO accessible to the container init
+// process after it enters the rootless user namespace. The init process runs as
+// UID/GID 0 inside the namespace, which maps to the configured host UID/GID
+// range (100000:100000 by default). Keeping the FIFO mode at 0600 is fine as
+// long as the FIFO owner is the host ID that represents namespace root.
+func prepareRootlessFifo(path string) error {
+	uid, gid := rootlessHostRootID()
+	return os.Chown(path, uid, gid)
+}
+
+func rootlessHostRootID() (uid int, gid int) {
+	return envInt("RAIND_ROOTLESS_UID_BASE", 100000), envInt("RAIND_ROOTLESS_GID_BASE", 100000)
+}

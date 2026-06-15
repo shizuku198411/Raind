@@ -100,13 +100,14 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 	stage = "prepare_init_command"
 	initArgs := append([]string{"init", containerId, fifo}, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
+
 	// set stdio to tty
 	cmd.SetStdin(tty)
 	cmd.SetStdout(tty)
 	cmd.SetStderr(tty)
+
 	// apply SysProcAttr
-	nsConfig := buildNamespaceConfig(spec)
-	procAttr := buildProcAttrForRootContainer(nsConfig)
+	procAttr := buildProcAttrForContainer(spec)
 	sysProcAttr := buildSysProcAttr(procAttr)
 	sysProcAttr.Setsid = true
 	sysProcAttr.Setctty = true

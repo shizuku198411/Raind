@@ -11,6 +11,7 @@ type SpecModel struct {
 	Mount     []string
 	CapAdd    []string
 	CapDrop   []string
+	Rootless  bool
 
 	HostInterface          string
 	BridgeInterface        string

@@ -3,10 +3,12 @@ package container
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 	"raind/internal/droplet/spec"
+	"raind/internal/droplet/utils"
 )
 
 // procAttr represents the low-level process attributes that will be applied
@@ -21,6 +23,7 @@ type procAttr struct {
 	uidMap        []syscall.SysProcIDMap
 	gidMap        []syscall.SysProcIDMap
 	setGroupsFlag bool
+	credential    *syscall.Credential
 }
 
 // buildSysProcAttr converts the given procAttr into a syscall.SysProcAttr,
@@ -36,6 +39,7 @@ func buildSysProcAttr(procAttr procAttr) *syscall.SysProcAttr {
 		UidMappings:                procAttr.uidMap,
 		GidMappings:                procAttr.gidMap,
 		GidMappingsEnableSetgroups: procAttr.setGroupsFlag,
+		Credential:                 procAttr.credential,
 	}
 }
 
@@ -57,6 +61,46 @@ func buildProcAttrForRootContainer(nsConfig namespaceConfig) procAttr {
 		uidMap:        uidMap,
 		gidMap:        gidMap,
 		setGroupsFlag: setGroupsFlag,
+	}
+}
+
+// buildProcAttrForContainer builds process attributes from the OCI spec.
+//
+// Rootless containers are expressed as a Raind annotation.
+// When the annotation is enabled, the container still gets UID/GID 0 inside
+// its user namespace, but that root ID is mapped to unprivileged host UID/GID range.
+func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
+	nsConfig := buildNamespaceConfig(containerSpec)
+	cloneFlags := buildCloneFlags(nsConfig)
+	uidMap, gidMap := buildRootUserNamespaceIDMap(nsConfig)
+	setGroupsFlag := nsConfig.user
+	var credential *syscall.Credential
+
+	if isRootlessSpec(containerSpec) {
+		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig)
+		// Rootless mappings should not allow setgroups in the child user namespace.
+		// Leaving this false makes Go write "deny" before gid_map.
+		setGroupsFlag = false
+
+		// Start the init process as uid/gid 0 inside the newly-created user namespace.
+		// With the rootless map below, that namespace root maps to an unprivileged
+		// host uid/gid such as 10000:10000. Without this, the child may start with
+		// an unmapped overflow id and later fail to switch to namespace root with EPERM.
+		if nsConfig.user {
+			credential = &syscall.Credential{
+				Uid:         0,
+				Gid:         0,
+				NoSetGroups: true,
+			}
+		}
+	}
+
+	return procAttr{
+		cloneFlags:    cloneFlags,
+		uidMap:        uidMap,
+		gidMap:        gidMap,
+		setGroupsFlag: setGroupsFlag,
+		credential:    credential,
 	}
 }
 
@@ -287,4 +331,54 @@ func buildRootUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []sys
 	}
 
 	return uidMap, gidMap
+}
+
+func buildRootlessUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []syscall.SysProcIDMap) {
+	if !nsConfig.user {
+		return nil, nil
+	}
+
+	uidBase := envInt("RAIND_ROOTLESS_UID_BASE", 100000)
+	gidBase := envInt("RAIND_ROOTLESS_GID_BASE", 100000)
+	mapSize := envInt("RAIND_ROOTLESS_ID_MAP_SIZE", 65536)
+
+	uidMap = []syscall.SysProcIDMap{
+		{
+			ContainerID: 0,
+			HostID:      uidBase,
+			Size:        mapSize,
+		},
+	}
+	gidMap = []syscall.SysProcIDMap{
+		{
+			ContainerID: 0,
+			HostID:      gidBase,
+			Size:        mapSize,
+		},
+	}
+
+	return uidMap, gidMap
+}
+
+func isRootlessSpec(containerSpec spec.Spec) bool {
+	if containerSpec.Annotations.Rootless == "" {
+		return false
+	}
+	var rootless spec.RootlessConfigObject
+	if err := utils.StringToJson(containerSpec.Annotations.Rootless, &rootless); err != nil {
+		return false
+	}
+	return rootless.Enabled
+}
+
+func envInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

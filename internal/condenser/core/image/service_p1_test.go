@@ -33,16 +33,31 @@ func TestImageServicePullStoresImageAfterRegistryPull(t *testing.T) {
 }
 
 func TestImageServiceRemoveDeletesBundleAndStoreEntry(t *testing.T) {
-	ilmHandler := &fakeImageIlmHandler{bundlePath: "/bundle"}
+	ilmHandler := &fakeImageIlmHandler{bundlePath: "/bundle", rootfsPath: "/bundle/rootfs"}
 	fsHandler := &fakeImageFilesystemHandler{}
 	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
 
 	err := service.Remove(ServiceRemoveModel{Image: "alpine:latest"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "/bundle", fsHandler.removedAll)
+	assert.Equal(t, []string{"/bundle/rootless-shifted", "/bundle"}, fsHandler.removedAll)
 	assert.Equal(t, "library/alpine", ilmHandler.removedRepo)
 	assert.Equal(t, "latest", ilmHandler.removedRef)
+}
+
+func TestImageServiceRemoveDeletesRootlessCacheBesideRootfs(t *testing.T) {
+	ilmHandler := &fakeImageIlmHandler{bundlePath: "/image/bundle", rootfsPath: "/image/layers/local/app/latest/rootfs"}
+	fsHandler := &fakeImageFilesystemHandler{}
+	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
+
+	err := service.Remove(ServiceRemoveModel{Image: "local/app:latest"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/image/bundle/rootless-shifted",
+		"/image/layers/local/app/latest/rootless-shifted",
+		"/image/bundle",
+	}, fsHandler.removedAll)
 }
 
 func TestImageServiceStatusRemovesStaleEntryWhenManifestMissing(t *testing.T) {
@@ -59,7 +74,7 @@ func TestImageServiceStatusRemovesStaleEntryWhenManifestMissing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "library/alpine:latest not found")
 	assert.Equal(t, "library/alpine", ilmHandler.removedRepo)
-	assert.Equal(t, "/bundle", fsHandler.removedAll)
+	assert.Equal(t, []string{"/bundle"}, fsHandler.removedAll)
 }
 
 func TestSafeJoinRejectsTarTraversal(t *testing.T) {
@@ -131,7 +146,7 @@ func (f *fakeImageIlmHandler) IsImageExist(string, string) bool       { return f
 
 type fakeImageFilesystemHandler struct {
 	readErr    error
-	removedAll string
+	removedAll []string
 }
 
 func (f *fakeImageFilesystemHandler) MkdirAll(string, os.FileMode) error          { return nil }
@@ -144,7 +159,7 @@ func (f *fakeImageFilesystemHandler) OpenFile(string, int, os.FileMode) (*os.Fil
 func (f *fakeImageFilesystemHandler) Copy(io.Writer, io.Reader) (int64, error) { return 0, nil }
 func (f *fakeImageFilesystemHandler) Remove(string) error                      { return nil }
 func (f *fakeImageFilesystemHandler) RemoveAll(path string) error {
-	f.removedAll = path
+	f.removedAll = append(f.removedAll, path)
 	return nil
 }
 func (f *fakeImageFilesystemHandler) Rename(string, string) error { return nil }

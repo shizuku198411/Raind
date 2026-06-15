@@ -21,6 +21,7 @@ type ServiceCreateModel struct {
 	Name       string
 	BottleId   string
 	PodId      string
+	Rootless   bool
 	IsPodInfra bool
 	Progress   image.ProgressFunc
 }

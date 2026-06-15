@@ -36,6 +36,9 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 		"--work_dir", specParameter.WorkDir,
 		"--output", specParameter.Output,
 	}
+	if specParameter.Rootless {
+		args = append(args, "--rootless")
+	}
 	for _, v := range specParameter.Namespace {
 		args = slices.Concat(args, []string{"--ns", v})
 	}

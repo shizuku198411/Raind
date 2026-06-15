@@ -19,7 +19,18 @@ fail() {
   printf 'error: %s\n' "$*" >&2
   if [[ -f "${LOG_PATH}" ]]; then
     printf '%s\n' '--- condenser log ---' >&2
-    tail -160 "${LOG_PATH}" >&2 || true
+    tail -220 "${LOG_PATH}" >&2 || true
+  fi
+  if sudo_cmd test -f /etc/raind/log/droplet_audit.log 2>/dev/null; then
+    printf '%s\n' '--- droplet audit log ---' >&2
+    sudo_cmd tail -120 /etc/raind/log/droplet_audit.log >&2 || true
+  fi
+  if sudo_cmd test -d /etc/raind/container 2>/dev/null; then
+    printf '%s\n' '--- recent container init logs ---' >&2
+    sudo_cmd find /etc/raind/container -maxdepth 3 -path '*/logs/init.log' -type f -printf '%T@ %p\n' 2>/dev/null       | sort -nr       | head -8       | awk '{ $1=""; sub(/^ /, ""); print }'       | while IFS= read -r init_log; do
+          printf '%s\n' "----- ${init_log} -----" >&2
+          sudo_cmd tail -40 "${init_log}" >&2 || true
+        done
   fi
   exit 1
 }
@@ -64,6 +75,9 @@ prepare_runtime() {
     /etc/raind/image/layers \
     /var/log/raind \
     /sys/fs/cgroup/raind
+
+  reset_e2e_runtime_state
+
   sudo_cmd chmod 0755 /etc/raind /etc/raind/log /etc/raind/cert /etc/raind/store /var/log/raind
   sudo_cmd install -m 0755 "${ROOT_DIR}/bin/condenser-hook-agent" /usr/local/bin/condenser-hook-agent
   sudo_cmd install -m 0755 "${ROOT_DIR}/bin/droplet" /usr/local/bin/droplet
@@ -76,6 +90,32 @@ prepare_runtime() {
 
   HOST_ADDR="$(ip -4 -o addr show dev eth0 | awk '{split($4, a, "/"); print a[1]; exit}')"
   [[ -n "${HOST_ADDR}" ]] || fail "could not resolve eth0 address"
+}
+
+
+reset_e2e_runtime_state() {
+  log "reset e2e runtime state"
+
+  # The e2e suite runs against the fixed /etc/raind runtime paths. Previous
+  # failed runs can leave Pod/ReplicaSet/Deployment store entries behind. When
+  # condenser starts, the pod controller may try to reconcile those stale
+  # objects and race with the current run, producing confusing 500s such as
+  # "podTemplateId=... not found" during a new resource apply.
+  sudo_cmd rm -rf /etc/raind/store/*
+  sudo_cmd rm -rf /etc/raind/container/*
+  sudo_cmd rm -f /etc/raind/log/droplet_audit.log
+
+  # Rootless networking creates short-lived named netns bind mounts. Clean up
+  # stale entries from interrupted runs; ignore entries owned by other tools.
+  if sudo_cmd test -d /run/netns; then
+    sudo_cmd sh -c 'for ns in /run/netns/rn_*; do [ -e "$ns" ] || continue; umount "$ns" 2>/dev/null || true; rm -f "$ns"; done'
+  fi
+
+  # Remove stale raind cgroup leaves from previous runs, but keep the root
+  # /sys/fs/cgroup/raind directory that prepare_runtime manages.
+  if sudo_cmd test -d /sys/fs/cgroup/raind; then
+    sudo_cmd find /sys/fs/cgroup/raind -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null || true
+  fi
 }
 
 cleanup_stale_condenser() {
@@ -148,7 +188,11 @@ run_raind() {
   local out="${E2E_WORK_DIR}/${name}.out"
 
   log "raind $*"
-  sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+    fail "raind $* failed"
+  fi
   [[ -s "${out}" ]] || fail "raind $* produced no output"
 }
 
@@ -158,7 +202,11 @@ run_raind_allow_empty() {
   local out="${E2E_WORK_DIR}/${name}.out"
 
   log "raind $*"
-  sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+    fail "raind $* failed"
+  fi
 }
 
 assert_output_contains() {
@@ -171,6 +219,17 @@ assert_output_contains() {
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
   fi
+}
+
+
+assert_sudo_path_exists() {
+  local path="$1"
+  sudo_cmd test -e "${path}" || fail "expected path to exist: ${path}"
+}
+
+assert_sudo_path_absent() {
+  local path="$1"
+  sudo_cmd test ! -e "${path}" || fail "expected path to be absent: ${path}"
 }
 
 extract_created_id() {
@@ -201,6 +260,26 @@ wait_raind_contains() {
   fail "timed out waiting for raind $* output to contain: ${pattern}"
 }
 
+wait_resource_namespace_absent() {
+  local name="$1"
+  local ns="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+
+  for _ in $(seq 1 180); do
+    if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" resource namespace show "${ns}" >"${out}" 2>&1; then
+      return
+    fi
+    if grep -Eqi '(not found|does not exist)' "${out}"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${out} ---" >&2
+  cat "${out}" >&2 || true
+  fail "timed out waiting for resource namespace to be removed: ${ns}"
+}
+
 wait_http_ok() {
   local url="$1"
   local out="${E2E_WORK_DIR}/http.out"
@@ -215,6 +294,10 @@ wait_http_ok() {
   done
 
   cat "${E2E_WORK_DIR}/http.err" >&2 2>/dev/null || true
+  if [[ -f "${out}" ]]; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+  fi
   fail "timed out waiting for ${url}"
 }
 
@@ -247,8 +330,13 @@ test_image() {
   assert_output_contains image-ls "busybox"
   assert_output_contains image-ls "nginx"
   assert_output_contains image-ls "local/e2e-image-${SUFFIX}"
+
+  local built_cache="/etc/raind/image/layers/e2e-image-${SUFFIX}/latest/rootless-shifted"
+  sudo_cmd mkdir -p "${built_cache}/sentinel"
+  assert_sudo_path_exists "${built_cache}/sentinel"
   run_raind image-rm image rm "${tag}"
   assert_output_contains image-rm "remove completed"
+  assert_sudo_path_absent "${built_cache}"
 }
 
 test_network() {
@@ -319,6 +407,41 @@ test_container_deploy() {
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
   run_raind_allow_empty container-rm container rm "${cid}"
+}
+
+test_rootless_container_cache() {
+  local first_port=$((18600 + SUFFIX % 1000))
+  local second_port=$((19600 + SUFFIX % 1000))
+  local first_id
+  local second_id
+  local nginx_cache="/etc/raind/image/layers/library/nginx/latest/rootless-shifted"
+
+  log "rootless container cache test"
+  sudo_cmd rm -rf "${nginx_cache}"
+
+  run_raind rootless-run-first container run --rootless --name "e2e-rootless-a-${SUFFIX}" -p "${first_port}:80" nginx:latest
+  assert_output_contains rootless-run-first "creating rootless shifted layer cache"
+  wait_http_ok "http://${HOST_ADDR}:${first_port}/"
+  first_id="$(extract_created_id rootless-run-first)"
+  if [[ -z "${first_id}" ]]; then
+    first_id="e2e-rootless-a-${SUFFIX}"
+  fi
+  assert_sudo_path_exists "${nginx_cache}"
+  assert_sudo_path_exists "${nginx_cache}/uid_100000_gid_100000_size_65536_v1/.raind-rootless-shift-complete"
+  run_raind_allow_empty rootless-stop-first container stop "${first_id}"
+  run_raind_allow_empty rootless-rm-first container rm "${first_id}"
+
+  run_raind rootless-run-second container run --rootless --name "e2e-rootless-b-${SUFFIX}" -p "${second_port}:80" nginx:latest
+  assert_output_contains rootless-run-second "rootless shifted layer cache found"
+  wait_http_ok "http://${HOST_ADDR}:${second_port}/"
+  second_id="$(extract_created_id rootless-run-second)"
+  if [[ -z "${second_id}" ]]; then
+    second_id="e2e-rootless-b-${SUFFIX}"
+  fi
+  run_raind_allow_empty rootless-logs-second container logs --line 80 "${second_id}"
+  assert_output_contains rootless-logs-second "start worker process"
+  run_raind_allow_empty rootless-stop-second container stop "${second_id}"
+  run_raind_allow_empty rootless-rm-second container rm "${second_id}"
 }
 
 test_bottle_deploy() {
@@ -392,6 +515,7 @@ YAML
   run_raind pod-rm-manifest resource rm -f "${yaml}"
   assert_output_contains pod-rm-manifest "pod:"
   assert_output_contains pod-rm-manifest "namespace:"
+  wait_resource_namespace_absent pod-namespace-removed "${ns}"
 }
 
 test_resource_replicaset() {
@@ -430,6 +554,7 @@ YAML
   run_raind rs-rm-manifest resource rm -f "${yaml}"
   assert_output_contains rs-rm-manifest "replicaset:"
   assert_output_contains rs-rm-manifest "namespace:"
+  wait_resource_namespace_absent rs-namespace-removed "${ns}"
 }
 
 test_resource_deployment() {
@@ -468,6 +593,7 @@ YAML
   run_raind deploy-rm-manifest resource rm -f "${yaml}"
   assert_output_contains deploy-rm-manifest "deployment:"
   assert_output_contains deploy-rm-manifest "namespace:"
+  wait_resource_namespace_absent deploy-namespace-removed "${ns}"
 }
 
 test_resource_service() {
@@ -507,6 +633,7 @@ metadata:
   name: e2e-svc
   namespace: ${ns}
 spec:
+  type: NodePort
   selector:
     app: e2e-svc-web
   ports:
@@ -523,6 +650,7 @@ YAML
   assert_output_contains svc-rm-manifest "service:"
   assert_output_contains svc-rm-manifest "deployment:"
   assert_output_contains svc-rm-manifest "namespace:"
+  wait_resource_namespace_absent svc-namespace-removed "${ns}"
 }
 
 test_resource_yaml_all_kinds() {
@@ -593,6 +721,7 @@ metadata:
   name: e2e-yaml-svc
   namespace: ${ns}
 spec:
+  type: NodePort
   selector:
     app: e2e-yaml-deploy
   ports:
@@ -615,6 +744,7 @@ YAML
   assert_output_contains yaml-rm "replicaset:"
   assert_output_contains yaml-rm "deployment:"
   assert_output_contains yaml-rm "service:"
+  wait_resource_namespace_absent yaml-namespace-removed "${ns}"
 }
 
 main() {
@@ -633,6 +763,7 @@ main() {
   test_network
   test_policy
   test_container_deploy
+  test_rootless_container_cache
   test_bottle_deploy
   test_resource_namespace
   test_resource_pod
