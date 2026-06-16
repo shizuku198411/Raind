@@ -1,0 +1,34 @@
+name: Documentation issue
+description: Report missing, unclear, or outdated documentation
+title: "docs: "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Link or name the file/section if known.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing, unclear, or outdated?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Getting started
+        - Guides
+        - Architecture
+        - Reference
+        - Rootless containers
+        - Security
+        - Installation / packaging
+        - Other

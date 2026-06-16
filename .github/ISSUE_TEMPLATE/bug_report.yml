@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a reproducible problem in Raind
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. If this is a security vulnerability, do not open a public issue. Use GitHub Private Vulnerability Reporting from the Security tab.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the exact commands or manifest needed to reproduce the issue.
+      placeholder: |
+        1. raind image pull ...
+        2. raind container run ...
+        3. raind container exec ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Installation method
+      options:
+        - scripts/build.sh
+        - snap
+        - Workshop
+        - manual build
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Raind version
+      placeholder: "raind --version"
+  - type: input
+    id: os
+    attributes:
+      label: OS / kernel
+      placeholder: "Ubuntu 24.04, Linux 6.x, arm64/amd64"
+  - type: dropdown
+    id: rootless
+    attributes:
+      label: Rootless mode
+      options:
+        - not used
+        - --rootless / shifted-root
+        - --rootless-mode login-root
+        - unknown
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant logs. Remove secrets, private keys, tokens, and sensitive host paths.
+      render: shell
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context

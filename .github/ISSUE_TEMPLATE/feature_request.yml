@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a new feature or behavior change
+title: "feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem would this feature solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you would like Raind to support.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - Container runtime
+        - Rootless containers
+        - Image handling
+        - Networking / policy / observability
+        - Kubernetes-style resources
+        - Bottle
+        - Documentation
+        - Packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility considerations
+      description: Would this change affect existing commands, manifests, runtime state, or behavior?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
