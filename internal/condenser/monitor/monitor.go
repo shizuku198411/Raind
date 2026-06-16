@@ -2,7 +2,10 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/psm"
@@ -61,25 +64,7 @@ func (m *ContainerMonitor) Start() error {
 			procExist, _ := m.pidAlive(container.Pid)
 			// if process is not exist, change state to stopped
 			if !procExist {
-				log.Printf("[*] Container: %s down detected.", container.ContainerId)
-				if err := m.csmHandler.UpdateContainer(
-					container.ContainerId,
-					"stopped",
-					0,
-				); err != nil {
-					continue
-				}
-				if container.PodId != "" && !strings.HasPrefix(container.ContainerName, utils.PodInfraContainerNamePrefix) {
-					_ = m.psmHandler.UpdatePod(container.PodId, "degraded")
-				}
-				if err := m.csmHandler.UpdateExitStatus(
-					container.ContainerId,
-					-1,
-					"Error",
-					"process down detected.",
-				); err != nil {
-					continue
-				}
+				m.handleProcessDown(container)
 				continue
 			}
 
@@ -101,6 +86,109 @@ func (m *ContainerMonitor) Start() error {
 		}
 	}
 	return nil
+}
+
+const processDownDetectedMessage = "process down detected."
+
+func (m *ContainerMonitor) handleProcessDown(container ContainerMeta) {
+	if current, err := m.csmHandler.GetContainerById(container.ContainerId); err == nil && isFinalExitStatusKnown(current) {
+		return
+	}
+
+	log.Printf("[*] Container: %s down detected.", container.ContainerId)
+	if err := m.csmHandler.UpdateContainer(
+		container.ContainerId,
+		"stopped",
+		0,
+	); err != nil {
+		return
+	}
+	if container.PodId != "" && !strings.HasPrefix(container.ContainerName, utils.PodInfraContainerNamePrefix) {
+		_ = m.psmHandler.UpdatePod(container.PodId, "degraded")
+	}
+
+	if exitStatus, ok := m.resolveRuntimeExitStatusWithRetry(container.ContainerId, 2*time.Second, 50*time.Millisecond); ok {
+		if err := m.csmHandler.UpdateExitStatus(
+			container.ContainerId,
+			exitStatus.ExitCode,
+			exitStatus.Reason,
+			exitStatus.Message,
+		); err != nil {
+			return
+		}
+		return
+	}
+
+	if current, err := m.csmHandler.GetContainerById(container.ContainerId); err == nil && isFinalExitStatusKnown(current) {
+		return
+	}
+
+	_ = m.csmHandler.UpdateExitStatus(
+		container.ContainerId,
+		-1,
+		"Error",
+		processDownDetectedMessage,
+	)
+}
+
+type runtimeExitStatus struct {
+	Status   string `json:"status"`
+	ExitCode int    `json:"exit_code"`
+	Reason   string `json:"reason"`
+	Message  string `json:"message"`
+}
+
+func (m *ContainerMonitor) resolveRuntimeExitStatusWithRetry(containerId string, timeout time.Duration, interval time.Duration) (runtimeExitStatus, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if exitStatus, ok := readRuntimeExitStatus(containerId); ok {
+			return exitStatus, true
+		}
+		if !time.Now().Before(deadline) {
+			return runtimeExitStatus{}, false
+		}
+		time.Sleep(interval)
+	}
+}
+
+func readRuntimeExitStatus(containerId string) (runtimeExitStatus, bool) {
+	statePath := filepath.Join(utils.ContainerRootDir, containerId, "state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return runtimeExitStatus{}, false
+	}
+
+	var exitStatus runtimeExitStatus
+	if err := json.Unmarshal(data, &exitStatus); err != nil {
+		return runtimeExitStatus{}, false
+	}
+	if exitStatus.Status != "stopped" {
+		return runtimeExitStatus{}, false
+	}
+
+	exitStatus.Reason, exitStatus.Message = normalizeRuntimeExitStatus(exitStatus.ExitCode, exitStatus.Reason, exitStatus.Message)
+	return exitStatus, true
+}
+
+func normalizeRuntimeExitStatus(exitCode int, reason string, message string) (string, string) {
+	if reason == "" {
+		if exitCode == 0 {
+			reason = "Completed"
+		} else {
+			reason = "Error"
+		}
+	}
+	if message == "" {
+		message = fmt.Sprintf("exit code: %d", exitCode)
+	}
+	return reason, message
+}
+
+func isFinalExitStatusKnown(container csm.ContainerInfo) bool {
+	if container.State != "stopped" {
+		return false
+	}
+	return !(container.ExitCode == -1 && container.Message == processDownDetectedMessage)
 }
 
 func buildMetricsRecord(container ContainerMeta, prev CgroupCPUUsageSample) (MetricsRecord, CgroupCPUUsageSample, error) {
