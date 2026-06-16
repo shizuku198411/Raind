@@ -216,10 +216,15 @@ run_cli_checks() {
   assert_output_contains security-profile-ls "NAME"
   assert_output_contains security-profile-ls "default"
   assert_output_contains security-profile-ls "dev"
+  assert_output_contains security-profile-ls "deploy"
 
   run_raind security-profile-show security profile show default
   assert_output_contains security-profile-show "name: default"
   assert_output_contains security-profile-show "apparmorProfile: raind-default"
+
+  run_raind security-profile-show-deploy security profile show deploy
+  assert_output_contains security-profile-show-deploy "name: deploy"
+  assert_output_contains security-profile-show-deploy "apparmorProfile: raind-default"
 
   run_raind help --help
   assert_output_contains help "container"

@@ -7,6 +7,7 @@ const (
 
 	ProfileDefault = "default"
 	ProfileDev     = "dev"
+	ProfileDeploy  = "deploy"
 )
 
 type SecurityProfile struct {

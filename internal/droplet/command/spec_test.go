@@ -164,7 +164,7 @@ func TestCreateConfigOptionsAcceptsResolvedSecurityOptions(t *testing.T) {
 func TestCreateConfigOptionsRejectsUnknownSecurityProfile(t *testing.T) {
 	// == setup ==
 	ctx := newSpecCLIContext(t, map[string]any{
-		"security-profile": "deploy",
+		"security-profile": "unknown-profile",
 	})
 
 	// == exercise ==

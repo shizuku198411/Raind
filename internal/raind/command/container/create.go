@@ -48,7 +48,7 @@ func CommandCreate() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "security-profile",
-				Usage: "security profile to apply (e.g. default, dev)",
+				Usage: "security profile to apply (e.g. default, dev, deploy)",
 			},
 			&cli.BoolFlag{
 				Name:    "tty",

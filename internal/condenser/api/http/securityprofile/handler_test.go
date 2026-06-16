@@ -25,9 +25,10 @@ func TestListSecurityProfiles(t *testing.T) {
 		Data   ListSecurityProfileResponse `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	require.Len(t, resp.Data.Profiles, 2)
+	require.Len(t, resp.Data.Profiles, 3)
 	assert.Equal(t, core.ProfileDefault, resp.Data.Profiles[0].Name)
 	assert.Equal(t, core.ProfileDev, resp.Data.Profiles[1].Name)
+	assert.Equal(t, core.ProfileDeploy, resp.Data.Profiles[2].Name)
 }
 
 func TestShowSecurityProfile(t *testing.T) {
@@ -46,6 +47,25 @@ func TestShowSecurityProfile(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Equal(t, core.ProfileDev, resp.Data.Profile.Name)
 	assert.Equal(t, "raind-default", resp.Data.Profile.AppArmorProfile)
+}
+
+func TestShowDeploySecurityProfile(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/v1/security/profiles/{name}", NewRequestHandler().ShowSecurityProfile)
+	req := httptest.NewRequest(http.MethodGet, "/v1/security/profiles/deploy", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status string                      `json:"status"`
+		Data   ShowSecurityProfileResponse `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, core.ProfileDeploy, resp.Data.Profile.Name)
+	assert.NotContains(t, resp.Data.Profile.Capabilities.Base, "CAP_NET_RAW")
+	assert.NotContains(t, resp.Data.Profile.Capabilities.Base, "CAP_MKNOD")
 }
 
 func TestShowSecurityProfileNotFound(t *testing.T) {

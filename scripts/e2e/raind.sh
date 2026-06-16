@@ -389,11 +389,21 @@ wait_http_ok() {
   fail "timed out waiting for ${url}"
 }
 
+assert_security_profile_runtime_applied() {
+  local cid="$1"
+  local state="/etc/raind/container/${cid}/state.json"
+  local pid
+
+  pid="$(sudo_cmd jq -r '.pid // 0' "${state}")"
+  [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -gt 0 ]] || fail "container ${cid} has no running pid"
+  sudo_cmd test -d "/proc/${pid}" || fail "container ${cid} pid ${pid} is not running"
+  sudo_cmd grep -q '^NoNewPrivs:[[:space:]]*1$' "/proc/${pid}/status" || fail "NoNewPrivs is not enabled for ${cid}"
+  sudo_cmd grep -q '^Seccomp:[[:space:]]*2$' "/proc/${pid}/status" || fail "seccomp filter mode is not enabled for ${cid}"
+}
+
 assert_dev_security_profile_applied() {
   local cid="$1"
   local config="/etc/raind/container/${cid}/config.json"
-  local state="/etc/raind/container/${cid}/state.json"
-  local pid
 
   log "verify dev security profile for ${cid}"
   sudo_cmd jq -e '
@@ -403,11 +413,24 @@ assert_dev_security_profile_applied() {
     any(.process.capabilities.effective[]?; . == "CAP_NET_RAW")
   ' "${config}" >/dev/null || fail "dev security profile was not written to ${config}"
 
-  pid="$(sudo_cmd jq -r '.pid // 0' "${state}")"
-  [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -gt 0 ]] || fail "container ${cid} has no running pid"
-  sudo_cmd test -d "/proc/${pid}" || fail "container ${cid} pid ${pid} is not running"
-  sudo_cmd grep -q '^NoNewPrivs:[[:space:]]*1$' "/proc/${pid}/status" || fail "NoNewPrivs is not enabled for ${cid}"
-  sudo_cmd grep -q '^Seccomp:[[:space:]]*2$' "/proc/${pid}/status" || fail "seccomp filter mode is not enabled for ${cid}"
+  assert_security_profile_runtime_applied "${cid}"
+}
+
+assert_deploy_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify deploy security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    (any(.process.capabilities.effective[]?; . == "CAP_CHOWN")) and
+    ([.process.capabilities.effective[]?] | index("CAP_NET_RAW") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_MKNOD") | not)
+  ' "${config}" >/dev/null || fail "deploy security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
 }
 
 write_static_build_context() {
@@ -529,6 +552,19 @@ test_dev_security_profile_container() {
   assert_dev_security_profile_applied "${cid}"
   run_raind_allow_empty dev-profile-stop container stop "${cid}"
   run_raind_allow_empty dev-profile-rm container rm "${cid}"
+}
+
+test_deploy_security_profile_container() {
+  local cid
+  local name="e2e-deploy-profile-${SUFFIX}"
+
+  log "deploy security profile container test"
+  run_raind deploy-profile-run container run --security-profile deploy --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id deploy-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_deploy_security_profile_applied "${cid}"
+  run_raind_allow_empty deploy-profile-stop container stop "${cid}"
+  run_raind_allow_empty deploy-profile-rm container rm "${cid}"
 }
 
 test_rootless_container_cache() {
@@ -938,6 +974,7 @@ main() {
   test_policy
   test_container_deploy
   test_dev_security_profile_container
+  test_deploy_security_profile_container
   test_rootless_container_cache
   test_login_rootless_bind_mount
   test_bottle_deploy

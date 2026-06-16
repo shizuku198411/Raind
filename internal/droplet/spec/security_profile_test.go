@@ -38,9 +38,26 @@ func TestResolveSecurityProfileDev(t *testing.T) {
 	assert.Equal(t, defaultProfile.Seccomp.Syscalls, devProfile.Seccomp.Syscalls)
 }
 
+func TestResolveSecurityProfileDeploy(t *testing.T) {
+	// == exercise ==
+	deployProfile, err := ResolveSecurityProfile(SecurityProfileDeploy)
+	defaultProfile := DefaultSecurityProfile()
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, SecurityProfileDeploy, deployProfile.Name)
+	assert.NotContains(t, deployProfile.Capabilities.Base, "CAP_NET_RAW")
+	assert.NotContains(t, deployProfile.Capabilities.Base, "CAP_MKNOD")
+	assert.Contains(t, defaultProfile.Capabilities.Base, "CAP_NET_RAW")
+	assert.Contains(t, defaultProfile.Capabilities.Base, "CAP_MKNOD")
+	assert.Equal(t, defaultProfile.AppArmorProfile, deployProfile.AppArmorProfile)
+	require.NotNil(t, deployProfile.Seccomp)
+	assert.Equal(t, defaultProfile.Seccomp.DefaultAction, deployProfile.Seccomp.DefaultAction)
+}
+
 func TestResolveSecurityProfileRejectsUnknownProfile(t *testing.T) {
 	// == exercise ==
-	_, err := ResolveSecurityProfile("deploy")
+	_, err := ResolveSecurityProfile("restricted")
 
 	// == assert ==
 	require.Error(t, err)
@@ -103,10 +120,25 @@ func TestBuildSpecAcceptsResolvedSecurityOption(t *testing.T) {
 	assert.Equal(t, "raind-default", config.LinuxSpec.AppArmorProfile)
 }
 
+func TestBuildSpecAcceptsDeploySecurityProfile(t *testing.T) {
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{ProfileName: SecurityProfileDeploy},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.NotContains(t, config.Process.Capabilities.Effective, "CAP_NET_RAW")
+	assert.NotContains(t, config.Process.Capabilities.Effective, "CAP_MKNOD")
+	assert.Equal(t, DeploySecurityProfile().AppArmorProfile, config.LinuxSpec.AppArmorProfile)
+	require.NotNil(t, config.LinuxSpec.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
+}
+
 func TestBuildSpecRejectsUnknownSecurityProfile(t *testing.T) {
 	// == exercise ==
 	_, err := buildSpec(ConfigOptions{
-		Security: SecurityOption{ProfileName: "deploy"},
+		Security: SecurityOption{ProfileName: "restricted"},
 	})
 
 	// == assert ==

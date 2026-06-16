@@ -9,6 +9,7 @@ import (
 const (
 	SecurityProfileDefault = "default"
 	SecurityProfileDev     = "dev"
+	SecurityProfileDeploy  = "deploy"
 )
 
 type SecurityOption struct {
@@ -49,6 +50,8 @@ func ResolveSecurityProfile(name string) (SecurityProfile, error) {
 		return DefaultSecurityProfile(), nil
 	case SecurityProfileDev:
 		return DevSecurityProfile(), nil
+	case SecurityProfileDeploy:
+		return DeploySecurityProfile(), nil
 	default:
 		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
 	}
@@ -58,6 +61,28 @@ func DevSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = SecurityProfileDev
 	return profile
+}
+
+func DeploySecurityProfile() SecurityProfile {
+	profile := DefaultSecurityProfile()
+	profile.Name = SecurityProfileDeploy
+	profile.Capabilities.Base = dropCapabilities(profile.Capabilities.Base, "CAP_NET_RAW", "CAP_MKNOD")
+	return profile
+}
+
+func dropCapabilities(base []string, drops ...string) []string {
+	dropSet := make(map[string]struct{}, len(drops))
+	for _, cap := range drops {
+		dropSet[cap] = struct{}{}
+	}
+	out := make([]string, 0, len(base))
+	for _, cap := range base {
+		if _, ok := dropSet[cap]; ok {
+			continue
+		}
+		out = append(out, cap)
+	}
+	return out
 }
 
 func DefaultSecurityProfile() SecurityProfile {

@@ -16,6 +16,7 @@ func (s *Service) List() []ProfileSummary {
 	profiles := []SecurityProfile{
 		DefaultSecurityProfile(),
 		DevSecurityProfile(),
+		DeploySecurityProfile(),
 	}
 	out := make([]ProfileSummary, 0, len(profiles))
 	for _, profile := range profiles {
@@ -30,6 +31,8 @@ func (s *Service) Get(name string) (SecurityProfile, error) {
 		return DefaultSecurityProfile(), nil
 	case ProfileDev:
 		return DevSecurityProfile(), nil
+	case ProfileDeploy:
+		return DeploySecurityProfile(), nil
 	default:
 		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
 	}
@@ -53,6 +56,28 @@ func DevSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = ProfileDev
 	return profile
+}
+
+func DeploySecurityProfile() SecurityProfile {
+	profile := DefaultSecurityProfile()
+	profile.Name = ProfileDeploy
+	profile.Capabilities.Base = dropCapabilities(profile.Capabilities.Base, "CAP_NET_RAW", "CAP_MKNOD")
+	return profile
+}
+
+func dropCapabilities(base []string, drops ...string) []string {
+	dropSet := make(map[string]struct{}, len(drops))
+	for _, cap := range drops {
+		dropSet[cap] = struct{}{}
+	}
+	out := make([]string, 0, len(base))
+	for _, cap := range base {
+		if _, ok := dropSet[cap]; ok {
+			continue
+		}
+		out = append(out, cap)
+	}
+	return out
 }
 
 func DefaultSecurityProfile() SecurityProfile {
