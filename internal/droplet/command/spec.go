@@ -59,6 +59,13 @@ func commandSpec() *cli.Command {
 				Name:  "hostname",
 				Usage: "container hostname",
 			},
+
+			&cli.StringFlag{
+				Name:  "security-profile",
+				Usage: "security profile name",
+				Value: spec.SecurityProfileDefault,
+			},
+
 			&cli.BoolFlag{
 				Name:  "rootless",
 				Usage: "mark this spec as rootless and request non-root host-ID mapping",
@@ -213,6 +220,12 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	// rootfs
 	rootfs := ctx.String("rootfs")
 
+	// security
+	securityProfile := ctx.String("security-profile")
+	if _, err := spec.ResolveSecurityProfile(securityProfile); err != nil {
+		return spec.ConfigOptions{}, err
+	}
+
 	// rootless
 	rootless, rootlessMode, err := rootlessOptionsFromSpecCLI(ctx)
 	if err != nil {
@@ -317,6 +330,9 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 		RootlessRootUID: rootlessRootUID,
 		RootlessRootGID: rootlessRootGID,
 		Mounts:          mounts,
+		Security: spec.SecurityOption{
+			ProfileName: securityProfile,
+		},
 		Process: spec.ProcessOption{
 			Cwd:     cwd,
 			Env:     env,

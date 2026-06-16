@@ -11,6 +11,7 @@ type SpecModel struct {
 	Mount           []string
 	CapAdd          []string
 	CapDrop         []string
+	SecurityProfile string
 	Rootless        bool
 	RootlessMode    string
 	RootlessRootUID int

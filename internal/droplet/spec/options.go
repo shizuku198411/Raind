@@ -56,6 +56,7 @@ type ConfigOptions struct {
 	Rootfs          string
 	Mounts          []MountOption
 	Process         ProcessOption
+	Security        SecurityOption
 	Namespace       []NamespaceOption
 	Hostname        string
 	Net             NetOption

@@ -35,16 +35,17 @@ type PodTemplateSpec struct {
 }
 
 type ContainerTemplateSpec struct {
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	Command []string `json:"command,omitempty"`
-	Port    []string `json:"port,omitempty"`
-	Mount   []string `json:"mount,omitempty"`
-	Env     []string `json:"env,omitempty"`
-	CapAdd  []string `json:"capAdd,omitempty"`
-	CapDrop []string `json:"capDrop,omitempty"`
-	Network string   `json:"network,omitempty"`
-	Tty     bool     `json:"tty,omitempty"`
+	Name            string   `json:"name"`
+	Image           string   `json:"image"`
+	Command         []string `json:"command,omitempty"`
+	Port            []string `json:"port,omitempty"`
+	Mount           []string `json:"mount,omitempty"`
+	Env             []string `json:"env,omitempty"`
+	CapAdd          []string `json:"capAdd,omitempty"`
+	CapDrop         []string `json:"capDrop,omitempty"`
+	SecurityProfile string   `json:"securityProfile,omitempty"`
+	Network         string   `json:"network,omitempty"`
+	Tty             bool     `json:"tty,omitempty"`
 }
 
 type PodTemplateInfo struct {

@@ -36,6 +36,9 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 		"--work_dir", specParameter.WorkDir,
 		"--output", specParameter.Output,
 	}
+	if specParameter.SecurityProfile != "" {
+		args = append(args, "--security-profile", specParameter.SecurityProfile)
+	}
 	if specParameter.Rootless {
 		args = append(args, "--rootless")
 		if specParameter.RootlessMode != "" {

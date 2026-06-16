@@ -192,16 +192,17 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 			templateName = containerName
 		}
 		if err := s.psmHandler.AddContainerToPodTemplate(createParameter.PodId, psm.ContainerTemplateSpec{
-			Name:    templateName,
-			Image:   createParameter.Image,
-			Command: createParameter.Command,
-			Port:    createParameter.Port,
-			Mount:   createParameter.Mount,
-			Env:     createParameter.Env,
-			CapAdd:  createParameter.CapAdd,
-			CapDrop: createParameter.CapDrop,
-			Network: createParameter.Network,
-			Tty:     createParameter.Tty,
+			Name:            templateName,
+			Image:           createParameter.Image,
+			Command:         createParameter.Command,
+			Port:            createParameter.Port,
+			Mount:           createParameter.Mount,
+			Env:             createParameter.Env,
+			CapAdd:          createParameter.CapAdd,
+			CapDrop:         createParameter.CapDrop,
+			SecurityProfile: createParameter.SecurityProfile,
+			Network:         createParameter.Network,
+			Tty:             createParameter.Tty,
 		}); err != nil {
 			return "", err
 		}
@@ -601,6 +602,7 @@ func (s *ContainerService) createContainerSpec(
 		Mount:                  mount,
 		CapAdd:                 createParameter.CapAdd,
 		CapDrop:                createParameter.CapDrop,
+		SecurityProfile:        createParameter.SecurityProfile,
 		Rootless:               createParameter.Rootless,
 		RootlessMode:           createParameter.RootlessMode,
 		RootlessRootUID:        createParameter.RootlessRootUID,

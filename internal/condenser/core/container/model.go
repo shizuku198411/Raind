@@ -16,6 +16,7 @@ type ServiceCreateModel struct {
 	Env             []string
 	CapAdd          []string
 	CapDrop         []string
+	SecurityProfile string
 	Network         string
 	Tty             bool
 	Name            string
