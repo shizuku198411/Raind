@@ -10,9 +10,15 @@ func commandShim() *cli.Command {
 	return &cli.Command{
 		Name:      "shim",
 		Usage:     "shim process",
-		ArgsUsage: "<container-id> <fifo-path> <entrypoint>",
+		ArgsUsage: "[--tty] <container-id> <fifo-path> <entrypoint>",
 		Hidden:    true,
-		Action:    runShim,
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:  "tty",
+				Usage: "enable TTY attach proxy",
+			},
+		},
+		Action: runShim,
 	}
 }
 
@@ -24,7 +30,12 @@ func runShim(ctx *cli.Context) error {
 	entrypoint := args[2:]
 
 	containerShim := container.NewContainerShim()
-	err := containerShim.Execute(containerId, fifo, entrypoint)
+	err := containerShim.Execute(container.ShimExecuteOption{
+		ContainerId: containerId,
+		Fifo:        fifo,
+		Entrypoint:  entrypoint,
+		Tty:         ctx.Bool("tty"),
+	})
 	if err != nil {
 		return err
 	}

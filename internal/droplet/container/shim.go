@@ -35,13 +35,22 @@ type ContainerShim struct {
 	containerStatusManager status.ContainerStatusManager
 }
 
-func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []string) (err error) {
+type ShimExecuteOption struct {
+	ContainerId string
+	Fifo        string
+	Entrypoint  []string
+	Tty         bool
+}
+
+func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	var (
 		spec  spec.Spec
 		event = "shim"
 		stage string
 		pid   int
 	)
+
+	containerId := opt.ContainerId
 
 	// audit log
 	defer func() {
@@ -67,54 +76,98 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 		return err
 	}
 
-	// 2. pty
-	stage = "open_pty"
-	ptmx, tty, err := pty.Open()
-	if err != nil {
-		return err
-	}
-
-	// 3. console socket listen
-	stage = "listen_socket"
-	sockPath := utils.SockPath(containerId)
-	ln, err := net.Listen("unix", sockPath)
-	if err != nil {
-		return err
-	}
-
-	// open log
+	// open shim log
 	stage = "open_log"
-	shimLog, err := os.OpenFile(utils.ShimLogPath(containerId), os.O_CREATE|os.O_WRONLY, 0640)
+	shimLog, err := os.OpenFile(utils.ShimLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
 	if err != nil {
 		return err
 	}
 	defer shimLog.Close()
 	logger := log.New(shimLog, "shim: ", log.LstdFlags|log.Lmicroseconds)
-	consoleLog, err := os.OpenFile(utils.ConsoleLogPath(containerId), os.O_CREATE|os.O_WRONLY, 0640)
-	if err != nil {
-		return err
-	}
-	defer consoleLog.Close()
 
-	// 4. prepare init subcommand
+	// 2. prepare init subcommand
 	stage = "prepare_init_command"
-	initArgs := append([]string{"init", containerId, fifo}, entrypoint...)
+	initArgs := append([]string{"init", containerId, opt.Fifo}, opt.Entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
 
-	// set stdio to tty
-	cmd.SetStdin(tty)
-	cmd.SetStdout(tty)
-	cmd.SetStderr(tty)
+	// 3. configure stdio.
+	// TTY mode keeps the existing pty/socket attach path.
+	// Non-TTY mode still uses shim as a supervisor, but stdin is /dev/null and
+	// stdout/stderr are written to init.log just like the previous direct init path.
+	var (
+		ptmx     *os.File
+		tty      *os.File
+		ln       net.Listener
+		sockPath string
+	)
+	if opt.Tty {
+		stage = "open_pty"
+		ptmx, tty, err = pty.Open()
+		if err != nil {
+			return err
+		}
+		defer ptmx.Close()
+		defer tty.Close()
+
+		stage = "listen_socket"
+		sockPath = utils.SockPath(containerId)
+		ln, err = net.Listen("unix", sockPath)
+		if err != nil {
+			return err
+		}
+		defer ln.Close()
+
+		consoleLog, err := os.OpenFile(utils.ConsoleLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+		if err != nil {
+			return err
+		}
+		defer consoleLog.Close()
+
+		cmd.SetStdin(tty)
+		cmd.SetStdout(tty)
+		cmd.SetStderr(tty)
+
+		// Start accepting attach connections before init starts. The attach client
+		// may connect immediately after create/start returns.
+		h := newHub(ptmx, consoleLog, logger)
+		h.startPump()
+		go c.acceptLoop(ln, h, logger)
+	} else {
+		stage = "open_init_log"
+		logPath := utils.InitLogPath(containerId)
+		initLog, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+		if err != nil {
+			return err
+		}
+		defer initLog.Close()
+		if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
+			if err := prepareRootlessInitLog(logPath, rootlessConfig); err != nil {
+				return err
+			}
+		}
+
+		devNull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+		if err != nil {
+			return err
+		}
+		defer devNull.Close()
+
+		cmd.SetStdin(devNull)
+		cmd.SetStdout(initLog)
+		cmd.SetStderr(initLog)
+	}
 
 	// apply SysProcAttr
 	procAttr := buildProcAttrForContainer(spec)
 	sysProcAttr := buildSysProcAttr(procAttr)
 	sysProcAttr.Setsid = true
-	sysProcAttr.Setctty = true
-	sysProcAttr.Ctty = 0
+	if opt.Tty {
+		sysProcAttr.Setctty = true
+		sysProcAttr.Ctty = 0
+	}
 	cmd.SetSysProcAttr(sysProcAttr)
 
-	// 5. execute init subcommand
+	// 4. execute init subcommand
 	stage = "exec_init"
 	err = cmd.Start()
 	if err != nil {
@@ -123,9 +176,9 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 	}
 	initPid := cmd.Pid()
 	pid = initPid
-	logger.Printf("init started pid=%d", initPid)
+	logger.Printf("init started pid=%d tty=%t", initPid, opt.Tty)
 
-	// 6. create pidfile
+	// 5. create pidfile
 	stage = "create_pid_file"
 	err = c.writeInitPid(containerId, initPid)
 	if err != nil {
@@ -133,23 +186,19 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 		return err
 	}
 
-	// 6. close tty
-	stage = "close_tty"
-	_ = tty.Close()
+	if opt.Tty {
+		// The child process already inherited the slave side. Close the shim copy so
+		// ptmx observes EOF once the container process exits.
+		stage = "close_tty"
+		_ = tty.Close()
+	}
 
-	// 7. accept and proxy
-	stage = "data_accept"
-	h := newHub(ptmx, consoleLog, logger)
-	h.startPump()
-	go c.acceptLoop(ln, h, logger)
-
-	// 8. wait init process
-	//err = cmd.Wait()
+	// 6. wait init process
 	stage = "wait_init"
 	waitErr := cmd.Wait()
 	logger.Printf("init exited: %v", waitErr)
 
-	// 9. update state
+	// 7. update state
 	stage = "update_state"
 	err = c.containerStatusManager.UpdateStatus(
 		containerId,
@@ -161,8 +210,8 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 		return err
 	}
 
-	// 10. set exit code, reason and message
-	stage = "update exit status"
+	// 8. set exit code, reason and message
+	stage = "update_exit_status"
 	exitCode := c.InitExitCode(cmd)
 	err = c.containerStatusManager.UpdateExitCode(containerId, exitCode)
 	if err != nil {
@@ -179,8 +228,12 @@ func (c *ContainerShim) Execute(containerId string, fifo string, entrypoint []st
 		return err
 	}
 
-	_ = ln.Close()
-	_ = os.Remove(sockPath)
+	if ln != nil {
+		_ = ln.Close()
+	}
+	if sockPath != "" {
+		_ = os.Remove(sockPath)
+	}
 
 	return waitErr
 }

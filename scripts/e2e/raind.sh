@@ -305,6 +305,90 @@ assert_sudo_path_absent() {
   sudo_cmd test ! -e "${path}" || fail "expected path to be absent: ${path}"
 }
 
+runtime_exit_status_matches() {
+  local cid="$1"
+  local expected_exit_code="$2"
+  local expected_reason="$3"
+  local expected_message="$4"
+  local state_path="/etc/raind/container/${cid}/state.json"
+
+  sudo_cmd test -f "${state_path}" && sudo_cmd jq -e \
+    --arg cid "${cid}" \
+    --argjson code "${expected_exit_code}" \
+    --arg reason "${expected_reason}" \
+    --arg message "${expected_message}" \
+    '.id == $cid and .status == "stopped" and .pid == 0 and .shimPid == 0 and .exit_code == $code and .reason == $reason and .message == $message' \
+    "${state_path}" >/dev/null 2>&1
+}
+
+csm_exit_status_matches() {
+  local cid="$1"
+  local expected_exit_code="$2"
+  local expected_reason="$3"
+  local expected_message="$4"
+  local csm_path="/etc/raind/store/csm.json"
+
+  sudo_cmd test -f "${csm_path}" && sudo_cmd jq -e \
+    --arg cid "${cid}" \
+    --argjson code "${expected_exit_code}" \
+    --arg reason "${expected_reason}" \
+    --arg message "${expected_message}" \
+    '.containers[$cid].state == "stopped" and .containers[$cid].pid == 0 and .containers[$cid].exit_code == $code and .containers[$cid].reason == $reason and .containers[$cid].message == $message' \
+    "${csm_path}" >/dev/null 2>&1
+}
+
+assert_container_exit_status() {
+  local cid="$1"
+  local expected_exit_code="$2"
+  local expected_reason="$3"
+  local expected_message="$4"
+  local state_path="/etc/raind/container/${cid}/state.json"
+  local csm_path="/etc/raind/store/csm.json"
+
+  # The runtime shim writes the final status to state.json first. Condenser's
+  # monitor then observes process-down and reconciles CSM from that runtime
+  # state. Short-lived containers can therefore be visible as running in CSM for
+  # a brief window after state.json has already reached stopped. Poll both files
+  # for the same final status instead of asserting CSM immediately.
+  for _ in $(seq 1 120); do
+    if runtime_exit_status_matches "${cid}" "${expected_exit_code}" "${expected_reason}" "${expected_message}" && \
+       csm_exit_status_matches "${cid}" "${expected_exit_code}" "${expected_reason}" "${expected_message}"; then
+      return
+    fi
+    sleep 0.25
+  done
+
+  if ! runtime_exit_status_matches "${cid}" "${expected_exit_code}" "${expected_reason}" "${expected_message}"; then
+    printf '%s\n' "--- ${state_path} ---" >&2
+    sudo_cmd cat "${state_path}" >&2 || true
+    fail "unexpected runtime exit status for ${cid}"
+  fi
+
+  printf '%s\n' "--- ${csm_path} ---" >&2
+  sudo_cmd cat "${csm_path}" >&2 || true
+  fail "unexpected CSM exit status for ${cid}"
+}
+
+wait_container_stopped() {
+  local cid="$1"
+  local state_path="/etc/raind/container/${cid}/state.json"
+  local csm_path="/etc/raind/store/csm.json"
+
+  for _ in $(seq 1 120); do
+    if sudo_cmd test -f "${state_path}" && sudo_cmd jq -e '.status == "stopped"' "${state_path}" >/dev/null 2>&1 && \
+       sudo_cmd test -f "${csm_path}" && sudo_cmd jq -e --arg cid "${cid}" '.containers[$cid].state == "stopped"' "${csm_path}" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.25
+  done
+
+  printf '%s\n' "--- ${state_path} ---" >&2
+  sudo_cmd cat "${state_path}" >&2 || true
+  printf '%s\n' "--- ${csm_path} ---" >&2
+  sudo_cmd cat "${csm_path}" >&2 || true
+  fail "timed out waiting for container to stop: ${cid}"
+}
+
 extract_created_id() {
   local name="$1"
   awk '/: .* (created|applied)$/ || /: .* created / { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
@@ -598,6 +682,38 @@ test_container_deploy() {
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
   run_raind_allow_empty container-rm container rm "${cid}"
+}
+
+test_container_exit_status() {
+  local cid
+
+  log "container exit status test"
+
+  run_raind non-tty-exit-42 container run --name "e2e-exit-42-${SUFFIX}" alpine:latest sh -c 'exit 42'
+  cid="$(extract_created_id non-tty-exit-42)"
+  cid="$(resolve_container_id "${cid}" "e2e-exit-42-${SUFFIX}")"
+  wait_container_stopped "${cid}"
+  assert_container_exit_status "${cid}" 42 "Error" "exit status 42"
+  run_raind_allow_empty non-tty-exit-42-rm container rm "${cid}"
+
+  run_raind non-tty-shell-eof container run --name "e2e-shell-eof-${SUFFIX}" alpine:latest
+  cid="$(extract_created_id non-tty-shell-eof)"
+  cid="$(resolve_container_id "${cid}" "e2e-shell-eof-${SUFFIX}")"
+  wait_container_stopped "${cid}"
+  assert_container_exit_status "${cid}" 0 "Completed" "exit code: 0"
+  run_raind_allow_empty non-tty-shell-eof-rm container rm "${cid}"
+
+  # Do not use `container run -t` here: run attaches to the TTY after start,
+  # which is useful for humans but can block a non-interactive e2e script. Use
+  # create -t + start -t instead so the runtime still exercises the TTY shim
+  # path while the CLI remains non-interactive.
+  run_raind tty-exit-42-create container create -t --name "e2e-tty-exit-42-${SUFFIX}" alpine:latest sh -c 'exit 42'
+  cid="$(extract_created_id tty-exit-42-create)"
+  cid="$(resolve_container_id "${cid}" "e2e-tty-exit-42-${SUFFIX}")"
+  run_raind tty-exit-42-start container start -t "${cid}"
+  wait_container_stopped "${cid}"
+  assert_container_exit_status "${cid}" 42 "Error" "exit status 42"
+  run_raind_allow_empty tty-exit-42-rm container rm "${cid}"
 }
 
 test_dev_security_profile_container() {
@@ -1095,6 +1211,7 @@ main() {
   test_network
   test_policy
   test_container_deploy
+  test_container_exit_status
   test_dev_security_profile_container
   test_deploy_security_profile_container
   test_restricted_security_profile_container

@@ -181,12 +181,13 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 }
 
 func (c *ContainerKill) cleanupShim(containerId string) error {
-	// remove tty.sock
-	if err := c.syscallHandler.Remove(utils.SockPath(containerId)); err != nil {
+	// remove tty.sock. Non-TTY containers also run through shim/supervisor,
+	// but they do not create a TTY socket. Missing files are therefore expected.
+	if err := c.syscallHandler.Remove(utils.SockPath(containerId)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	// remove init.pid
-	if err := c.syscallHandler.Remove(utils.InitPidFilePath(containerId)); err != nil {
+	if err := c.syscallHandler.Remove(utils.InitPidFilePath(containerId)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

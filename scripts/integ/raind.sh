@@ -19,6 +19,25 @@ fail() {
     printf '%s\n' '--- condenser log ---' >&2
     tail -120 "${LOG_PATH}" >&2 || true
   fi
+  if sudo_cmd test -f /etc/raind/store/csm.json 2>/dev/null; then
+    printf '%s\n' '--- csm.json ---' >&2
+    sudo_cmd cat /etc/raind/store/csm.json >&2 || true
+  fi
+  if sudo_cmd test -f /etc/raind/store/psm.json 2>/dev/null; then
+    printf '%s\n' '--- psm.json ---' >&2
+    sudo_cmd cat /etc/raind/store/psm.json >&2 || true
+  fi
+  if sudo_cmd test -d /etc/raind/container 2>/dev/null; then
+    printf '%s\n' '--- recent container logs ---' >&2
+    sudo_cmd find /etc/raind/container -maxdepth 3 \( -path '*/logs/init.log' -o -path '*/logs/console.log' \) -type f -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr \
+      | head -8 \
+      | awk '{ $1=""; sub(/^ /, ""); print }' \
+      | while IFS= read -r runtime_log; do
+          printf '%s\n' "----- ${runtime_log} -----" >&2
+          sudo_cmd tail -40 "${runtime_log}" >&2 || true
+        done
+  fi
   exit 1
 }
 
@@ -62,6 +81,9 @@ prepare_runtime() {
     /etc/raind/image/layers \
     /var/log/raind \
     /sys/fs/cgroup/raind
+
+  reset_integ_runtime_state
+
   sudo_cmd chmod 0755 /etc/raind /etc/raind/log /etc/raind/cert /etc/raind/store /var/log/raind
 
   for controller in cpu memory pids io; do
@@ -69,6 +91,26 @@ prepare_runtime() {
       sudo_cmd sh -c "echo +${controller} > /sys/fs/cgroup/raind/cgroup.subtree_control 2>/dev/null || true"
     fi
   done
+}
+
+reset_integ_runtime_state() {
+  log "reset integration runtime state"
+
+  # The integration suite exercises CLI/API contracts and should not depend on
+  # leftover runtime state from previous manual runs or failed tests. This is
+  # especially important now that short-lived non-TTY containers are supervised
+  # by shim and correctly leave terminal CSM entries behind.
+  sudo_cmd rm -rf /etc/raind/store/*
+  sudo_cmd rm -rf /etc/raind/container/*
+  sudo_cmd rm -f /etc/raind/log/droplet_audit.log
+
+  if sudo_cmd test -d /run/netns; then
+    sudo_cmd sh -c 'for ns in /run/netns/rn_*; do [ -e "$ns" ] || continue; umount "$ns" 2>/dev/null || true; rm -f "$ns"; done'
+  fi
+
+  if sudo_cmd test -d /sys/fs/cgroup/raind; then
+    sudo_cmd find /sys/fs/cgroup/raind -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null || true
+  fi
 }
 
 cleanup_stale_condenser() {
@@ -141,7 +183,11 @@ run_raind() {
   local out="${E2E_WORK_DIR}/${name}.out"
 
   log "raind $*"
-  sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+    fail "raind $* failed"
+  fi
   [[ -s "${out}" ]] || fail "raind $* produced no output"
 }
 
@@ -151,7 +197,11 @@ run_raind_allow_empty() {
   local out="${E2E_WORK_DIR}/${name}.out"
 
   log "raind $*"
-  sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+    fail "raind $* failed"
+  fi
 }
 
 assert_raind_fails() {
@@ -364,8 +414,14 @@ run_cli_write_checks() {
   [[ -n "${pod_id}" ]] || fail "pod create did not print pod id"
   run_raind pod-ls-after-create resource pod ls
   assert_output_contains pod-ls-after-create "${pod_name}"
-  run_raind_allow_empty pod-start resource pod start "${pod_id}"
-  run_raind_allow_empty pod-stop resource pod stop "${pod_id}"
+  # Keep integration pod checks focused on CLI/API persistence contracts.
+  # Runtime lifecycle behavior for pod/deployment/service resources is covered
+  # by scripts/e2e/raind.sh. Empty CLI-created pods are reconciled by the pod
+  # controller and may be recreated with a new pod ID, so remove this API-only
+  # pod immediately after the list assertion instead of keeping the original
+  # ID around for late cleanup.
+  run_raind pod-rm resource pod rm "${pod_id}"
+  assert_output_contains pod-rm "removed"
 
   cat >"${E2E_WORK_DIR}/service.yaml" <<YAML
 apiVersion: v1
@@ -439,8 +495,6 @@ YAML
   run_raind resource-namespace-rm resource rm -f "${E2E_WORK_DIR}/resource-namespace-service.yaml"
   assert_output_contains resource-namespace-rm "namespace:"
   assert_output_contains resource-namespace-rm "service:"
-
-  run_raind_allow_empty pod-rm resource pod rm "${pod_id}"
 
   assert_raind_fails service-create-invalid resource service create -f "${E2E_WORK_DIR}/missing-service.yaml"
   assert_raind_fails container-create-missing-image container create raind/e2e-missing:latest --name "e2e-cli-missing-$$"
