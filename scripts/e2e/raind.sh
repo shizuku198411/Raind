@@ -660,7 +660,7 @@ spec:
     - CAP_AUDIT_WRITE
 YAML
   run_raind custom-profile-register security profile register -f "${E2E_WORK_DIR}/custom-security-profile.yaml"
-  assert_output_contains custom-profile-register "registered security profile: ${profile}"
+  assert_output_contains custom-profile-register "security profile: ${profile} registered"
   run_raind custom-profile-show security profile show "${profile}"
   assert_output_contains custom-profile-show "name: ${profile}"
   assert_output_contains custom-profile-show "type: custom"
