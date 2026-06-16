@@ -1,4 +1,4 @@
-# Build & Install
+# Installation
 ## Pre-Setup
 
 ### Packages
@@ -105,7 +105,7 @@ sudo systemctl restart ulogd
 sudo systemctl status ulogd --no-pager
 ```
 
-## Build & Install
+## Installation
 
 ```sh
 sudo ./scripts/build.sh all

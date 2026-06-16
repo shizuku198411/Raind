@@ -137,9 +137,6 @@ This makes the bottle unit suitable for:
 - Testing internal traffic rules.
 - Verifying runtime policy behavior before moving to Pod-level deployment.
 
-See Detail:
-- [Bottle](docs/resources/bottle.md)
-
 ### 4.3. Resource: Pod / ReplicaSet / Deployment / Service
 
 A resource is Raind's Kubernetes-style management unit.
@@ -175,12 +172,6 @@ This resource unit is suitable for:
 - Testing ReplicaSet and Deployment behavior.
 - Testing Service-based traffic routing.
 - Moving from container-level tests to Pod-level deployment tests without leaving the Raind runtime.
-
-See Detail:
-- [Pod](docs/resources/pod.md)
-- [Replicaset](docs/resources/replicaset.md)
-- [Deployment](docs/resources/deployment.md)
-- [Service](docs/resources/service.md)
 
 ## 5. Visibility: Policy and Netflow
 
@@ -221,12 +212,9 @@ Together, policy and netflow are intended to solve a common problem in local con
 
 Raind makes communication control and communication visibility part of the runtime itself.
 
-## Documentation
+## More Details & Information
 
-- [Build & Install](docs/build_install.md)
-- [Testing with Workshop](docs/testing.md)
-- [Command Reference](docs/commands.md)
-- [Usage Examples](docs/examples.md)
+read [docs](./docs/) for checking more details, information, installation and others.
 
 ## License
 

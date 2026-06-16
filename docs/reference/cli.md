@@ -1,4 +1,4 @@
-# Command Reference
+# CLI Reference
 
 This is a high-level command map for `raind`. For exact flags and current help text, run:
 
@@ -46,12 +46,14 @@ Common create and run flags:
 ```sh
 --name <name>
 --network <network>
--p, --publish <host-port:container-port>
+-p, --publish <host-port:container-port[:protocol]>
 -v, --volume <host-path:container-path>
 -e, --env <KEY=VALUE>
 --device <SRC[:DST[:rwm]]>
 --cap-add <CAP_NAME>
 --cap-drop <CAP_NAME>
+--rootless
+--rootless-mode <shifted-root|login-root>
 -t, --tty
 -i, --interactive
 ```
@@ -196,3 +198,13 @@ raind logs netflow --pager
 raind logs netflow --json
 raind logs netflow -t <container-or-address>
 ```
+
+
+## Rootless containers
+
+```sh
+raind container run --name shifted --rootless alpine:latest /bin/sh -c 'id; sleep 60'
+raind container run --name login-root --rootless-mode login-root alpine:latest /bin/sh -c 'id; sleep 60'
+```
+
+See [Rootless modes](rootless-modes.md) and [Rootless containers](../guides/rootless-containers.md).
