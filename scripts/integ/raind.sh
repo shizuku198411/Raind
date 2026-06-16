@@ -241,6 +241,30 @@ run_cli_checks() {
   assert_output_contains security-profile-show-unconfined "name: unconfined"
   assert_output_contains security-profile-show-unconfined "CAP_NET_RAW"
 
+  local custom_profile_name="integ-custom-profile-$$"
+  cat >"${E2E_WORK_DIR}/custom-security-profile.yaml" <<YAML
+apiVersion: raind.io/v1
+kind: SecurityProfile
+metadata:
+  name: ${custom_profile_name}
+spec:
+  extends: deploy
+  add-cap:
+    - CAP_SYS_PTRACE
+  drop-cap:
+    - CAP_AUDIT_WRITE
+YAML
+  run_raind security-profile-register security profile register -f "${E2E_WORK_DIR}/custom-security-profile.yaml"
+  assert_output_contains security-profile-register "registered security profile: ${custom_profile_name}"
+  run_raind security-profile-show-custom security profile show "${custom_profile_name}"
+  assert_output_contains security-profile-show-custom "name: ${custom_profile_name}"
+  assert_output_contains security-profile-show-custom "type: custom"
+  assert_output_contains security-profile-show-custom "extends: deploy"
+  assert_output_contains security-profile-show-custom "CAP_SYS_PTRACE"
+  run_raind security-profile-delete security profile delete "${custom_profile_name}"
+  assert_output_contains security-profile-delete "deleted security profile: ${custom_profile_name}"
+  assert_raind_fails security-profile-show-deleted security profile show "${custom_profile_name}"
+
   run_raind help --help
   assert_output_contains help "container"
   assert_output_contains help "image"

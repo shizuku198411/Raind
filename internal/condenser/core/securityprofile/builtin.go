@@ -2,25 +2,46 @@ package securityprofile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"sort"
+	"strings"
 )
 
-type Service struct{}
+const (
+	DefaultStoreDir = "/etc/raind/security-profiles"
+	StoreDirEnv     = "RAIND_SECURITY_PROFILE_DIR"
+)
+
+type Service struct {
+	storeDir string
+}
 
 func NewService() *Service {
-	return &Service{}
+	return NewServiceWithStoreDir(resolveStoreDir())
+}
+
+func NewServiceWithStoreDir(storeDir string) *Service {
+	return &Service{storeDir: storeDir}
+}
+
+func resolveStoreDir() string {
+	if v := os.Getenv(StoreDirEnv); v != "" {
+		return v
+	}
+	return DefaultStoreDir
 }
 
 func (s *Service) List() []ProfileSummary {
-	profiles := []SecurityProfile{
-		DefaultSecurityProfile(),
-		DevSecurityProfile(),
-		DeploySecurityProfile(),
-		RestrictedSecurityProfile(),
-		PrivilegedSecurityProfile(),
-		UnconfinedSecurityProfile(),
+	profiles := builtinProfiles()
+	customProfiles, err := s.listCustomProfiles()
+	if err == nil {
+		profiles = append(profiles, customProfiles...)
 	}
+
 	out := make([]ProfileSummary, 0, len(profiles))
 	for _, profile := range profiles {
 		out = append(out, profile.Summary())
@@ -29,26 +50,212 @@ func (s *Service) List() []ProfileSummary {
 }
 
 func (s *Service) Get(name string) (SecurityProfile, error) {
-	switch name {
-	case "", ProfileDefault:
-		return DefaultSecurityProfile(), nil
-	case ProfileDev:
-		return DevSecurityProfile(), nil
-	case ProfileDeploy:
-		return DeploySecurityProfile(), nil
-	case ProfileRestricted:
-		return RestrictedSecurityProfile(), nil
-	case ProfilePrivileged:
-		return PrivilegedSecurityProfile(), nil
-	case ProfileUnconfined:
-		return UnconfinedSecurityProfile(), nil
-	default:
-		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
+	if profile, ok := builtinProfile(name); ok {
+		return profile, nil
 	}
+	return s.getCustomProfile(name, map[string]struct{}{})
 }
 
 func (s *Service) Resolve(name string) (SecurityProfile, error) {
 	return s.Get(name)
+}
+
+func (s *Service) Register(manifest CustomProfileManifest) (SecurityProfile, error) {
+	if err := s.validateManifest(manifest); err != nil {
+		return SecurityProfile{}, err
+	}
+	name := manifest.ProfileName()
+	if err := os.MkdirAll(s.storeDir, 0755); err != nil {
+		return SecurityProfile{}, fmt.Errorf("create security profile store: %w", err)
+	}
+	path := s.profilePath(name)
+	if _, err := os.Stat(path); err == nil {
+		return SecurityProfile{}, fmt.Errorf("security profile already exists: %s", name)
+	} else if err != nil && !os.IsNotExist(err) {
+		return SecurityProfile{}, fmt.Errorf("stat security profile: %w", err)
+	}
+
+	if err := writeManifestFile(path, manifest); err != nil {
+		return SecurityProfile{}, err
+	}
+	profile, err := s.Get(name)
+	if err != nil {
+		_ = os.Remove(path)
+		return SecurityProfile{}, err
+	}
+	return profile, nil
+}
+
+func (s *Service) Delete(name string) error {
+	if name == "" {
+		return fmt.Errorf("missing security profile name")
+	}
+	if _, ok := builtinProfile(name); ok {
+		return fmt.Errorf("cannot delete built-in security profile: %s", name)
+	}
+	if !validProfileName(name) {
+		return fmt.Errorf("invalid security profile name: %s", name)
+	}
+	path := s.profilePath(name)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("unknown security profile: %s", name)
+		}
+		return fmt.Errorf("delete security profile: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) validateManifest(manifest CustomProfileManifest) error {
+	name := manifest.ProfileName()
+	if name == "" {
+		return fmt.Errorf("missing security profile name")
+	}
+	if !validProfileName(name) {
+		return fmt.Errorf("invalid security profile name: %s", name)
+	}
+	if _, ok := builtinProfile(name); ok {
+		return fmt.Errorf("cannot overwrite built-in security profile: %s", name)
+	}
+	extends := manifest.ProfileExtends()
+	if extends == "" {
+		return fmt.Errorf("security profile extends is required")
+	}
+	if extends == name {
+		return fmt.Errorf("security profile cannot extend itself: %s", name)
+	}
+	if _, err := s.Get(extends); err != nil {
+		return fmt.Errorf("unknown parent security profile %q: %w", extends, err)
+	}
+	for _, cap := range append(slices.Clone(manifest.ProfileAddCap()), manifest.ProfileDropCap()...) {
+		if !validCapabilityName(cap) {
+			return fmt.Errorf("invalid capability name: %s", cap)
+		}
+	}
+	return nil
+}
+
+func (s *Service) listCustomProfiles() ([]SecurityProfile, error) {
+	entries, err := os.ReadDir(s.storeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read security profile store: %w", err)
+	}
+	profiles := make([]SecurityProfile, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		manifest, err := readManifestFile(filepath.Join(s.storeDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		profile, err := s.resolveCustomManifest(manifest, map[string]struct{}{})
+		if err != nil {
+			continue
+		}
+		profiles = append(profiles, profile)
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+	return profiles, nil
+}
+
+func (s *Service) getCustomProfile(name string, seen map[string]struct{}) (SecurityProfile, error) {
+	if name == "" {
+		return DefaultSecurityProfile(), nil
+	}
+	if !validProfileName(name) {
+		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
+	}
+	manifest, err := readManifestFile(s.profilePath(name))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
+		}
+		return SecurityProfile{}, err
+	}
+	return s.resolveCustomManifest(manifest, seen)
+}
+
+func (s *Service) resolveCustomManifest(manifest CustomProfileManifest, seen map[string]struct{}) (SecurityProfile, error) {
+	if err := s.validateCustomManifestShape(manifest); err != nil {
+		return SecurityProfile{}, err
+	}
+	name := manifest.ProfileName()
+	if _, ok := seen[name]; ok {
+		return SecurityProfile{}, fmt.Errorf("security profile extends cycle detected: %s", name)
+	}
+	seen[name] = struct{}{}
+	defer delete(seen, name)
+
+	extends := manifest.ProfileExtends()
+	parent, ok := builtinProfile(extends)
+	var err error
+	if !ok {
+		parent, err = s.getCustomProfile(extends, seen)
+		if err != nil {
+			return SecurityProfile{}, err
+		}
+	}
+	profile := parent
+	profile.Name = name
+	profile.Type = ProfileTypeCustom
+	profile.Extends = extends
+	profile.AddCap = slices.Clone(manifest.ProfileAddCap())
+	profile.DropCap = slices.Clone(manifest.ProfileDropCap())
+	profile.Capabilities.Base = mergeCapabilityDelta(profile.Capabilities.Base, profile.AddCap, profile.DropCap)
+	profile.Seccomp = CloneSeccompObject(profile.Seccomp)
+	return profile, nil
+}
+
+func (s *Service) validateCustomManifestShape(manifest CustomProfileManifest) error {
+	name := manifest.ProfileName()
+	if name == "" || !validProfileName(name) {
+		return fmt.Errorf("invalid security profile name: %s", name)
+	}
+	if _, ok := builtinProfile(name); ok {
+		return fmt.Errorf("cannot overwrite built-in security profile: %s", name)
+	}
+	if manifest.ProfileExtends() == "" {
+		return fmt.Errorf("security profile extends is required")
+	}
+	return nil
+}
+
+func (s *Service) profilePath(name string) string {
+	return filepath.Join(s.storeDir, name+".yaml")
+}
+
+func builtinProfiles() []SecurityProfile {
+	return []SecurityProfile{
+		DefaultSecurityProfile(),
+		DevSecurityProfile(),
+		DeploySecurityProfile(),
+		RestrictedSecurityProfile(),
+		PrivilegedSecurityProfile(),
+		UnconfinedSecurityProfile(),
+	}
+}
+
+func builtinProfile(name string) (SecurityProfile, bool) {
+	switch name {
+	case "", ProfileDefault:
+		return DefaultSecurityProfile(), true
+	case ProfileDev:
+		return DevSecurityProfile(), true
+	case ProfileDeploy:
+		return DeploySecurityProfile(), true
+	case ProfileRestricted:
+		return RestrictedSecurityProfile(), true
+	case ProfilePrivileged:
+		return PrivilegedSecurityProfile(), true
+	case ProfileUnconfined:
+		return UnconfinedSecurityProfile(), true
+	default:
+		return SecurityProfile{}, false
+	}
 }
 
 func (p SecurityProfile) Summary() ProfileSummary {
@@ -157,6 +364,52 @@ func dropCapabilities(base []string, drops ...string) []string {
 		out = append(out, cap)
 	}
 	return out
+}
+
+func mergeCapabilityDelta(base []string, addCaps []string, dropCaps []string) []string {
+	out := slices.Clone(base)
+	dropSet := make(map[string]struct{}, len(dropCaps))
+	for _, cap := range dropCaps {
+		dropSet[cap] = struct{}{}
+	}
+	out = dropCapabilities(out, dropCaps...)
+	seen := make(map[string]struct{}, len(out)+len(addCaps))
+	for _, cap := range out {
+		seen[cap] = struct{}{}
+	}
+	for _, cap := range addCaps {
+		if _, dropped := dropSet[cap]; dropped {
+			continue
+		}
+		if _, ok := seen[cap]; ok {
+			continue
+		}
+		out = append(out, cap)
+		seen[cap] = struct{}{}
+	}
+	return out
+}
+
+var profileNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
+
+func validProfileName(name string) bool {
+	return profileNamePattern.MatchString(name)
+}
+
+func validCapabilityName(cap string) bool {
+	if cap == "" || !strings.HasPrefix(cap, "CAP_") {
+		return false
+	}
+	for _, r := range cap[4:] {
+		if r < 'A' || r > 'Z' {
+			if r < '0' || r > '9' {
+				if r != '_' {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func DefaultSecurityProfile() SecurityProfile {

@@ -105,7 +105,9 @@ func NewApiRouter() *chi.Mux {
 
 	// == security profiles ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/security/profiles", securityProfileHandler.ListSecurityProfiles)
+	r.With(RequireCLIScope(ScopeContainerWrite)).Post("/v1/security/profiles", securityProfileHandler.RegisterSecurityProfile)
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/security/profiles/{name}", securityProfileHandler.ShowSecurityProfile)
+	r.With(RequireCLIScope(ScopeContainerWrite)).Delete("/v1/security/profiles/{name}", securityProfileHandler.DeleteSecurityProfile)
 
 	// == resource ==
 	r.With(RequireCLIScope(ScopeResourceWrite)).Post("/v1/resource/apply", podHandler.ApplyPodYaml) // apply yaml

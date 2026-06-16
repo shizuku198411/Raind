@@ -4,6 +4,7 @@ type ProfileType string
 
 const (
 	ProfileTypeBuiltIn ProfileType = "built-in"
+	ProfileTypeCustom  ProfileType = "custom"
 
 	ProfileDefault    = "default"
 	ProfileDev        = "dev"
@@ -16,6 +17,9 @@ const (
 type SecurityProfile struct {
 	Name            string            `json:"name" yaml:"name"`
 	Type            ProfileType       `json:"type" yaml:"type"`
+	Extends         string            `json:"extends,omitempty" yaml:"extends,omitempty"`
+	AddCap          []string          `json:"addCap,omitempty" yaml:"addCap,omitempty"`
+	DropCap         []string          `json:"dropCap,omitempty" yaml:"dropCap,omitempty"`
 	Capabilities    CapabilityProfile `json:"capabilities" yaml:"capabilities"`
 	Seccomp         *SeccompObject    `json:"seccomp,omitempty" yaml:"seccomp,omitempty"`
 	AppArmorProfile string            `json:"apparmorProfile,omitempty" yaml:"apparmorProfile,omitempty"`
@@ -23,6 +27,55 @@ type SecurityProfile struct {
 
 type CapabilityProfile struct {
 	Base []string `json:"base" yaml:"base"`
+}
+
+type CustomProfileManifest struct {
+	APIVersion string                `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	Kind       string                `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Metadata   CustomProfileMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Spec       CustomProfileSpec     `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Name       string                `json:"name,omitempty" yaml:"name,omitempty"`
+	Extends    string                `json:"extends,omitempty" yaml:"extends,omitempty"`
+	AddCap     []string              `json:"addCap,omitempty" yaml:"add-cap,omitempty"`
+	DropCap    []string              `json:"dropCap,omitempty" yaml:"drop-cap,omitempty"`
+}
+
+type CustomProfileMetadata struct {
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+}
+
+type CustomProfileSpec struct {
+	Extends string   `json:"extends,omitempty" yaml:"extends,omitempty"`
+	AddCap  []string `json:"addCap,omitempty" yaml:"add-cap,omitempty"`
+	DropCap []string `json:"dropCap,omitempty" yaml:"drop-cap,omitempty"`
+}
+
+func (m CustomProfileManifest) ProfileName() string {
+	if m.Metadata.Name != "" {
+		return m.Metadata.Name
+	}
+	return m.Name
+}
+
+func (m CustomProfileManifest) ProfileExtends() string {
+	if m.Spec.Extends != "" {
+		return m.Spec.Extends
+	}
+	return m.Extends
+}
+
+func (m CustomProfileManifest) ProfileAddCap() []string {
+	if len(m.Spec.AddCap) > 0 {
+		return m.Spec.AddCap
+	}
+	return m.AddCap
+}
+
+func (m CustomProfileManifest) ProfileDropCap() []string {
+	if len(m.Spec.DropCap) > 0 {
+		return m.Spec.DropCap
+	}
+	return m.DropCap
 }
 
 type SeccompArgObject struct {

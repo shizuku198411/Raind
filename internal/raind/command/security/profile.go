@@ -13,6 +13,8 @@ func CommandProfile() *cli.Command {
 		Subcommands: []*cli.Command{
 			commandProfileList(),
 			commandProfileShow(),
+			commandProfileRegister(),
+			commandProfileDelete(),
 		},
 	}
 }
@@ -35,6 +37,36 @@ func commandProfileShow() *cli.Command {
 		ArgsUsage: "<name>",
 		Action: func(ctx *cli.Context) error {
 			return core.NewServiceShow().Show(ctx.Args().First())
+		},
+	}
+}
+
+func commandProfileRegister() *cli.Command {
+	return &cli.Command{
+		Name:  "register",
+		Usage: "register custom security profile",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "file",
+				Aliases:  []string{"f"},
+				Usage:    "security profile yaml file",
+				Required: true,
+			},
+		},
+		Action: func(ctx *cli.Context) error {
+			return core.NewServiceRegister().Register(ctx.String("file"))
+		},
+	}
+}
+
+func commandProfileDelete() *cli.Command {
+	return &cli.Command{
+		Name:      "delete",
+		Aliases:   []string{"rm"},
+		Usage:     "delete custom security profile",
+		ArgsUsage: "<name>",
+		Action: func(ctx *cli.Context) error {
+			return core.NewServiceDelete().Delete(ctx.Args().First())
 		},
 	}
 }

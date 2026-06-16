@@ -463,6 +463,24 @@ assert_unconfined_security_profile_applied() {
   ' "${config}" >/dev/null || fail "unconfined security profile was not written to ${config}"
 }
 
+assert_custom_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify custom security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    (any(.process.capabilities.effective[]?; . == "CAP_SYS_PTRACE")) and
+    ([.process.capabilities.effective[]?] | index("CAP_AUDIT_WRITE") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_NET_RAW") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_MKNOD") | not)
+  ' "${config}" >/dev/null || fail "custom security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
+}
+
 write_static_build_context() {
   local dir="$1"
   mkdir -p "${dir}/assets"
@@ -621,6 +639,43 @@ test_unconfined_security_profile_container() {
   assert_unconfined_security_profile_applied "${cid}"
   run_raind_allow_empty unconfined-profile-stop container stop "${cid}"
   run_raind_allow_empty unconfined-profile-rm container rm "${cid}"
+}
+
+test_custom_security_profile_container() {
+  local cid
+  local name="e2e-custom-profile-container-${SUFFIX}"
+  local profile="e2e-custom-profile-${SUFFIX}"
+
+  log "custom security profile register and container test"
+  cat >"${E2E_WORK_DIR}/custom-security-profile.yaml" <<YAML
+apiVersion: raind.io/v1
+kind: SecurityProfile
+metadata:
+  name: ${profile}
+spec:
+  extends: deploy
+  add-cap:
+    - CAP_SYS_PTRACE
+  drop-cap:
+    - CAP_AUDIT_WRITE
+YAML
+  run_raind custom-profile-register security profile register -f "${E2E_WORK_DIR}/custom-security-profile.yaml"
+  assert_output_contains custom-profile-register "registered security profile: ${profile}"
+  run_raind custom-profile-show security profile show "${profile}"
+  assert_output_contains custom-profile-show "name: ${profile}"
+  assert_output_contains custom-profile-show "type: custom"
+  assert_output_contains custom-profile-show "extends: deploy"
+  assert_output_contains custom-profile-show "CAP_SYS_PTRACE"
+
+  run_raind custom-profile-run container run --security-profile "${profile}" --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id custom-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_custom_security_profile_applied "${cid}"
+  run_raind_allow_empty custom-profile-stop container stop "${cid}"
+  run_raind_allow_empty custom-profile-rm container rm "${cid}"
+  run_raind custom-profile-delete security profile delete "${profile}"
+  assert_output_contains custom-profile-delete "deleted security profile: ${profile}"
+  assert_raind_fails custom-profile-show-deleted security profile show "${profile}"
 }
 
 test_rootless_container_cache() {
@@ -1033,6 +1088,7 @@ main() {
   test_deploy_security_profile_container
   test_restricted_security_profile_container
   test_unconfined_security_profile_container
+  test_custom_security_profile_container
   test_rootless_container_cache
   test_login_rootless_bind_mount
   test_bottle_deploy

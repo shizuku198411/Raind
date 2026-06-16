@@ -8,7 +8,7 @@ import (
 )
 
 func TestServiceListBuiltInProfiles(t *testing.T) {
-	profiles := NewService().List()
+	profiles := NewServiceWithStoreDir(t.TempDir()).List()
 
 	require.Len(t, profiles, 6)
 	assert.Equal(t, ProfileDefault, profiles[0].Name)
@@ -41,7 +41,7 @@ func TestServiceListBuiltInProfiles(t *testing.T) {
 }
 
 func TestServiceGetBuiltInProfiles(t *testing.T) {
-	service := NewService()
+	service := NewServiceWithStoreDir(t.TempDir())
 
 	profile, err := service.Get(ProfileDev)
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestServiceGetBuiltInProfiles(t *testing.T) {
 }
 
 func TestServiceGetDeployProfile(t *testing.T) {
-	profile, err := NewService().Get(ProfileDeploy)
+	profile, err := NewServiceWithStoreDir(t.TempDir()).Get(ProfileDeploy)
 	require.NoError(t, err)
 
 	assert.Equal(t, ProfileDeploy, profile.Name)
@@ -64,7 +64,7 @@ func TestServiceGetDeployProfile(t *testing.T) {
 }
 
 func TestServiceGetRestrictedProfile(t *testing.T) {
-	profile, err := NewService().Get(ProfileRestricted)
+	profile, err := NewServiceWithStoreDir(t.TempDir()).Get(ProfileRestricted)
 	require.NoError(t, err)
 
 	assert.Equal(t, ProfileRestricted, profile.Name)
@@ -75,7 +75,7 @@ func TestServiceGetRestrictedProfile(t *testing.T) {
 }
 
 func TestServiceGetPrivilegedProfile(t *testing.T) {
-	profile, err := NewService().Get(ProfilePrivileged)
+	profile, err := NewServiceWithStoreDir(t.TempDir()).Get(ProfilePrivileged)
 	require.NoError(t, err)
 
 	assert.Equal(t, ProfilePrivileged, profile.Name)
@@ -86,7 +86,7 @@ func TestServiceGetPrivilegedProfile(t *testing.T) {
 }
 
 func TestServiceGetUnconfinedProfile(t *testing.T) {
-	profile, err := NewService().Get(ProfileUnconfined)
+	profile, err := NewServiceWithStoreDir(t.TempDir()).Get(ProfileUnconfined)
 	require.NoError(t, err)
 
 	assert.Equal(t, ProfileUnconfined, profile.Name)
@@ -96,7 +96,7 @@ func TestServiceGetUnconfinedProfile(t *testing.T) {
 }
 
 func TestServiceRejectsUnknownProfile(t *testing.T) {
-	_, err := NewService().Get("unknown-profile")
+	_, err := NewServiceWithStoreDir(t.TempDir()).Get("unknown-profile")
 	assert.ErrorContains(t, err, "unknown security profile")
 }
 
@@ -110,4 +110,62 @@ func TestCloneSeccompObject(t *testing.T) {
 
 	cloned.Syscalls[0].Names[0] = "changed"
 	assert.Equal(t, "bpf", profile.Seccomp.Syscalls[0].Names[0])
+}
+
+func TestServiceRegisterCustomProfile(t *testing.T) {
+	service := NewServiceWithStoreDir(t.TempDir())
+
+	profile, err := service.Register(CustomProfileManifest{
+		APIVersion: "raind.io/v1",
+		Kind:       "SecurityProfile",
+		Metadata: CustomProfileMetadata{
+			Name: "custom-dev",
+		},
+		Spec: CustomProfileSpec{
+			Extends: "dev",
+			AddCap:  []string{"CAP_SYS_PTRACE"},
+			DropCap: []string{"CAP_NET_RAW"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "custom-dev", profile.Name)
+	assert.Equal(t, ProfileTypeCustom, profile.Type)
+	assert.Equal(t, ProfileDev, profile.Extends)
+	assert.Contains(t, profile.Capabilities.Base, "CAP_SYS_PTRACE")
+	assert.NotContains(t, profile.Capabilities.Base, "CAP_NET_RAW")
+	assert.Contains(t, profile.Capabilities.Base, "CAP_CHOWN")
+
+	resolved, err := service.Resolve("custom-dev")
+	require.NoError(t, err)
+	assert.Equal(t, profile.Capabilities.Base, resolved.Capabilities.Base)
+
+	profiles := service.List()
+	require.Len(t, profiles, 7)
+	assert.Equal(t, "custom-dev", profiles[6].Name)
+	assert.Equal(t, ProfileTypeCustom, profiles[6].Type)
+}
+
+func TestServiceRegisterRequiresExtends(t *testing.T) {
+	_, err := NewServiceWithStoreDir(t.TempDir()).Register(CustomProfileManifest{Name: "custom-dev"})
+	assert.ErrorContains(t, err, "extends is required")
+}
+
+func TestServiceRegisterRejectsBuiltInName(t *testing.T) {
+	_, err := NewServiceWithStoreDir(t.TempDir()).Register(CustomProfileManifest{Name: ProfileDev, Extends: ProfileDefault})
+	assert.ErrorContains(t, err, "built-in")
+}
+
+func TestServiceDeleteCustomProfile(t *testing.T) {
+	service := NewServiceWithStoreDir(t.TempDir())
+	_, err := service.Register(CustomProfileManifest{Name: "custom-dev", Extends: ProfileDev, AddCap: []string{"CAP_SYS_PTRACE"}})
+	require.NoError(t, err)
+
+	require.NoError(t, service.Delete("custom-dev"))
+	_, err = service.Get("custom-dev")
+	assert.ErrorContains(t, err, "unknown security profile")
+}
+
+func TestServiceDeleteRejectsBuiltInProfile(t *testing.T) {
+	err := NewServiceWithStoreDir(t.TempDir()).Delete(ProfileDefault)
+	assert.ErrorContains(t, err, "cannot delete built-in")
 }

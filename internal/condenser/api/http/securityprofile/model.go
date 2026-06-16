@@ -9,3 +9,13 @@ type ListSecurityProfileResponse struct {
 type ShowSecurityProfileResponse struct {
 	Profile core.SecurityProfile `json:"profile"`
 }
+
+type RegisterSecurityProfileRequest = core.CustomProfileManifest
+
+type RegisterSecurityProfileResponse struct {
+	Profile core.SecurityProfile `json:"profile"`
+}
+
+type DeleteSecurityProfileResponse struct {
+	Name string `json:"name"`
+}

@@ -1,6 +1,7 @@
 package securityprofile
 
 import (
+	"encoding/json"
 	"net/http"
 	apimodel "raind/internal/condenser/api/http/utils"
 	core "raind/internal/condenser/core/securityprofile"
@@ -49,4 +50,47 @@ func (h *RequestHandler) ShowSecurityProfile(w http.ResponseWriter, r *http.Requ
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "security profile", ShowSecurityProfileResponse{Profile: profile})
+}
+
+// RegisterSecurityProfile godoc
+// @Summary register security profile
+// @Description register custom security profile
+// @Tags security
+// @Accept json
+// @Produce json
+// @Success 201 {object} apimodel.ApiResponse
+// @Router /v1/security/profiles [post]
+func (h *RequestHandler) RegisterSecurityProfile(w http.ResponseWriter, r *http.Request) {
+	var req RegisterSecurityProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apimodel.RespondFail(w, http.StatusBadRequest, "invalid security profile request: "+err.Error(), RegisterSecurityProfileResponse{})
+		return
+	}
+	profile, err := h.service.Register(req)
+	if err != nil {
+		apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), RegisterSecurityProfileResponse{})
+		return
+	}
+	apimodel.RespondSuccess(w, http.StatusCreated, "security profile registered", RegisterSecurityProfileResponse{Profile: profile})
+}
+
+// DeleteSecurityProfile godoc
+// @Summary delete security profile
+// @Description delete custom security profile
+// @Tags security
+// @Produce json
+// @Param name path string true "Security profile name"
+// @Success 200 {object} apimodel.ApiResponse
+// @Router /v1/security/profiles/{name} [delete]
+func (h *RequestHandler) DeleteSecurityProfile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		apimodel.RespondFail(w, http.StatusBadRequest, "missing security profile name", DeleteSecurityProfileResponse{})
+		return
+	}
+	if err := h.service.Delete(name); err != nil {
+		apimodel.RespondFail(w, http.StatusBadRequest, err.Error(), DeleteSecurityProfileResponse{})
+		return
+	}
+	apimodel.RespondSuccess(w, http.StatusOK, "security profile deleted", DeleteSecurityProfileResponse{Name: name})
 }

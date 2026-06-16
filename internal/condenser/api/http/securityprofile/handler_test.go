@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	core "raind/internal/condenser/core/securityprofile"
@@ -136,4 +137,63 @@ func TestShowSecurityProfileNotFound(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestRegisterSecurityProfile(t *testing.T) {
+	handler := &RequestHandler{service: core.NewServiceWithStoreDir(t.TempDir())}
+	reqBody := `{"apiVersion":"raind.io/v1","kind":"SecurityProfile","metadata":{"name":"custom-dev"},"spec":{"extends":"dev","addCap":["CAP_SYS_PTRACE"],"dropCap":["CAP_NET_RAW"]}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/security/profiles", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	handler.RegisterSecurityProfile(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var resp struct {
+		Status string                          `json:"status"`
+		Data   RegisterSecurityProfileResponse `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "custom-dev", resp.Data.Profile.Name)
+	assert.Equal(t, core.ProfileTypeCustom, resp.Data.Profile.Type)
+	assert.Contains(t, resp.Data.Profile.Capabilities.Base, "CAP_SYS_PTRACE")
+	assert.NotContains(t, resp.Data.Profile.Capabilities.Base, "CAP_NET_RAW")
+}
+
+func TestRegisterSecurityProfileRequiresExtends(t *testing.T) {
+	handler := &RequestHandler{service: core.NewServiceWithStoreDir(t.TempDir())}
+	req := httptest.NewRequest(http.MethodPost, "/v1/security/profiles", strings.NewReader(`{"name":"custom-dev"}`))
+	w := httptest.NewRecorder()
+
+	handler.RegisterSecurityProfile(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestDeleteSecurityProfile(t *testing.T) {
+	service := core.NewServiceWithStoreDir(t.TempDir())
+	_, err := service.Register(core.CustomProfileManifest{Name: "custom-dev", Extends: core.ProfileDev, AddCap: []string{"CAP_SYS_PTRACE"}})
+	require.NoError(t, err)
+	handler := &RequestHandler{service: service}
+	r := chi.NewRouter()
+	r.Delete("/v1/security/profiles/{name}", handler.DeleteSecurityProfile)
+	req := httptest.NewRequest(http.MethodDelete, "/v1/security/profiles/custom-dev", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	_, err = service.Get("custom-dev")
+	assert.ErrorContains(t, err, "unknown security profile")
+}
+
+func TestDeleteSecurityProfileRejectsBuiltIn(t *testing.T) {
+	handler := &RequestHandler{service: core.NewServiceWithStoreDir(t.TempDir())}
+	r := chi.NewRouter()
+	r.Delete("/v1/security/profiles/{name}", handler.DeleteSecurityProfile)
+	req := httptest.NewRequest(http.MethodDelete, "/v1/security/profiles/default", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
