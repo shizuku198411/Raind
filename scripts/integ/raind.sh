@@ -271,8 +271,11 @@ YAML
   assert_output_contains help "network"
   assert_output_contains help "resource"
   assert_output_contains help "security"
-  assert_output_contains help "policy"
   assert_output_contains help "logs"
+
+  run_raind security-help security --help
+  assert_output_contains security-help "profile"
+  assert_output_contains security-help "policy"
 
   run_raind container-run-help container run --help
   assert_output_contains container-run-help "rootless-mode"
@@ -290,13 +293,13 @@ YAML
   run_raind completion-zsh completion zsh
   assert_output_contains completion-zsh "#compdef raind"
 
-  run_raind policy-ls-ew policy ls --type ew
+  run_raind policy-ls-ew security policy ls --type ew
   assert_output_contains policy-ls-ew "POLICY TYPE"
 
-  run_raind policy-ls-ns-obs policy ls --type ns-obs
+  run_raind policy-ls-ns-obs security policy ls --type ns-obs
   assert_output_contains policy-ls-ns-obs "POLICY TYPE"
 
-  run_raind policy-ls-ns-enf policy ls --type ns-enf
+  run_raind policy-ls-ns-enf security policy ls --type ns-enf
   assert_output_contains policy-ls-ns-enf "POLICY TYPE"
 
   run_raind resource-replicaset-ls resource replicaset ls
@@ -306,7 +309,7 @@ YAML
 
   assert_raind_fails invalid-top-level definitely-not-a-command
   assert_raind_fails invalid-subcommand container definitely-not-a-subcommand
-  assert_raind_fails invalid-policy-type policy ls --type invalid
+  assert_raind_fails invalid-policy-type security policy ls --type invalid
   assert_raind_fails invalid-rootless-run-mode container run --rootless-mode invalid-mode busybox:latest true
   assert_raind_fails invalid-rootless-create-mode container create --rootless-mode invalid-mode busybox:latest true
   assert_raind_fails unknown-container-stop container stop unknown-e2e-container
