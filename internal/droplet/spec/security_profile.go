@@ -6,7 +6,10 @@ import (
 	"slices"
 )
 
-const SecurityProfileDefault = "default"
+const (
+	SecurityProfileDefault = "default"
+	SecurityProfileDev     = "dev"
+)
 
 type SecurityOption struct {
 	ProfileName string
@@ -24,10 +27,20 @@ type CapabilityProfile struct {
 }
 
 func ResolveSecurityProfile(name string) (SecurityProfile, error) {
-	if name == "" || name == SecurityProfileDefault {
+	switch name {
+	case "", SecurityProfileDefault:
 		return DefaultSecurityProfile(), nil
+	case SecurityProfileDev:
+		return DevSecurityProfile(), nil
+	default:
+		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
 	}
-	return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
+}
+
+func DevSecurityProfile() SecurityProfile {
+	profile := DefaultSecurityProfile()
+	profile.Name = SecurityProfileDev
+	return profile
 }
 
 func DefaultSecurityProfile() SecurityProfile {

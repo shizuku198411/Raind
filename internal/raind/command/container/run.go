@@ -44,6 +44,10 @@ func CommandRun() *cli.Command {
 				Name:  "cap-drop",
 				Usage: "drop Linux capabilities (e.g. CAP_NET_RAW)",
 			},
+			&cli.StringFlag{
+				Name:  "security-profile",
+				Usage: "security profile to apply (e.g. default, dev)",
+			},
 			&cli.BoolFlag{
 				Name:    "tty",
 				Aliases: []string{"t"},
@@ -102,6 +106,7 @@ func runRun(ctx *cli.Context) error {
 	opt_env := ctx.StringSlice("env")
 	opt_capAdd := ctx.StringSlice("cap-add")
 	opt_capDrop := ctx.StringSlice("cap-drop")
+	opt_securityProfile := ctx.String("security-profile")
 	opt_tty := ctx.Bool("tty")
 	opt_rm := ctx.Bool("rm")
 	opt_name := ctx.String("name")
@@ -122,6 +127,7 @@ func runRun(ctx *cli.Context) error {
 			Env:             opt_env,
 			CapAdd:          opt_capAdd,
 			CapDrop:         opt_capDrop,
+			SecurityProfile: opt_securityProfile,
 			Tty:             opt_tty,
 			Rm:              opt_rm,
 			Name:            opt_name,

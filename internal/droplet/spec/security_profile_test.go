@@ -23,6 +23,21 @@ func TestResolveSecurityProfileDefaults(t *testing.T) {
 	assert.Equal(t, "SCMP_ACT_ALLOW", emptyProfile.Seccomp.DefaultAction)
 }
 
+func TestResolveSecurityProfileDev(t *testing.T) {
+	// == exercise ==
+	devProfile, err := ResolveSecurityProfile(SecurityProfileDev)
+	defaultProfile := DefaultSecurityProfile()
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, SecurityProfileDev, devProfile.Name)
+	assert.Equal(t, defaultProfile.Capabilities.Base, devProfile.Capabilities.Base)
+	assert.Equal(t, defaultProfile.AppArmorProfile, devProfile.AppArmorProfile)
+	require.NotNil(t, devProfile.Seccomp)
+	assert.Equal(t, defaultProfile.Seccomp.DefaultAction, devProfile.Seccomp.DefaultAction)
+	assert.Equal(t, defaultProfile.Seccomp.Syscalls, devProfile.Seccomp.Syscalls)
+}
+
 func TestResolveSecurityProfileRejectsUnknownProfile(t *testing.T) {
 	// == exercise ==
 	_, err := ResolveSecurityProfile("deploy")
@@ -48,6 +63,19 @@ func TestCloneSeccompObjectDeepCopiesProfileSeccomp(t *testing.T) {
 	assert.NotEqual(t, "changed", profile.Seccomp.Architectures[0])
 	assert.Equal(t, "bpf", profile.Seccomp.Syscalls[0].Names[0])
 	assert.Equal(t, uint32(1), *profile.Seccomp.Syscalls[0].ErrnoRet)
+}
+
+func TestBuildSpecAcceptsDevSecurityProfile(t *testing.T) {
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{ProfileName: SecurityProfileDev},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, DevSecurityProfile().AppArmorProfile, config.LinuxSpec.AppArmorProfile)
+	require.NotNil(t, config.LinuxSpec.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
 }
 
 func TestBuildSpecRejectsUnknownSecurityProfile(t *testing.T) {

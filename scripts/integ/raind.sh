@@ -223,10 +223,12 @@ run_cli_checks() {
   run_raind container-run-help container run --help
   assert_output_contains container-run-help "rootless-mode"
   assert_output_contains container-run-help "login-root"
+  assert_output_contains container-run-help "security-profile"
 
   run_raind container-create-help container create --help
   assert_output_contains container-create-help "rootless-mode"
   assert_output_contains container-create-help "login-root"
+  assert_output_contains container-create-help "security-profile"
 
   run_raind completion-bash completion bash
   assert_output_contains completion-bash "_raind_complete"
