@@ -2,45 +2,96 @@ name: Raind Snap Test
 
 on:
   pull_request:
-    paths:
-      - "snap/**"
-      - "cmd/**"
-      - "internal/**"
-      - "scripts/**"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/snap.yml"
+  merge_group:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  snap-build:
-    name: build snap
+  changes:
+    name: detect snap-impacting changes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      snap: ${{ steps.detect.outputs.snap }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect snap-impacting changes
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # For manual runs and merge queue runs, execute the full snap test.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "snap=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            | tee /tmp/changed-files.txt
+
+          if grep -Eq '^(snap/|cmd/|internal/|scripts/|go\.mod$|go\.sum$|VERSION$|\.github/workflows/snap\.yml$)' /tmp/changed-files.txt; then
+            echo "snap=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "snap=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "snap-impacting changes: ${{ steps.detect.outputs.snap }}" >> "$GITHUB_STEP_SUMMARY"
+
+  snap-build:
+    name: build snap
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 30
+
+    steps:
+      - name: Skip notice
+        if: needs.changes.outputs.snap != 'true'
+        run: echo "No snap-impacting changes; skipping snap build." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout
+        if: needs.changes.outputs.snap == 'true'
+        uses: actions/checkout@v6
 
       - name: Setup Go
+        if: needs.changes.outputs.snap == 'true'
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Export Go path for Snapcraft
+        if: needs.changes.outputs.snap == 'true'
         run: |
           echo "RAIND_SNAP_GO_BIN=$(dirname "$(command -v go)")" >> "$GITHUB_ENV"
           echo "RAIND_SNAP_GOROOT=$(go env GOROOT)" >> "$GITHUB_ENV"
 
       - name: Install Snapcraft
+        if: needs.changes.outputs.snap == 'true'
         run: sudo snap install snapcraft --classic
 
       - name: Build snap
+        if: needs.changes.outputs.snap == 'true'
         run: snapcraft pack --destructive-mode
 
       - name: Upload snap artifact
+        if: needs.changes.outputs.snap == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: raind-snap
@@ -50,23 +101,38 @@ jobs:
     name: install and smoke test snap
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: snap-build
+    needs: [changes, snap-build]
+    if: always()
 
     steps:
+      - name: Skip notice
+        if: needs.changes.outputs.snap != 'true'
+        run: echo "No snap-impacting changes; skipping snap install smoke test." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop if snap build failed
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result != 'success'
+        run: |
+          echo "snap build did not succeed; refusing to run snap smoke test"
+          exit 1
+
       - name: Checkout
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         uses: actions/checkout@v6
 
       - name: Download snap artifact
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: raind-snap
           path: .
 
       - name: Install snap
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         run: |
           sudo snap install ./raind_*.snap --dangerous --classic
 
       - name: Check snap commands
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         run: |
           which raind
           which raind.droplet
@@ -77,11 +143,13 @@ jobs:
           raind.condenser-hook-agent --help || true
 
       - name: Check condenser service
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         run: |
           snap services raind
           sudo snap logs raind.condenser -n 100 || true
 
       - name: Check snap runtime env
+        if: needs.changes.outputs.snap == 'true' && needs.snap-build.result == 'success'
         run: |
           snap run --shell raind -c '
             set -eux
