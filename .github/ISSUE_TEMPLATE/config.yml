@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/shizuku198411/Raind/security/advisories/new
+    about: Please report suspected vulnerabilities privately through GitHub Security Advisories.

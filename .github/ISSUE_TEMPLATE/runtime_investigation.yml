@@ -1,0 +1,59 @@
+name: Runtime investigation
+description: Report a low-level runtime issue involving namespaces, cgroups, mounts, networking, or exec
+title: "runtime: "
+labels: ["runtime", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for runtime behavior that may involve host-level container primitives. If this may be a security vulnerability, report it privately from the Security tab instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime_area
+    attributes:
+      label: Runtime area
+      options:
+        - create/start
+        - exec / exec-shim
+        - stop/kill/rm
+        - rootfs / mount / pivot_root
+        - cgroups
+        - rootless / UID-GID mapping
+        - networking / veth / bridge / routes
+        - iptables / nftables / policy
+        - AppArmor / seccomp / capabilities
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or manifest
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Include daemon logs, droplet audit logs, container init logs, or snap logs when available.
+      render: shell
+  - type: textarea
+    id: host_state
+    attributes:
+      label: Relevant host state
+      description: Include relevant cgroup, ip link, iptables, mount, or namespace state if useful.
+      render: shell
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
