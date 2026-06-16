@@ -149,17 +149,18 @@ func (s *PodService) ensurePodTemplateContainers(podInfo psm.PodInfo) error {
 			continue
 		}
 		if _, err := s.containerHandler.Create(container.ServiceCreateModel{
-			Image:   spec.Image,
-			Command: spec.Command,
-			Port:    spec.Port,
-			Mount:   spec.Mount,
-			Env:     spec.Env,
-			CapAdd:  spec.CapAdd,
-			CapDrop: spec.CapDrop,
-			Network: networkName,
-			Tty:     spec.Tty,
-			Name:    spec.Name,
-			PodId:   podInfo.PodId,
+			Image:           spec.Image,
+			Command:         spec.Command,
+			Port:            spec.Port,
+			Mount:           spec.Mount,
+			Env:             spec.Env,
+			CapAdd:          spec.CapAdd,
+			CapDrop:         spec.CapDrop,
+			SecurityProfile: spec.SecurityProfile,
+			Network:         networkName,
+			Tty:             spec.Tty,
+			Name:            spec.Name,
+			PodId:           podInfo.PodId,
 		}); err != nil {
 			return err
 		}

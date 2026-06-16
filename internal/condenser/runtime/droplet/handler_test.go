@@ -35,6 +35,7 @@ func TestDropletHandlerSpecBuildsExpectedArgs(t *testing.T) {
 		Mount:                  []string{"/host:/ctr:bind"},
 		CapAdd:                 []string{"NET_ADMIN"},
 		CapDrop:                []string{"MKNOD"},
+		SecurityProfile:        "default",
 		ContainerDns:           []string{"8.8.8.8"},
 		ImageLayer:             []string{"/layer"},
 		CreateRuntimeHook:      []string{"hook-runtime"},
@@ -58,7 +59,7 @@ func TestDropletHandlerSpecBuildsExpectedArgs(t *testing.T) {
 		"spec", "--rootfs", "/rootfs", "--cwd", "/app", "--command", "/bin/sh -c test",
 		"--hostname", "cid", "--host_if_name", "eth0", "--bridge_if_name", "raind0",
 		"--if_name", "rd_cid", "--if_addr", "10.166.0.1/24", "--if_gateway", "10.166.0.254",
-		"--upper_dir", "/upper", "--work_dir", "/work", "--output", "/out",
+		"--upper_dir", "/upper", "--work_dir", "/work", "--output", "/out", "--security-profile", "default",
 		"--ns", "mount", "--ns", "pid", "--ns-path", "network=/proc/1/ns/net",
 		"--env", "A=B", "--mount", "/host:/ctr:bind", "--cap-add", "NET_ADMIN",
 		"--cap-drop", "MKNOD", "--dns", "8.8.8.8", "--image_layer", "/layer",
@@ -69,6 +70,37 @@ func TestDropletHandlerSpecBuildsExpectedArgs(t *testing.T) {
 		"--hook-stop-container", "hook-stop", "--hook-stop-container-env", "ENV=stop",
 		"--hook-poststop", "hook-poststop", "--hook-poststop-env", "ENV=poststop",
 	}, factory.calls[0].args)
+}
+
+func TestDropletHandlerSpecUsesResolvedSecurityProfileArgs(t *testing.T) {
+	factory := &fakeCommandFactory{}
+	handler := &DropletHandler{commandFactory: factory}
+
+	err := handler.Spec(runtime.SpecModel{
+		Rootfs:          "/rootfs",
+		Cwd:             "/",
+		Command:         "sleep",
+		Hostname:        "cid",
+		HostInterface:   "eth0",
+		BridgeInterface: "raind0",
+		Output:          "/out",
+		SecurityProfile: "dev",
+		CapBase:         []string{"CAP_CHOWN", "CAP_NET_RAW"},
+		SeccompJSON:     `{"defaultAction":"SCMP_ACT_ALLOW"}`,
+		AppArmorProfile: "raind-default",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, factory.calls, 1)
+	args := factory.calls[0].args
+	assert.NotContains(t, args, "--security-profile")
+	assert.Contains(t, args, "--base-cap")
+	assert.Contains(t, args, "CAP_CHOWN")
+	assert.Contains(t, args, "CAP_NET_RAW")
+	assert.Contains(t, args, "--seccomp-json")
+	assert.Contains(t, args, `{"defaultAction":"SCMP_ACT_ALLOW"}`)
+	assert.Contains(t, args, "--apparmor-profile")
+	assert.Contains(t, args, "raind-default")
 }
 
 func TestDropletHandlerCreateBuildsExpectedArgs(t *testing.T) {

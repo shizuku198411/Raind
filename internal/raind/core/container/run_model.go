@@ -10,6 +10,7 @@ type ServiceRunModel struct {
 	Env             []string
 	CapAdd          []string
 	CapDrop         []string
+	SecurityProfile string
 	Tty             bool
 	Rm              bool
 	Name            string

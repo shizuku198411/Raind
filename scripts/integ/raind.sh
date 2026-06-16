@@ -172,7 +172,7 @@ assert_output_contains() {
   local pattern="$2"
   local out="${E2E_WORK_DIR}/${name}.out"
 
-  if ! grep -q "${pattern}" "${out}"; then
+  if ! grep -Fq -- "${pattern}" "${out}"; then
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
@@ -212,21 +212,77 @@ run_cli_checks() {
   run_raind bottle-ls bottle ls
   assert_output_contains bottle-ls "BOTTLE ID"
 
+  run_raind security-profile-ls security profile ls
+  assert_output_contains security-profile-ls "NAME"
+  assert_output_contains security-profile-ls "default"
+  assert_output_contains security-profile-ls "dev"
+  assert_output_contains security-profile-ls "deploy"
+  assert_output_contains security-profile-ls "restricted"
+  assert_output_contains security-profile-ls "privileged"
+  assert_output_contains security-profile-ls "unconfined"
+
+  run_raind security-profile-show security profile show default
+  assert_output_contains security-profile-show "name: default"
+  assert_output_contains security-profile-show "apparmorProfile: raind-default"
+
+  run_raind security-profile-show-deploy security profile show deploy
+  assert_output_contains security-profile-show-deploy "name: deploy"
+  assert_output_contains security-profile-show-deploy "apparmorProfile: raind-default"
+
+  run_raind security-profile-show-restricted security profile show restricted
+  assert_output_contains security-profile-show-restricted "name: restricted"
+  assert_output_contains security-profile-show-restricted "base: []"
+
+  run_raind security-profile-show-privileged security profile show privileged
+  assert_output_contains security-profile-show-privileged "name: privileged"
+  assert_output_contains security-profile-show-privileged "CAP_SYS_ADMIN"
+
+  run_raind security-profile-show-unconfined security profile show unconfined
+  assert_output_contains security-profile-show-unconfined "name: unconfined"
+  assert_output_contains security-profile-show-unconfined "CAP_NET_RAW"
+
+  local custom_profile_name="integ-custom-profile-$$"
+  cat >"${E2E_WORK_DIR}/custom-security-profile.yaml" <<YAML
+apiVersion: raind.io/v1
+kind: SecurityProfile
+metadata:
+  name: ${custom_profile_name}
+spec:
+  extends: deploy
+  add-cap:
+    - CAP_SYS_PTRACE
+  drop-cap:
+    - CAP_AUDIT_WRITE
+YAML
+  run_raind security-profile-register security profile register -f "${E2E_WORK_DIR}/custom-security-profile.yaml"
+  assert_output_contains security-profile-register "security profile: ${custom_profile_name} registered"
+  run_raind security-profile-show-custom security profile show "${custom_profile_name}"
+  assert_output_contains security-profile-show-custom "name: ${custom_profile_name}"
+  assert_output_contains security-profile-show-custom "type: custom"
+  assert_output_contains security-profile-show-custom "extends: deploy"
+  assert_output_contains security-profile-show-custom "CAP_SYS_PTRACE"
+  run_raind security-profile-delete security profile delete "${custom_profile_name}"
+  assert_output_contains security-profile-delete "security profile: ${custom_profile_name} deleted"
+  assert_raind_fails security-profile-show-deleted security profile show "${custom_profile_name}"
+
   run_raind help --help
   assert_output_contains help "container"
   assert_output_contains help "image"
   assert_output_contains help "network"
   assert_output_contains help "resource"
+  assert_output_contains help "security"
   assert_output_contains help "policy"
   assert_output_contains help "logs"
 
   run_raind container-run-help container run --help
   assert_output_contains container-run-help "rootless-mode"
   assert_output_contains container-run-help "login-root"
+  assert_output_contains container-run-help "security-profile"
 
   run_raind container-create-help container create --help
   assert_output_contains container-create-help "rootless-mode"
   assert_output_contains container-create-help "login-root"
+  assert_output_contains container-create-help "security-profile"
 
   run_raind completion-bash completion bash
   assert_output_contains completion-bash "_raind_complete"

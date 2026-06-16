@@ -3,6 +3,7 @@ package container
 import (
 	"raind/internal/condenser/core/image"
 	"raind/internal/condenser/core/network"
+	"raind/internal/condenser/core/securityprofile"
 	"raind/internal/condenser/runtime"
 	"raind/internal/condenser/runtime/droplet"
 	"raind/internal/condenser/store/csm"
@@ -23,8 +24,9 @@ func NewContaierService() *ContainerService {
 		csmHandler:  csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
 		psmHandler:  psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 
-		imageServiceHandler:   image.NewImageService(),
-		networkServiceHandler: network.NewNetworkService(),
+		imageServiceHandler:    image.NewImageService(),
+		networkServiceHandler:  network.NewNetworkService(),
+		securityProfileService: securityprofile.NewService(),
 	}
 }
 
@@ -38,8 +40,9 @@ type ContainerService struct {
 	csmHandler  csm.CsmHandler
 	psmHandler  psm.PsmHandler
 
-	imageServiceHandler   image.ImageServiceHandler
-	networkServiceHandler network.NetworkServiceHandler
+	imageServiceHandler    image.ImageServiceHandler
+	networkServiceHandler  network.NetworkServiceHandler
+	securityProfileService *securityprofile.Service
 }
 
 func (s *ContainerService) getContainerState(containerId string) (string, error) {

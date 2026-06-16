@@ -10,6 +10,7 @@ type ServiceCreateModel struct {
 	Env             []string
 	CapAdd          []string
 	CapDrop         []string
+	SecurityProfile string
 	Tty             bool
 	Name            string
 	Rootless        bool
@@ -29,6 +30,7 @@ type CreateRequestModel struct {
 	Env             []string `json:"env,omitempty"`
 	CapAdd          []string `json:"capAdd,omitempty"`
 	CapDrop         []string `json:"capDrop,omitempty"`
+	SecurityProfile string   `json:"securityProfile,omitempty"`
 	Tty             bool     `json:"tty,omitempty"`
 	Name            string   `json:"name,omitempty"`
 	Rootless        bool     `json:"rootless,omitempty"`

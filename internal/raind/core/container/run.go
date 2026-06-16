@@ -22,6 +22,7 @@ func (s *ServiceContianerRun) Run(param ServiceRunModel) error {
 			Env:             param.Env,
 			CapAdd:          param.CapAdd,
 			CapDrop:         param.CapDrop,
+			SecurityProfile: param.SecurityProfile,
 			Tty:             param.Tty,
 			Name:            param.Name,
 			Rootless:        param.Rootless,

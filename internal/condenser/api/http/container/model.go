@@ -10,6 +10,7 @@ type CreateContainerRequest struct {
 	Env             []string `json:"env" exampe:"key=value"`
 	CapAdd          []string `json:"capAdd,omitempty" example:"CAP_NET_ADMIN,CAP_SYS_TIME"`
 	CapDrop         []string `json:"capDrop,omitempty" example:"CAP_NET_RAW,CAP_SYS_ADMIN"`
+	SecurityProfile string   `json:"securityProfile,omitempty" example:"dev"`
 	Network         string   `json:"network" example:"raind0"`
 	Tty             bool     `json:"tty" example:"false"`
 	Name            string   `json:"name"  example:"my-container"`

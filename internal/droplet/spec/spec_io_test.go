@@ -99,12 +99,13 @@ func TestNormalizeAndMergeCapabilities(t *testing.T) {
 
 func TestBuildLinuxSpecDefaultsAndNamespaces(t *testing.T) {
 	// == exercise ==
+	profile := DefaultSecurityProfile()
 	linuxSpec := buildLinuxSpec(ConfigOptions{
 		Namespace: []NamespaceOption{
 			{Type: "mount"},
 			{Type: "network", Path: "/proc/1/ns/net"},
 		},
-	})
+	}, profile)
 
 	// == assert ==
 	assert.Equal(t, 1073741824, linuxSpec.Resources.Memory.Limit)
@@ -112,7 +113,7 @@ func TestBuildLinuxSpecDefaultsAndNamespaces(t *testing.T) {
 	assert.Equal(t, 80000, linuxSpec.Resources.Cpu.Quota)
 	require.NotNil(t, linuxSpec.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", linuxSpec.Seccomp.DefaultAction)
-	assert.Equal(t, "raind-default", linuxSpec.AppArmorProfile)
+	assert.Equal(t, profile.AppArmorProfile, linuxSpec.AppArmorProfile)
 	assert.Equal(t, []NamespaceObject{
 		{Type: "mount"},
 		{Type: "network", Path: "/proc/1/ns/net"},

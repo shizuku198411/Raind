@@ -1,6 +1,7 @@
 package container
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -192,16 +193,17 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 			templateName = containerName
 		}
 		if err := s.psmHandler.AddContainerToPodTemplate(createParameter.PodId, psm.ContainerTemplateSpec{
-			Name:    templateName,
-			Image:   createParameter.Image,
-			Command: createParameter.Command,
-			Port:    createParameter.Port,
-			Mount:   createParameter.Mount,
-			Env:     createParameter.Env,
-			CapAdd:  createParameter.CapAdd,
-			CapDrop: createParameter.CapDrop,
-			Network: createParameter.Network,
-			Tty:     createParameter.Tty,
+			Name:            templateName,
+			Image:           createParameter.Image,
+			Command:         createParameter.Command,
+			Port:            createParameter.Port,
+			Mount:           createParameter.Mount,
+			Env:             createParameter.Env,
+			CapAdd:          createParameter.CapAdd,
+			CapDrop:         createParameter.CapDrop,
+			SecurityProfile: createParameter.SecurityProfile,
+			Network:         createParameter.Network,
+			Tty:             createParameter.Tty,
 		}); err != nil {
 			return "", err
 		}
@@ -590,6 +592,19 @@ func (s *ContainerService) createContainerSpec(
 		"RAIND-HOOK-SETTER=CONDENSER",
 	}
 
+	resolvedSecurityProfile, err := s.securityProfileService.Resolve(createParameter.SecurityProfile)
+	if err != nil {
+		return err
+	}
+	seccompJSON := ""
+	if resolvedSecurityProfile.Seccomp != nil {
+		seccompRaw, err := json.Marshal(resolvedSecurityProfile.Seccomp)
+		if err != nil {
+			return fmt.Errorf("marshal security profile seccomp failed: %w", err)
+		}
+		seccompJSON = string(seccompRaw)
+	}
+
 	specParameter := runtime.SpecModel{
 		Rootfs:                 rootfs,
 		Cwd:                    cwd,
@@ -601,6 +616,10 @@ func (s *ContainerService) createContainerSpec(
 		Mount:                  mount,
 		CapAdd:                 createParameter.CapAdd,
 		CapDrop:                createParameter.CapDrop,
+		CapBase:                resolvedSecurityProfile.Capabilities.Base,
+		SecurityProfile:        resolvedSecurityProfile.Name,
+		SeccompJSON:            seccompJSON,
+		AppArmorProfile:        resolvedSecurityProfile.AppArmorProfile,
 		Rootless:               createParameter.Rootless,
 		RootlessMode:           createParameter.RootlessMode,
 		RootlessRootUID:        createParameter.RootlessRootUID,

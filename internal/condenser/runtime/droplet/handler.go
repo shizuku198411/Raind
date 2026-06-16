@@ -36,6 +36,18 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 		"--work_dir", specParameter.WorkDir,
 		"--output", specParameter.Output,
 	}
+	if len(specParameter.CapBase) == 0 && specParameter.SeccompJSON == "" && specParameter.AppArmorProfile == "" && specParameter.SecurityProfile != "" {
+		args = append(args, "--security-profile", specParameter.SecurityProfile)
+	}
+	for _, v := range specParameter.CapBase {
+		args = slices.Concat(args, []string{"--base-cap", v})
+	}
+	if specParameter.SeccompJSON != "" {
+		args = append(args, "--seccomp-json", specParameter.SeccompJSON)
+	}
+	if specParameter.AppArmorProfile != "" {
+		args = append(args, "--apparmor-profile", specParameter.AppArmorProfile)
+	}
 	if specParameter.Rootless {
 		args = append(args, "--rootless")
 		if specParameter.RootlessMode != "" {

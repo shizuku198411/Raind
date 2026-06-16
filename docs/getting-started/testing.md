@@ -1,4 +1,4 @@
-# Testing with Workshop
+# Testing
 
 This project uses Canonical Workshop for automated tests and manual runtime checks. Do not run integration or e2e tests directly on the host machine unless you intentionally want to affect the host runtime environment.
 

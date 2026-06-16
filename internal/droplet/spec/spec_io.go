@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"raind/internal/droplet/oci"
 	"raind/internal/droplet/utils"
-	"runtime"
 	"slices"
 	"strings"
 )
@@ -62,24 +61,8 @@ func buildProcessEnvSpec(specEnv []string) []string {
 	return newEnv
 }
 
-func buildProcessSpec(opts ConfigOptions) ProcessObject {
-	baseCaps := []string{
-		"CAP_CHOWN",
-		"CAP_DAC_OVERRIDE",
-		"CAP_FSETID",
-		"CAP_FOWNER",
-		"CAP_MKNOD",
-		"CAP_NET_RAW",
-		"CAP_SETGID",
-		"CAP_SETUID",
-		"CAP_SETFCAP",
-		"CAP_SETPCAP",
-		"CAP_NET_BIND_SERVICE",
-		"CAP_SYS_CHROOT",
-		"CAP_KILL",
-		"CAP_AUDIT_WRITE",
-	}
-	finalCaps := mergeCapabilities(baseCaps, opts.Process.CapAdd, opts.Process.CapDrop)
+func buildProcessSpec(opts ConfigOptions, profile SecurityProfile) ProcessObject {
+	finalCaps := mergeCapabilities(profile.Capabilities.Base, opts.Process.CapAdd, opts.Process.CapDrop)
 
 	return ProcessObject{
 		Cwd:  opts.Process.Cwd,
@@ -145,22 +128,7 @@ func mergeCapabilities(base []string, capAdd []string, capDrop []string) []strin
 	return filtered
 }
 
-func buildLinuxSpec(opts ConfigOptions) LinuxSpecObject {
-	ep := uint32(1)
-	ociArch := func() string {
-		arch := runtime.GOARCH
-		switch arch {
-		case "amd64":
-			return "SCMP_ARCH_X86_64"
-		case "arm64":
-			return "SCMP_ARCH_AARCH64"
-		case "riscv64":
-			return "SCMP_ARCH_RISCV64"
-		default:
-			return ""
-		}
-	}
-
+func buildLinuxSpec(opts ConfigOptions, profile SecurityProfile) LinuxSpecObject {
 	var linuxSpec = LinuxSpecObject{
 		Resources: ResourceObject{
 			Memory: MemoryObject{ // memory limit: 1024MiB
@@ -171,42 +139,8 @@ func buildLinuxSpec(opts ConfigOptions) LinuxSpecObject {
 				Quota:  80000,
 			},
 		},
-		Seccomp: &SeccompObject{
-			DefaultAction:   "SCMP_ACT_ALLOW",
-			DefaultErrnoRet: &ep,
-			Architectures: []string{
-				ociArch(),
-			},
-			Syscalls: []SeccompSyscallObject{
-				{
-					Names: []string{
-						"bpf",
-						"perf_event_open",
-						"kexec_load",
-						"open_by_handle_at",
-						"ptrace",
-						"process_vm_readv",
-						"process_vm_writev",
-						"userfaultfd",
-						"reboot",
-						"swapon",
-						"swapoff",
-						"open_by_handle_at",
-						"name_to_handle_at",
-						"init_module",
-						"finit_module",
-						"delete_module",
-						"kcmp",
-						"mount",
-						"unshare",
-						"setns",
-					},
-					Action:   "SCMP_ACT_ERRNO",
-					ErrnoRet: &ep,
-				},
-			},
-		},
-		AppArmorProfile: "raind-default",
+		Seccomp:         cloneSeccompObject(profile.Seccomp),
+		AppArmorProfile: profile.AppArmorProfile,
 		Namespaces:      []NamespaceObject{},
 	}
 
@@ -358,7 +292,12 @@ func buildAnnotationSpec(opts ConfigOptions) AnnotationObject {
 	}
 }
 
-func buildSpec(opts ConfigOptions) Spec {
+func buildSpec(opts ConfigOptions) (Spec, error) {
+	profile, err := ResolveSecurityOption(opts.Security)
+	if err != nil {
+		return Spec{}, err
+	}
+
 	ociVersion := oci.OCIVersion
 
 	// root path
@@ -368,13 +307,13 @@ func buildSpec(opts ConfigOptions) Spec {
 	mounts := buildMountSpec(opts)
 
 	// process
-	process := buildProcessSpec(opts)
+	process := buildProcessSpec(opts, profile)
 
 	// hostname
 	hostname := opts.Hostname
 
 	// linux spec
-	linuxSpec := buildLinuxSpec(opts)
+	linuxSpec := buildLinuxSpec(opts, profile)
 
 	// hook spec
 	hookSpec := buildHookSpec(opts)
@@ -391,12 +330,15 @@ func buildSpec(opts ConfigOptions) Spec {
 		LinuxSpec:   linuxSpec,
 		Hooks:       hookSpec,
 		Annotations: annotation,
-	}
+	}, nil
 }
 
 func CreateConfigFile(path string, opts ConfigOptions) error {
 	// build spec
-	spec := buildSpec(opts)
+	spec, err := buildSpec(opts)
+	if err != nil {
+		return err
+	}
 
 	// write spec to file
 	configPath := filepath.Join(path)

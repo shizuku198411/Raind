@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -59,6 +60,25 @@ func commandSpec() *cli.Command {
 				Name:  "hostname",
 				Usage: "container hostname",
 			},
+
+			&cli.StringFlag{
+				Name:  "security-profile",
+				Usage: "security profile name (used when resolved security options are not provided)",
+				Value: spec.SecurityProfileDefault,
+			},
+			&cli.StringSliceFlag{
+				Name:  "base-cap",
+				Usage: "base capability from a resolved security profile",
+			},
+			&cli.StringFlag{
+				Name:  "seccomp-json",
+				Usage: "seccomp profile JSON from a resolved security profile",
+			},
+			&cli.StringFlag{
+				Name:  "apparmor-profile",
+				Usage: "AppArmor profile name from a resolved security profile",
+			},
+
 			&cli.BoolFlag{
 				Name:  "rootless",
 				Usage: "mark this spec as rootless and request non-root host-ID mapping",
@@ -213,6 +233,23 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	// rootfs
 	rootfs := ctx.String("rootfs")
 
+	// security
+	securityProfile := ctx.String("security-profile")
+	baseCapabilities := normalizeCapabilityFlag(ctx.StringSlice("base-cap"))
+	appArmorProfile := ctx.String("apparmor-profile")
+	var seccompProfile *spec.SeccompObject
+	if raw := strings.TrimSpace(ctx.String("seccomp-json")); raw != "" {
+		seccompProfile = &spec.SeccompObject{}
+		if err := json.Unmarshal([]byte(raw), seccompProfile); err != nil {
+			return spec.ConfigOptions{}, fmt.Errorf("invalid seccomp-json: %w", err)
+		}
+	}
+	if len(baseCapabilities) == 0 && seccompProfile == nil && appArmorProfile == "" {
+		if _, err := spec.ResolveSecurityProfile(securityProfile); err != nil {
+			return spec.ConfigOptions{}, err
+		}
+	}
+
 	// rootless
 	rootless, rootlessMode, err := rootlessOptionsFromSpecCLI(ctx)
 	if err != nil {
@@ -317,6 +354,12 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 		RootlessRootUID: rootlessRootUID,
 		RootlessRootGID: rootlessRootGID,
 		Mounts:          mounts,
+		Security: spec.SecurityOption{
+			ProfileName:      securityProfile,
+			BaseCapabilities: baseCapabilities,
+			Seccomp:          seccompProfile,
+			AppArmorProfile:  appArmorProfile,
+		},
 		Process: spec.ProcessOption{
 			Cwd:     cwd,
 			Env:     env,

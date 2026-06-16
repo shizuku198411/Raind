@@ -209,12 +209,71 @@ run_raind_allow_empty() {
   fi
 }
 
+assert_raind_fails() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.err"
+
+  log "raind $* fails"
+  if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    cat "${out}" >&2 || true
+    fail "expected raind $* to fail"
+  fi
+  [[ -s "${out}" ]] || fail "raind $* failed without output"
+}
+
+is_transient_resource_apply_failure() {
+  local out="$1"
+
+  grep -Eqi \
+    'pod start failed|replicaset start failed|deployment start failed|hook createContainer\[[0-9]+\] failed|service hook failed: update pod namespaces failed|podId=.*not found|podTemplateId=.*not found' \
+    "${out}"
+}
+
+run_resource_apply_with_retry() {
+  local name="$1"
+  local yaml="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+  local cleanup_out
+  local attempt
+
+  for attempt in 1 2 3; do
+    if [[ "${attempt}" -eq 1 ]]; then
+      log "raind resource apply -f ${yaml}"
+    else
+      log "raind resource apply -f ${yaml} (retry ${attempt})"
+    fi
+
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" resource apply -f "${yaml}" >"${out}" 2>&1; then
+      [[ -s "${out}" ]] || fail "raind resource apply -f ${yaml} produced no output"
+      return
+    fi
+
+    if ! is_transient_resource_apply_failure "${out}"; then
+      printf '%s\n' "--- ${out} ---" >&2
+      cat "${out}" >&2 || true
+      fail "raind resource apply -f ${yaml} failed"
+    fi
+
+    if [[ "${attempt}" -eq 3 ]]; then
+      printf '%s\n' "--- ${out} ---" >&2
+      cat "${out}" >&2 || true
+      fail "raind resource apply -f ${yaml} failed after retries"
+    fi
+
+    log "transient resource apply failure detected; cleanup partial resources and retry"
+    cleanup_out="${E2E_WORK_DIR}/${name}-retry-cleanup-${attempt}.out"
+    sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" resource rm -f "${yaml}" >"${cleanup_out}" 2>&1 || true
+    sleep 1
+  done
+}
+
 assert_output_contains() {
   local name="$1"
   local pattern="$2"
   local out="${E2E_WORK_DIR}/${name}.out"
 
-  if ! grep -q "${pattern}" "${out}"; then
+  if ! grep -Fq -- "${pattern}" "${out}"; then
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
@@ -249,6 +308,32 @@ assert_sudo_path_absent() {
 extract_created_id() {
   local name="$1"
   awk '/: .* (created|applied)$/ || /: .* created / { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
+}
+
+resolve_container_id() {
+  local ref="$1"
+  local name="$2"
+  local out="${E2E_WORK_DIR}/container-ls-resolve-${name}.out"
+  local cid=""
+
+  if [[ -n "${ref}" ]] && sudo_cmd test -f "/etc/raind/container/${ref}/config.json"; then
+    printf '%s\n' "${ref}"
+    return
+  fi
+
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" container ls >"${out}" 2>&1; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+    fail "raind container ls failed while resolving container id for ${name}"
+  fi
+
+  cid="$(awk -v ref="${ref}" -v name="${name}" '
+    NR == 1 { next }
+    $1 == ref || $NF == ref || $NF == name { print $1; exit }
+  ' "${out}")"
+
+  [[ -n "${cid}" ]] || fail "could not resolve container id for ${name} from ref ${ref}"
+  printf '%s\n' "${cid}"
 }
 
 extract_policy_id() {
@@ -313,6 +398,98 @@ wait_http_ok() {
     cat "${out}" >&2 || true
   fi
   fail "timed out waiting for ${url}"
+}
+
+assert_security_profile_runtime_applied() {
+  local cid="$1"
+  local state="/etc/raind/container/${cid}/state.json"
+  local pid
+
+  pid="$(sudo_cmd jq -r '.pid // 0' "${state}")"
+  [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -gt 0 ]] || fail "container ${cid} has no running pid"
+  sudo_cmd test -d "/proc/${pid}" || fail "container ${cid} pid ${pid} is not running"
+  sudo_cmd grep -q '^NoNewPrivs:[[:space:]]*1$' "/proc/${pid}/status" || fail "NoNewPrivs is not enabled for ${cid}"
+  sudo_cmd grep -q '^Seccomp:[[:space:]]*2$' "/proc/${pid}/status" || fail "seccomp filter mode is not enabled for ${cid}"
+}
+
+assert_dev_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify dev security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    any(.process.capabilities.effective[]?; . == "CAP_NET_RAW")
+  ' "${config}" >/dev/null || fail "dev security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
+}
+
+assert_deploy_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify deploy security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    (any(.process.capabilities.effective[]?; . == "CAP_CHOWN")) and
+    ([.process.capabilities.effective[]?] | index("CAP_NET_RAW") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_MKNOD") | not)
+  ' "${config}" >/dev/null || fail "deploy security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
+}
+
+assert_restricted_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify restricted security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    ((.process.capabilities.effective // []) | length == 0) and
+    ((.process.capabilities.bounding // []) | length == 0) and
+    ((.process.capabilities.permitted // []) | length == 0)
+  ' "${config}" >/dev/null || fail "restricted security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
+}
+
+assert_unconfined_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify unconfined security profile for ${cid}"
+  sudo_cmd jq -e '
+    (.linux.seccomp == null) and
+    (.linux.apparmorProfile == null) and
+    (any(.process.capabilities.effective[]?; . == "CAP_NET_RAW")) and
+    ([.process.capabilities.effective[]?] | index("CAP_SYS_ADMIN") | not)
+  ' "${config}" >/dev/null || fail "unconfined security profile was not written to ${config}"
+}
+
+assert_custom_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify custom security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    (any(.process.capabilities.effective[]?; . == "CAP_SYS_PTRACE")) and
+    ([.process.capabilities.effective[]?] | index("CAP_AUDIT_WRITE") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_NET_RAW") | not) and
+    ([.process.capabilities.effective[]?] | index("CAP_MKNOD") | not)
+  ' "${config}" >/dev/null || fail "custom security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
 }
 
 write_static_build_context() {
@@ -421,6 +598,95 @@ test_container_deploy() {
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
   run_raind_allow_empty container-rm container rm "${cid}"
+}
+
+test_dev_security_profile_container() {
+  local cid
+  local name="e2e-dev-profile-${SUFFIX}"
+
+  log "dev security profile container test"
+  run_raind dev-profile-run container run --security-profile dev --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id dev-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_dev_security_profile_applied "${cid}"
+  run_raind_allow_empty dev-profile-stop container stop "${cid}"
+  run_raind_allow_empty dev-profile-rm container rm "${cid}"
+}
+
+test_deploy_security_profile_container() {
+  local cid
+  local name="e2e-deploy-profile-${SUFFIX}"
+
+  log "deploy security profile container test"
+  run_raind deploy-profile-run container run --security-profile deploy --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id deploy-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_deploy_security_profile_applied "${cid}"
+  run_raind_allow_empty deploy-profile-stop container stop "${cid}"
+  run_raind_allow_empty deploy-profile-rm container rm "${cid}"
+}
+
+test_restricted_security_profile_container() {
+  local cid
+  local name="e2e-restricted-profile-${SUFFIX}"
+
+  log "restricted security profile container test"
+  run_raind restricted-profile-run container run --security-profile restricted --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id restricted-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_restricted_security_profile_applied "${cid}"
+  run_raind_allow_empty restricted-profile-stop container stop "${cid}"
+  run_raind_allow_empty restricted-profile-rm container rm "${cid}"
+}
+
+test_unconfined_security_profile_container() {
+  local cid
+  local name="e2e-unconfined-profile-${SUFFIX}"
+
+  log "unconfined security profile container test"
+  run_raind unconfined-profile-run container run --security-profile unconfined --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id unconfined-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_unconfined_security_profile_applied "${cid}"
+  run_raind_allow_empty unconfined-profile-stop container stop "${cid}"
+  run_raind_allow_empty unconfined-profile-rm container rm "${cid}"
+}
+
+test_custom_security_profile_container() {
+  local cid
+  local name="e2e-custom-profile-container-${SUFFIX}"
+  local profile="e2e-custom-profile-${SUFFIX}"
+
+  log "custom security profile register and container test"
+  cat >"${E2E_WORK_DIR}/custom-security-profile.yaml" <<YAML
+apiVersion: raind.io/v1
+kind: SecurityProfile
+metadata:
+  name: ${profile}
+spec:
+  extends: deploy
+  add-cap:
+    - CAP_SYS_PTRACE
+  drop-cap:
+    - CAP_AUDIT_WRITE
+YAML
+  run_raind custom-profile-register security profile register -f "${E2E_WORK_DIR}/custom-security-profile.yaml"
+  assert_output_contains custom-profile-register "security profile: ${profile} registered"
+  run_raind custom-profile-show security profile show "${profile}"
+  assert_output_contains custom-profile-show "name: ${profile}"
+  assert_output_contains custom-profile-show "type: custom"
+  assert_output_contains custom-profile-show "extends: deploy"
+  assert_output_contains custom-profile-show "CAP_SYS_PTRACE"
+
+  run_raind custom-profile-run container run --security-profile "${profile}" --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id custom-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_custom_security_profile_applied "${cid}"
+  run_raind_allow_empty custom-profile-stop container stop "${cid}"
+  run_raind_allow_empty custom-profile-rm container rm "${cid}"
+  run_raind custom-profile-delete security profile delete "${profile}"
+  assert_output_contains custom-profile-delete "security profile: ${profile} deleted"
+  assert_raind_fails custom-profile-show-deleted security profile show "${profile}"
 }
 
 test_rootless_container_cache() {
@@ -574,7 +840,7 @@ spec:
   - name: nginx
     image: nginx:latest
 YAML
-  run_raind pod-apply resource apply -f "${yaml}"
+  run_resource_apply_with_retry pod-apply "${yaml}"
   assert_output_contains pod-apply "pod:"
   wait_raind_contains pod-ls "e2e-pod" resource pod ls --namespace "${ns}"
   wait_raind_contains pod-ready "1/1" resource pod ls --namespace "${ns}"
@@ -614,7 +880,7 @@ spec:
       - name: nginx
         image: nginx:latest
 YAML
-  run_raind rs-apply resource apply -f "${yaml}"
+  run_resource_apply_with_retry rs-apply "${yaml}"
   assert_output_contains rs-apply "replicaset:"
   wait_raind_contains rs-ready "2        2        2" resource replicaset ls --namespace "${ns}"
   run_raind rs-rm-manifest resource rm -f "${yaml}"
@@ -653,7 +919,7 @@ spec:
       - name: nginx
         image: nginx:latest
 YAML
-  run_raind deploy-apply resource apply -f "${yaml}"
+  run_resource_apply_with_retry deploy-apply "${yaml}"
   assert_output_contains deploy-apply "deployment:"
   wait_raind_contains deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
   run_raind deploy-rm-manifest resource rm -f "${yaml}"
@@ -707,7 +973,7 @@ spec:
     targetPort: 80
     protocol: TCP
 YAML
-  run_raind svc-apply resource apply -f "${yaml}"
+  run_resource_apply_with_retry svc-apply "${yaml}"
   assert_output_contains svc-apply "service:"
   wait_raind_contains svc-deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
   wait_raind_contains svc-ls "e2e-svc" resource service ls --namespace "${ns}"
@@ -795,7 +1061,7 @@ spec:
     targetPort: 80
     protocol: TCP
 YAML
-  run_raind yaml-apply resource apply -f "${yaml}"
+  run_resource_apply_with_retry yaml-apply "${yaml}"
   assert_output_contains yaml-apply "namespace:"
   assert_output_contains yaml-apply "pod:"
   assert_output_contains yaml-apply "replicaset:"
@@ -829,6 +1095,11 @@ main() {
   test_network
   test_policy
   test_container_deploy
+  test_dev_security_profile_container
+  test_deploy_security_profile_container
+  test_restricted_security_profile_container
+  test_unconfined_security_profile_container
+  test_custom_security_profile_container
   test_rootless_container_cache
   test_login_rootless_bind_mount
   test_bottle_deploy

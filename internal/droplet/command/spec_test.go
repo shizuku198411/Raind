@@ -113,6 +113,7 @@ func TestCreateConfigOptionsBuildsConfigOptionsFromFlags(t *testing.T) {
 		"env":                     []string{"APP_ENV=test"},
 		"cap-add":                 []string{"net_admin"},
 		"cap-drop":                []string{"net_raw"},
+		"security-profile":        spec.SecurityProfileDev,
 		"command":                 `/bin/sh -c "echo hi"`,
 		"ns":                      []string{"mount", "network"},
 		"ns-path":                 []string{"network=/proc/1/ns/net"},
@@ -139,8 +140,39 @@ func TestCreateConfigOptionsBuildsConfigOptionsFromFlags(t *testing.T) {
 	assert.Equal(t, []string{"/bin/sh", "-c", "echo hi"}, opts.Process.Args)
 	assert.Equal(t, []string{"CAP_NET_ADMIN"}, opts.Process.CapAdd)
 	assert.Equal(t, []string{"CAP_NET_RAW"}, opts.Process.CapDrop)
+	assert.Equal(t, spec.SecurityProfileDev, opts.Security.ProfileName)
 	assert.ElementsMatch(t, []spec.NamespaceOption{{Type: "mount"}, {Type: "network", Path: "/proc/1/ns/net"}}, opts.Namespace)
 	assert.Equal(t, []spec.HookOption{{Path: "/bin/hook", Env: []string{"A=1"}}}, opts.Hooks.CreateRuntime)
+}
+
+func TestCreateConfigOptionsAcceptsResolvedSecurityOptions(t *testing.T) {
+	ctx := newSpecCLIContext(t, map[string]any{
+		"base-cap":         []string{"chown", "CAP_NET_RAW"},
+		"seccomp-json":     `{"defaultAction":"SCMP_ACT_ALLOW"}`,
+		"apparmor-profile": "raind-default",
+	})
+
+	opts, err := createConfigOptions(ctx)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"CAP_CHOWN", "CAP_NET_RAW"}, opts.Security.BaseCapabilities)
+	require.NotNil(t, opts.Security.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", opts.Security.Seccomp.DefaultAction)
+	assert.Equal(t, "raind-default", opts.Security.AppArmorProfile)
+}
+
+func TestCreateConfigOptionsRejectsUnknownSecurityProfile(t *testing.T) {
+	// == setup ==
+	ctx := newSpecCLIContext(t, map[string]any{
+		"security-profile": "unknown-profile",
+	})
+
+	// == exercise ==
+	_, err := createConfigOptions(ctx)
+
+	// == assert ==
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown security profile")
 }
 
 func TestRunCreateConfigFileWritesConfigJSON(t *testing.T) {
@@ -193,6 +225,10 @@ func newSpecCLIContext(t *testing.T, values map[string]any) *cli.Context {
 	set.Var(cli.NewStringSlice(), "env", "")
 	set.Var(cli.NewStringSlice(), "cap-add", "")
 	set.Var(cli.NewStringSlice(), "cap-drop", "")
+	set.String("security-profile", spec.SecurityProfileDefault, "")
+	set.Var(cli.NewStringSlice(), "base-cap", "")
+	set.String("seccomp-json", "", "")
+	set.String("apparmor-profile", "", "")
 	set.String("command", "sh", "")
 	set.Var(cli.NewStringSlice(), "ns", "")
 	set.Var(cli.NewStringSlice(), "ns-path", "")
