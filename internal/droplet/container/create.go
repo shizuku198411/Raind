@@ -172,41 +172,35 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		}
 	}
 
-	// 5. execute init subcommand
+	// 5. execute shim/supervisor subcommand.
+	//
+	// The shim is now used for both TTY and non-TTY containers so that it can
+	// wait for the container init process and persist the final exit status.
+	// TTY handling remains optional inside the shim.
 	var (
 		initPid int
 		shimPid int
 	)
-	if opt.TtyFlag {
-		// cleanup old files before execute shim
-		stage = "cleanup_shim_file"
-		err = c.cleanupShimFile(opt.ContainerId)
-		if err != nil {
-			return err
-		}
-
-		stage = "execute_shim"
-		pid, err = c.processExecutor.executeShim(opt.ContainerId, spec, fifo)
-		if err != nil {
-			return err
-		}
-		shimPid = pid
-
-		// wait for pidfile from shim
-		stage = "wait_init_pid"
-		initPid, err = c.waitInitPid(opt.ContainerId, 3*time.Second, 20*time.Millisecond)
-		if err != nil {
-			return err
-		}
-		pid = initPid
-	} else {
-		stage = "execute_init"
-		pid, err = c.processExecutor.executeInit(opt.ContainerId, spec, fifo)
-		if err != nil {
-			return err
-		}
-		initPid = pid
+	stage = "cleanup_shim_file"
+	err = c.cleanupShimFile(opt.ContainerId)
+	if err != nil {
+		return err
 	}
+
+	stage = "execute_shim"
+	pid, err = c.processExecutor.executeShim(opt.ContainerId, spec, fifo, opt.TtyFlag)
+	if err != nil {
+		return err
+	}
+	shimPid = pid
+
+	// wait for pidfile from shim
+	stage = "wait_init_pid"
+	initPid, err = c.waitInitPid(opt.ContainerId, 3*time.Second, 20*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	pid = initPid
 
 	// 6. cgroup setup
 	stage = "setup_cgroup"
@@ -306,8 +300,7 @@ func (c *ContainerCreator) specSecureLoad(containerId string) (spec.Spec, error)
 // It is an interface so that the behavior can be mocked in tests and
 // replaced by alternative implementations if needed.
 type processExecutor interface {
-	executeInit(containerId string, spec spec.Spec, fifo string) (int, error)
-	executeShim(containerId string, spec spec.Spec, fifo string) (int, error)
+	executeShim(containerId string, spec spec.Spec, fifo string, tty bool) (int, error)
 }
 
 // containerInitExecutor is the default implementation of processExecutor.
@@ -366,15 +359,20 @@ func prepareRootlessInitLog(path string, rootlessConfig spec.RootlessConfigObjec
 	return os.Chown(path, uid, gid)
 }
 
-func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string) (int, error) {
+func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string, tty bool) (int, error) {
 	// retrieve entrypoint from spec
 	entrypoint := spec.Process.Args
 
 	// prepare shim subcommand
-	shimArgs := append([]string{"shim", containerId, fifo}, entrypoint...)
+	shimArgs := []string{"shim"}
+	if tty {
+		shimArgs = append(shimArgs, "--tty")
+	}
+	shimArgs = append(shimArgs, containerId, fifo)
+	shimArgs = append(shimArgs, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), shimArgs...)
 
-	// execute init subcommand
+	// execute shim subcommand
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}

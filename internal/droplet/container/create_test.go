@@ -41,6 +41,7 @@ type createProcessCall struct {
 	containerId string
 	fifo        string
 	entrypoint  []string
+	tty         bool
 }
 
 func (f *fakeCreateProcessExecutor) executeInit(containerId string, containerSpec spec.Spec, fifo string) (int, error) {
@@ -52,11 +53,12 @@ func (f *fakeCreateProcessExecutor) executeInit(containerId string, containerSpe
 	return f.initPid, f.initErr
 }
 
-func (f *fakeCreateProcessExecutor) executeShim(containerId string, containerSpec spec.Spec, fifo string) (int, error) {
+func (f *fakeCreateProcessExecutor) executeShim(containerId string, containerSpec spec.Spec, fifo string, tty bool) (int, error) {
 	f.shimCalls = append(f.shimCalls, createProcessCall{
 		containerId: containerId,
 		fifo:        fifo,
 		entrypoint:  append([]string(nil), containerSpec.Process.Args...),
+		tty:         tty,
 	})
 	_ = os.MkdirAll(utils.ContainerDir(containerId), 0755)
 	_ = os.WriteFile(utils.InitPidFilePath(containerId), []byte("4321\n"), 0644)
@@ -134,7 +136,7 @@ func TestContainerCreatorCreateRunsLifecyclePipeline(t *testing.T) {
 	setupCreateSpecFile(t, containerId, containerSpec)
 	specLoader := &fakeDeleteSpecLoader{spec: containerSpec}
 	fifoCreator := &fakeCreateFifoCreator{}
-	processExecutor := &fakeCreateProcessExecutor{initPid: 1234}
+	processExecutor := &fakeCreateProcessExecutor{shimPid: 2222}
 	cgroupPreparer := &fakeCreateCgroupPreparer{}
 	networkPreparer := &fakeCreateNetworkPreparer{}
 	statusManager := &fakeDeleteStatusManager{}
@@ -165,10 +167,11 @@ func TestContainerCreatorCreateRunsLifecyclePipeline(t *testing.T) {
 	}}, statusManager.createdStatuses)
 	assert.Equal(t, []deleteHookCall{{containerId: containerId, hooks: containerSpec.Hooks.CreateRuntime}}, hookController.createRuntimeCalls)
 	assert.Equal(t, []string{utils.FifoPath(containerId)}, fifoCreator.calls)
-	assert.Equal(t, []createProcessCall{{containerId: containerId, fifo: utils.FifoPath(containerId), entrypoint: []string{"/bin/sh"}}}, processExecutor.initCalls)
-	assert.Equal(t, []createPrepareCall{{containerId: containerId, pid: 1234, spec: containerSpec}}, cgroupPreparer.calls)
-	assert.Equal(t, []createPrepareCall{{containerId: containerId, pid: 1234, annotation: containerSpec.Annotations}}, networkPreparer.calls)
-	assert.Equal(t, []deleteStatusUpdate{{containerId: containerId, status: status.CREATED, pid: 1234, shimPid: 0}}, statusManager.updates)
+	assert.Empty(t, processExecutor.initCalls)
+	assert.Equal(t, []createProcessCall{{containerId: containerId, fifo: utils.FifoPath(containerId), entrypoint: []string{"/bin/sh"}, tty: false}}, processExecutor.shimCalls)
+	assert.Equal(t, []createPrepareCall{{containerId: containerId, pid: 4321, spec: containerSpec}}, cgroupPreparer.calls)
+	assert.Equal(t, []createPrepareCall{{containerId: containerId, pid: 4321, annotation: containerSpec.Annotations}}, networkPreparer.calls)
+	assert.Equal(t, []deleteStatusUpdate{{containerId: containerId, status: status.CREATED, pid: 4321, shimPid: 2222}}, statusManager.updates)
 	assert.Equal(t, []deleteHookCall{{containerId: containerId, hooks: containerSpec.Hooks.CreateContainer}}, hookController.createContainerCalls)
 }
 
@@ -197,7 +200,7 @@ func TestContainerCreatorCreateTTYUsesShimPidAndInitPidFile(t *testing.T) {
 	// == assert ==
 	require.NoError(t, err)
 	assert.Empty(t, processExecutor.initCalls)
-	assert.Len(t, processExecutor.shimCalls, 1)
+	assert.Equal(t, []createProcessCall{{containerId: containerId, fifo: utils.FifoPath(containerId), entrypoint: []string{"/bin/sh"}, tty: true}}, processExecutor.shimCalls)
 	assert.Contains(t, statusManager.updates, deleteStatusUpdate{
 		containerId: containerId,
 		status:      status.CREATED,
