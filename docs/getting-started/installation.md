@@ -41,7 +41,105 @@ Apply the setting:
 sudo sysctl -p
 ```
 
-### Configure Log Forwarding
+## Installation
+
+Currently, Raind supports creating and installing `snap` packages locally, or system-wide installation via scripts.
+
+### Snap Install
+
+```bash
+sudo snap install snapcraft
+
+snapcraft pack --destructive-mode
+sudo install ./raind_<version>_<arch>.snap --dangerous --classic
+```
+
+verify snap log
+```bash
+sudo snap logs raind.condenser -n 50
+
+2026-06-16T13:31:20+09:00 systemd[1]: Started snap.raind.condenser.service - Service for snap application raind.condenser.
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] management server listening on 127.0.0.1:7755
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] ca server listening on 127.0.0.1:7757
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] Container Monitoring Start
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] pod controller start
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] enrichement logger start
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] ingress http gateway listening on :7780
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] ingress https gateway listening on :7443
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] hook server listening on :7756
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] dns proxy listening
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] service controller start
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] dns proxy start udp listen=10.166.254.254:1053 upstreams=[8.8.8.8:53 1.1.1.1:53]
+2026-06-16T13:31:34+09:00 raind.condenser[749955]: 2026/06/16 13:31:34 [*] dns proxy start tcp listen=10.166.254.254:1053 upstreams=[8.8.8.8:53 1.1.1.1:53]
+```
+
+### Scripts Install
+```sh
+sudo ./scripts/build.sh all
+```
+
+Add your user to the `raind` group so the CLI can read the client certificate without running as root:
+
+```sh
+sudo usermod -aG raind "$USER"
+```
+
+Log out and back in, or start a new group session:
+
+```sh
+newgrp raind
+```
+
+verify systemctl log
+```bash
+sudo systemctl status raind-daemon.service 
+● raind-daemon.service - Raind Condenser Daemon
+     Loaded: loaded (/etc/systemd/system/raind-daemon.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2026-06-16 16:26:11 JST; 2s ago
+   Main PID: 4747 (condenser)
+      Tasks: 6 (limit: 9063)
+     Memory: 3.8M (peak: 4.6M)
+        CPU: 157ms
+     CGroup: /system.slice/raind-daemon.service
+             └─4747 /usr/local/bin/condenser
+
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] swagger listening on :7758
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] enrichement logger start
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] service controller start
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] ingress https gateway listening on :7443
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] dns proxy listening
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] pod controller start
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] ingress http gateway listening on :7780
+Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] dns proxy start udp listen=10.166.254.254:1053 upstreams=[8.8.8.8:53 1.1.1.1:53]
+```
+
+## First Checks
+
+```sh
+raind --version
+raind image ls
+raind container ls
+raind network ls
+```
+
+Run a container and verify port forwarding:
+
+```sh
+raind container run -p 9988:80 nginx:latest
+raind container ls
+```
+
+Generate external traffic and check enriched netflow logs:
+
+```sh
+raind container run -t --rm alpine:latest
+# inside the container:
+ping 1.1.1.1
+exit
+```
+
+
+## (Optional) Configure Log Forwarding
 
 raind reads raw NFLOG records from ulogd and writes enriched runtime logs under `/var/log/raind`.
 
@@ -105,50 +203,7 @@ sudo systemctl restart ulogd
 sudo systemctl status ulogd --no-pager
 ```
 
-## Installation
-
-```sh
-sudo ./scripts/build.sh all
-```
-
-Add your user to the `raind` group so the CLI can read the client certificate without running as root:
-
-```sh
-sudo usermod -aG raind "$USER"
-```
-
-Log out and back in, or start a new group session:
-
-```sh
-newgrp raind
-```
-
-## First Checks
-
-```sh
-raind --version
-raind image ls
-raind container ls
-raind network ls
-```
-
-Run a container and verify port forwarding:
-
-```sh
-raind container run -p 9988:80 nginx:latest
-raind container ls
-```
-
-Generate external traffic and check enriched netflow logs:
-
-```sh
-raind container run -t --rm alpine:latest
-# inside the container:
-ping 1.1.1.1
-exit
-```
-
-Then inspect the enriched log output:
+Inspect the enriched log output:
 
 ```sh
 sudo cat /var/log/raind/raind_netflow.jsonl | jq .
