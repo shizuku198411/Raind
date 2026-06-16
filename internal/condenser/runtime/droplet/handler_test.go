@@ -72,6 +72,37 @@ func TestDropletHandlerSpecBuildsExpectedArgs(t *testing.T) {
 	}, factory.calls[0].args)
 }
 
+func TestDropletHandlerSpecUsesResolvedSecurityProfileArgs(t *testing.T) {
+	factory := &fakeCommandFactory{}
+	handler := &DropletHandler{commandFactory: factory}
+
+	err := handler.Spec(runtime.SpecModel{
+		Rootfs:          "/rootfs",
+		Cwd:             "/",
+		Command:         "sleep",
+		Hostname:        "cid",
+		HostInterface:   "eth0",
+		BridgeInterface: "raind0",
+		Output:          "/out",
+		SecurityProfile: "dev",
+		CapBase:         []string{"CAP_CHOWN", "CAP_NET_RAW"},
+		SeccompJSON:     `{"defaultAction":"SCMP_ACT_ALLOW"}`,
+		AppArmorProfile: "raind-default",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, factory.calls, 1)
+	args := factory.calls[0].args
+	assert.NotContains(t, args, "--security-profile")
+	assert.Contains(t, args, "--base-cap")
+	assert.Contains(t, args, "CAP_CHOWN")
+	assert.Contains(t, args, "CAP_NET_RAW")
+	assert.Contains(t, args, "--seccomp-json")
+	assert.Contains(t, args, `{"defaultAction":"SCMP_ACT_ALLOW"}`)
+	assert.Contains(t, args, "--apparmor-profile")
+	assert.Contains(t, args, "raind-default")
+}
+
 func TestDropletHandlerCreateBuildsExpectedArgs(t *testing.T) {
 	tests := []struct {
 		name   string

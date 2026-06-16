@@ -1,4 +1,4 @@
-package spec
+package securityprofile
 
 import (
 	"fmt"
@@ -6,64 +6,60 @@ import (
 	"slices"
 )
 
-const (
-	SecurityProfileDefault = "default"
-	SecurityProfileDev     = "dev"
-)
+type Service struct{}
 
-type SecurityOption struct {
-	ProfileName      string
-	BaseCapabilities []string
-	Seccomp          *SeccompObject
-	AppArmorProfile  string
+func NewService() *Service {
+	return &Service{}
 }
 
-type SecurityProfile struct {
-	Name            string
-	Capabilities    CapabilityProfile
-	Seccomp         *SeccompObject
-	AppArmorProfile string
-}
-
-type CapabilityProfile struct {
-	Base []string
-}
-
-func ResolveSecurityOption(opt SecurityOption) (SecurityProfile, error) {
-	if len(opt.BaseCapabilities) != 0 || opt.Seccomp != nil || opt.AppArmorProfile != "" {
-		return SecurityProfile{
-			Name: opt.ProfileName,
-			Capabilities: CapabilityProfile{
-				Base: opt.BaseCapabilities,
-			},
-			Seccomp:         cloneSeccompObject(opt.Seccomp),
-			AppArmorProfile: opt.AppArmorProfile,
-		}, nil
+func (s *Service) List() []ProfileSummary {
+	profiles := []SecurityProfile{
+		DefaultSecurityProfile(),
+		DevSecurityProfile(),
 	}
-	return ResolveSecurityProfile(opt.ProfileName)
+	out := make([]ProfileSummary, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, profile.Summary())
+	}
+	return out
 }
 
-func ResolveSecurityProfile(name string) (SecurityProfile, error) {
+func (s *Service) Get(name string) (SecurityProfile, error) {
 	switch name {
-	case "", SecurityProfileDefault:
+	case "", ProfileDefault:
 		return DefaultSecurityProfile(), nil
-	case SecurityProfileDev:
+	case ProfileDev:
 		return DevSecurityProfile(), nil
 	default:
 		return SecurityProfile{}, fmt.Errorf("unknown security profile: %s", name)
 	}
 }
 
+func (s *Service) Resolve(name string) (SecurityProfile, error) {
+	return s.Get(name)
+}
+
+func (p SecurityProfile) Summary() ProfileSummary {
+	return ProfileSummary{
+		Name:              p.Name,
+		Type:              p.Type,
+		CapabilitiesCount: len(p.Capabilities.Base),
+		SeccompEnabled:    p.Seccomp != nil,
+		AppArmorProfile:   p.AppArmorProfile,
+	}
+}
+
 func DevSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
-	profile.Name = SecurityProfileDev
+	profile.Name = ProfileDev
 	return profile
 }
 
 func DefaultSecurityProfile() SecurityProfile {
 	ep := uint32(1)
 	return SecurityProfile{
-		Name: SecurityProfileDefault,
+		Name: ProfileDefault,
+		Type: ProfileTypeBuiltIn,
 		Capabilities: CapabilityProfile{
 			Base: []string{
 				"CAP_CHOWN",
@@ -132,7 +128,7 @@ func defaultSeccompArchitectures() []string {
 	}
 }
 
-func cloneSeccompObject(in *SeccompObject) *SeccompObject {
+func CloneSeccompObject(in *SeccompObject) *SeccompObject {
 	if in == nil {
 		return nil
 	}

@@ -293,7 +293,7 @@ func buildAnnotationSpec(opts ConfigOptions) AnnotationObject {
 }
 
 func buildSpec(opts ConfigOptions) (Spec, error) {
-	profile, err := ResolveSecurityProfile(opts.Security.ProfileName)
+	profile, err := ResolveSecurityOption(opts.Security)
 	if err != nil {
 		return Spec{}, err
 	}

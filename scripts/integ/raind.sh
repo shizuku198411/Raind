@@ -212,11 +212,21 @@ run_cli_checks() {
   run_raind bottle-ls bottle ls
   assert_output_contains bottle-ls "BOTTLE ID"
 
+  run_raind security-profile-ls security profile ls
+  assert_output_contains security-profile-ls "NAME"
+  assert_output_contains security-profile-ls "default"
+  assert_output_contains security-profile-ls "dev"
+
+  run_raind security-profile-show security profile show default
+  assert_output_contains security-profile-show "name: default"
+  assert_output_contains security-profile-show "apparmorProfile: raind-default"
+
   run_raind help --help
   assert_output_contains help "container"
   assert_output_contains help "image"
   assert_output_contains help "network"
   assert_output_contains help "resource"
+  assert_output_contains help "security"
   assert_output_contains help "policy"
   assert_output_contains help "logs"
 

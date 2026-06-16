@@ -10,6 +10,7 @@ import (
 
 	"raind/internal/condenser/core/image"
 	"raind/internal/condenser/core/network"
+	"raind/internal/condenser/core/securityprofile"
 	"raind/internal/condenser/runtime"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ilm"
@@ -153,14 +154,15 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 	imageHandler := &fakeImageService{}
 	runtimeHandler := &fakeRuntimeHandler{}
 	service := &ContainerService{
-		filesystemHandler:     &fakeFilesystemHandler{},
-		runtimeHandler:        runtimeHandler,
-		ipamHandler:           ipamHandler,
-		ilmHandler:            ilmHandler,
-		csmHandler:            csmHandler,
-		psmHandler:            &fakePsmHandler{},
-		imageServiceHandler:   imageHandler,
-		networkServiceHandler: &fakeNetworkService{},
+		filesystemHandler:      &fakeFilesystemHandler{},
+		runtimeHandler:         runtimeHandler,
+		ipamHandler:            ipamHandler,
+		ilmHandler:             ilmHandler,
+		csmHandler:             csmHandler,
+		psmHandler:             &fakePsmHandler{},
+		imageServiceHandler:    imageHandler,
+		networkServiceHandler:  &fakeNetworkService{},
+		securityProfileService: securityprofile.NewService(),
 	}
 	return containerServiceTestDeps{
 		service: service,

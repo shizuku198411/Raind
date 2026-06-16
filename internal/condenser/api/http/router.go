@@ -21,6 +21,7 @@ import (
 	networkHandler "raind/internal/condenser/api/http/network"
 	podHandler "raind/internal/condenser/api/http/pod"
 	policyHandler "raind/internal/condenser/api/http/policy"
+	securityProfileHandler "raind/internal/condenser/api/http/securityprofile"
 	serviceHandler "raind/internal/condenser/api/http/service"
 	websocketHandler "raind/internal/condenser/api/http/websocket"
 	_ "raind/internal/condenser/docs"
@@ -65,6 +66,7 @@ func NewApiRouter() *chi.Mux {
 	serviceHandler := serviceHandler.NewRequestHandler()
 	namespaceHandler := namespaceHandler.NewRequestHandler()
 	ingressHandler := ingressHandler.NewRequestHandler()
+	securityProfileHandler := securityProfileHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
@@ -100,6 +102,10 @@ func NewApiRouter() *chi.Mux {
 	r.With(RequireCLIScope(ScopeContainerWrite)).Post("/v1/containers/{containerId}/actions/stop", containerHandler.StopContainer)   // stop container
 	r.With(RequireCLIScope(ScopeContainerExec)).Post("/v1/containers/{containerId}/actions/exec", containerHandler.ExecContainer)    // exec container
 	r.With(RequireCLIScope(ScopeContainerWrite)).Delete("/v1/containers/{containerId}/actions/delete", containerHandler.DeleteContainer)
+
+	// == security profiles ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/security/profiles", securityProfileHandler.ListSecurityProfiles)
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/security/profiles/{name}", securityProfileHandler.ShowSecurityProfile)
 
 	// == resource ==
 	r.With(RequireCLIScope(ScopeResourceWrite)).Post("/v1/resource/apply", podHandler.ApplyPodYaml) // apply yaml

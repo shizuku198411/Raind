@@ -15,7 +15,7 @@ func TestNewAppContainsExpectedTopLevelCommands(t *testing.T) {
 		names[cmd.Name] = true
 	}
 
-	for _, name := range []string{"container", "image", "network", "resource", "policy", "bottle", "logs", "completion"} {
+	for _, name := range []string{"container", "image", "network", "resource", "security", "policy", "bottle", "logs", "completion"} {
 		assert.True(t, names[name], "missing command %s", name)
 	}
 }

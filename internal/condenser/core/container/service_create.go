@@ -1,6 +1,7 @@
 package container
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -591,6 +592,19 @@ func (s *ContainerService) createContainerSpec(
 		"RAIND-HOOK-SETTER=CONDENSER",
 	}
 
+	resolvedSecurityProfile, err := s.securityProfileService.Resolve(createParameter.SecurityProfile)
+	if err != nil {
+		return err
+	}
+	seccompJSON := ""
+	if resolvedSecurityProfile.Seccomp != nil {
+		seccompRaw, err := json.Marshal(resolvedSecurityProfile.Seccomp)
+		if err != nil {
+			return fmt.Errorf("marshal security profile seccomp failed: %w", err)
+		}
+		seccompJSON = string(seccompRaw)
+	}
+
 	specParameter := runtime.SpecModel{
 		Rootfs:                 rootfs,
 		Cwd:                    cwd,
@@ -602,7 +616,10 @@ func (s *ContainerService) createContainerSpec(
 		Mount:                  mount,
 		CapAdd:                 createParameter.CapAdd,
 		CapDrop:                createParameter.CapDrop,
-		SecurityProfile:        createParameter.SecurityProfile,
+		CapBase:                resolvedSecurityProfile.Capabilities.Base,
+		SecurityProfile:        resolvedSecurityProfile.Name,
+		SeccompJSON:            seccompJSON,
+		AppArmorProfile:        resolvedSecurityProfile.AppArmorProfile,
 		Rootless:               createParameter.Rootless,
 		RootlessMode:           createParameter.RootlessMode,
 		RootlessRootUID:        createParameter.RootlessRootUID,

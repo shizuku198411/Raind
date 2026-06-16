@@ -78,6 +78,31 @@ func TestBuildSpecAcceptsDevSecurityProfile(t *testing.T) {
 	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
 }
 
+func TestBuildSpecAcceptsResolvedSecurityOption(t *testing.T) {
+	// == setup ==
+	ep := uint32(1)
+
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{
+			ProfileName:      "custom-resolved",
+			BaseCapabilities: []string{"CAP_CHOWN"},
+			Seccomp: &SeccompObject{
+				DefaultAction:   "SCMP_ACT_ALLOW",
+				DefaultErrnoRet: &ep,
+			},
+			AppArmorProfile: "raind-default",
+		},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []string{"CAP_CHOWN"}, config.Process.Capabilities.Effective)
+	require.NotNil(t, config.LinuxSpec.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
+	assert.Equal(t, "raind-default", config.LinuxSpec.AppArmorProfile)
+}
+
 func TestBuildSpecRejectsUnknownSecurityProfile(t *testing.T) {
 	// == exercise ==
 	_, err := buildSpec(ConfigOptions{

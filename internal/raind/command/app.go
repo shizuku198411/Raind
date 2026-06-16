@@ -11,6 +11,7 @@ import (
 	networkcommand "raind/internal/raind/command/network"
 	policycommand "raind/internal/raind/command/policy"
 	resourcecommand "raind/internal/raind/command/resource"
+	securitycommand "raind/internal/raind/command/security"
 
 	"github.com/urfave/cli/v2"
 )
@@ -90,6 +91,13 @@ func NewApp() *cli.App {
 					deploymentcommand.CommandShow(),
 					deploymentcommand.CommandScale(),
 					deploymentcommand.CommandRemove(),
+				},
+			},
+			{
+				Name:  "security",
+				Usage: "security operation",
+				Subcommands: []*cli.Command{
+					securitycommand.CommandProfile(),
 				},
 			},
 			{
