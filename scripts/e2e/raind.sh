@@ -209,7 +209,18 @@ run_raind_allow_empty() {
   fi
 }
 
+assert_raind_fails() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.err"
 
+  log "raind $* fails"
+  if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+    cat "${out}" >&2 || true
+    fail "expected raind $* to fail"
+  fi
+  [[ -s "${out}" ]] || fail "raind $* failed without output"
+}
 
 is_transient_resource_apply_failure() {
   local out="$1"
@@ -262,7 +273,7 @@ assert_output_contains() {
   local pattern="$2"
   local out="${E2E_WORK_DIR}/${name}.out"
 
-  if ! grep -q "${pattern}" "${out}"; then
+  if ! grep -Fq -- "${pattern}" "${out}"; then
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
