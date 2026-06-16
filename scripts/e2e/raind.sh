@@ -674,7 +674,7 @@ YAML
   run_raind_allow_empty custom-profile-stop container stop "${cid}"
   run_raind_allow_empty custom-profile-rm container rm "${cid}"
   run_raind custom-profile-delete security profile delete "${profile}"
-  assert_output_contains custom-profile-delete "deleted security profile: ${profile}"
+  assert_output_contains custom-profile-delete "security profile: ${profile} deleted"
   assert_raind_fails custom-profile-show-deleted security profile show "${profile}"
 }
 

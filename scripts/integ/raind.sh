@@ -262,7 +262,7 @@ YAML
   assert_output_contains security-profile-show-custom "extends: deploy"
   assert_output_contains security-profile-show-custom "CAP_SYS_PTRACE"
   run_raind security-profile-delete security profile delete "${custom_profile_name}"
-  assert_output_contains security-profile-delete "deleted security profile: ${custom_profile_name}"
+  assert_output_contains security-profile-delete "security profile: ${custom_profile_name} deleted"
   assert_raind_fails security-profile-show-deleted security profile show "${custom_profile_name}"
 
   run_raind help --help
