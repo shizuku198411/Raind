@@ -9,7 +9,6 @@ import (
 	imagecommand "raind/internal/raind/command/image"
 	logscommand "raind/internal/raind/command/logs"
 	networkcommand "raind/internal/raind/command/network"
-	policycommand "raind/internal/raind/command/policy"
 	resourcecommand "raind/internal/raind/command/resource"
 	securitycommand "raind/internal/raind/command/security"
 
@@ -98,18 +97,7 @@ func NewApp() *cli.App {
 				Usage: "security operation",
 				Subcommands: []*cli.Command{
 					securitycommand.CommandProfile(),
-				},
-			},
-			{
-				Name:  "policy",
-				Usage: "policy operation",
-				Subcommands: []*cli.Command{
-					policycommand.CommandCreate(),
-					policycommand.CommandList(),
-					policycommand.CommandCommit(),
-					policycommand.CommandRemove(),
-					policycommand.CommandRevert(),
-					policycommand.CommandChangeMode(),
+					securitycommand.CommandPolicy(),
 				},
 			},
 			{

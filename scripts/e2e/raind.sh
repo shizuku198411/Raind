@@ -565,18 +565,18 @@ test_policy() {
   dest_id="$(extract_created_id policy-dest-create)"
   [[ -n "${source_id}" && -n "${dest_id}" ]] || fail "policy container ids not found"
 
-  run_raind policy-add policy add --type ew --source "e2e-policy-src-${SUFFIX}" --destination "e2e-policy-dst-${SUFFIX}" --protocol tcp --dport 80 --comment "e2e policy"
+  run_raind policy-add security policy add --type ew --source "e2e-policy-src-${SUFFIX}" --destination "e2e-policy-dst-${SUFFIX}" --protocol tcp --dport 80 --comment "e2e policy"
   policy_id="$(extract_policy_id policy-add)"
   [[ -n "${policy_id}" ]] || fail "policy id not found"
-  run_raind policy-ls policy ls --type ew
+  run_raind policy-ls security policy ls --type ew
   assert_output_contains policy-ls "${policy_id}"
-  run_raind policy-rm policy rm "${policy_id}"
+  run_raind policy-rm security policy rm "${policy_id}"
   assert_output_contains policy-rm "remove"
-  run_raind policy-revert policy revert
+  run_raind policy-revert security policy revert
   assert_output_contains policy-revert "revert success"
-  run_raind policy-ns-mode-enforce policy ns-mode enforce
+  run_raind policy-ns-mode-enforce security policy ns-mode enforce
   assert_output_contains policy-ns-mode-enforce "enforce"
-  run_raind policy-ns-mode-observe policy ns-mode observe
+  run_raind policy-ns-mode-observe security policy ns-mode observe
   assert_output_contains policy-ns-mode-observe "observe"
 
   run_raind_allow_empty policy-source-rm container rm "${source_id}"

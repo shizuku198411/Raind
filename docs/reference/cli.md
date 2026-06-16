@@ -160,12 +160,12 @@ raind resource ns ls
 ## Policies
 
 ```sh
-raind policy add --type <ew|ns-obs|ns-enf> [flags]
-raind policy ls --type <ew|ns-obs|ns-enf>
-raind policy rm <policy-id>
-raind policy commit
-raind policy revert
-raind policy ns-mode <observe|enforce>
+raind security policy add --type <ew|ns-obs|ns-enf> [flags]
+raind security policy ls --type <ew|ns-obs|ns-enf>
+raind security policy rm <policy-id>
+raind security policy commit
+raind security policy revert
+raind security policy ns-mode <observe|enforce>
 ```
 
 Policy add flags:

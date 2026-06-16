@@ -188,14 +188,14 @@ Policy types include:
 Example policy workflow:
 
 ```sh
-raind policy add --type ew \
+raind security policy add --type ew \
   --source frontend \
   --destination backend \
   --protocol tcp \
   --dport 8080 \
   --comment 'allow frontend to backend'
 
-raind policy commit
+raind security policy commit
 ```
 
 Raind also records network flow logs so communication can be inspected from the runtime itself.

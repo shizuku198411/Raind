@@ -1,6 +1,7 @@
 package security
 
 import (
+	policycommand "raind/internal/raind/command/policy"
 	core "raind/internal/raind/core/securityprofile"
 
 	"github.com/urfave/cli/v2"
@@ -67,6 +68,21 @@ func commandProfileDelete() *cli.Command {
 		ArgsUsage: "<name>",
 		Action: func(ctx *cli.Context) error {
 			return core.NewServiceDelete().Delete(ctx.Args().First())
+		},
+	}
+}
+
+func CommandPolicy() *cli.Command {
+	return &cli.Command{
+		Name:  "policy",
+		Usage: "security policy operation",
+		Subcommands: []*cli.Command{
+			policycommand.CommandCreate(),
+			policycommand.CommandList(),
+			policycommand.CommandCommit(),
+			policycommand.CommandRemove(),
+			policycommand.CommandRevert(),
+			policycommand.CommandChangeMode(),
 		},
 	}
 }
