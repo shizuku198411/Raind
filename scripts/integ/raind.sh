@@ -172,7 +172,7 @@ assert_output_contains() {
   local pattern="$2"
   local out="${E2E_WORK_DIR}/${name}.out"
 
-  if ! grep -q "${pattern}" "${out}"; then
+  if ! grep -Fq -- "${pattern}" "${out}"; then
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
@@ -217,6 +217,9 @@ run_cli_checks() {
   assert_output_contains security-profile-ls "default"
   assert_output_contains security-profile-ls "dev"
   assert_output_contains security-profile-ls "deploy"
+  assert_output_contains security-profile-ls "restricted"
+  assert_output_contains security-profile-ls "privileged"
+  assert_output_contains security-profile-ls "unconfined"
 
   run_raind security-profile-show security profile show default
   assert_output_contains security-profile-show "name: default"
@@ -225,6 +228,18 @@ run_cli_checks() {
   run_raind security-profile-show-deploy security profile show deploy
   assert_output_contains security-profile-show-deploy "name: deploy"
   assert_output_contains security-profile-show-deploy "apparmorProfile: raind-default"
+
+  run_raind security-profile-show-restricted security profile show restricted
+  assert_output_contains security-profile-show-restricted "name: restricted"
+  assert_output_contains security-profile-show-restricted "base: []"
+
+  run_raind security-profile-show-privileged security profile show privileged
+  assert_output_contains security-profile-show-privileged "name: privileged"
+  assert_output_contains security-profile-show-privileged "CAP_SYS_ADMIN"
+
+  run_raind security-profile-show-unconfined security profile show unconfined
+  assert_output_contains security-profile-show-unconfined "name: unconfined"
+  assert_output_contains security-profile-show-unconfined "CAP_NET_RAW"
 
   run_raind help --help
   assert_output_contains help "container"

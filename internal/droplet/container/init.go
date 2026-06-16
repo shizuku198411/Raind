@@ -320,9 +320,11 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 		return fmt.Errorf("set capability: %w", err)
 	}
 	// 10. install seccomp (NO_NEW_PRIVS + filter)
-	err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
-	if err != nil {
-		return fmt.Errorf("install seccomp: %w", err)
+	if spec.LinuxSpec.Seccomp != nil {
+		err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
+		if err != nil {
+			return fmt.Errorf("install seccomp: %w", err)
+		}
 	}
 	// 12. change current dir
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)

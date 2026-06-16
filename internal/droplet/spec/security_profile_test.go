@@ -55,9 +55,48 @@ func TestResolveSecurityProfileDeploy(t *testing.T) {
 	assert.Equal(t, defaultProfile.Seccomp.DefaultAction, deployProfile.Seccomp.DefaultAction)
 }
 
+func TestResolveSecurityProfileRestricted(t *testing.T) {
+	// == exercise ==
+	restrictedProfile, err := ResolveSecurityProfile(SecurityProfileRestricted)
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, SecurityProfileRestricted, restrictedProfile.Name)
+	assert.Empty(t, restrictedProfile.Capabilities.Base)
+	require.NotNil(t, restrictedProfile.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", restrictedProfile.Seccomp.DefaultAction)
+	assert.Equal(t, "raind-default", restrictedProfile.AppArmorProfile)
+}
+
+func TestResolveSecurityProfilePrivileged(t *testing.T) {
+	// == exercise ==
+	privilegedProfile, err := ResolveSecurityProfile(SecurityProfilePrivileged)
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, SecurityProfilePrivileged, privilegedProfile.Name)
+	assert.Contains(t, privilegedProfile.Capabilities.Base, "CAP_SYS_ADMIN")
+	assert.Contains(t, privilegedProfile.Capabilities.Base, "CAP_BPF")
+	assert.Nil(t, privilegedProfile.Seccomp)
+	assert.Empty(t, privilegedProfile.AppArmorProfile)
+}
+
+func TestResolveSecurityProfileUnconfined(t *testing.T) {
+	// == exercise ==
+	unconfinedProfile, err := ResolveSecurityProfile(SecurityProfileUnconfined)
+	defaultProfile := DefaultSecurityProfile()
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, SecurityProfileUnconfined, unconfinedProfile.Name)
+	assert.Equal(t, defaultProfile.Capabilities.Base, unconfinedProfile.Capabilities.Base)
+	assert.Nil(t, unconfinedProfile.Seccomp)
+	assert.Empty(t, unconfinedProfile.AppArmorProfile)
+}
+
 func TestResolveSecurityProfileRejectsUnknownProfile(t *testing.T) {
 	// == exercise ==
-	_, err := ResolveSecurityProfile("restricted")
+	_, err := ResolveSecurityProfile("unknown-profile")
 
 	// == assert ==
 	require.Error(t, err)
@@ -135,10 +174,51 @@ func TestBuildSpecAcceptsDeploySecurityProfile(t *testing.T) {
 	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
 }
 
+func TestBuildSpecAcceptsRestrictedSecurityProfile(t *testing.T) {
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{ProfileName: SecurityProfileRestricted},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Empty(t, config.Process.Capabilities.Effective)
+	assert.Equal(t, RestrictedSecurityProfile().AppArmorProfile, config.LinuxSpec.AppArmorProfile)
+	require.NotNil(t, config.LinuxSpec.Seccomp)
+	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
+}
+
+func TestBuildSpecAcceptsPrivilegedSecurityProfile(t *testing.T) {
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{ProfileName: SecurityProfilePrivileged},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Contains(t, config.Process.Capabilities.Effective, "CAP_SYS_ADMIN")
+	assert.Contains(t, config.Process.Capabilities.Effective, "CAP_BPF")
+	assert.Nil(t, config.LinuxSpec.Seccomp)
+	assert.Empty(t, config.LinuxSpec.AppArmorProfile)
+}
+
+func TestBuildSpecAcceptsUnconfinedSecurityProfile(t *testing.T) {
+	// == exercise ==
+	config, err := buildSpec(ConfigOptions{
+		Security: SecurityOption{ProfileName: SecurityProfileUnconfined},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, DefaultSecurityProfile().Capabilities.Base, config.Process.Capabilities.Effective)
+	assert.Nil(t, config.LinuxSpec.Seccomp)
+	assert.Empty(t, config.LinuxSpec.AppArmorProfile)
+}
+
 func TestBuildSpecRejectsUnknownSecurityProfile(t *testing.T) {
 	// == exercise ==
 	_, err := buildSpec(ConfigOptions{
-		Security: SecurityOption{ProfileName: "restricted"},
+		Security: SecurityOption{ProfileName: "unknown-profile"},
 	})
 
 	// == assert ==

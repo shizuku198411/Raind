@@ -5,9 +5,12 @@ type ProfileType string
 const (
 	ProfileTypeBuiltIn ProfileType = "built-in"
 
-	ProfileDefault = "default"
-	ProfileDev     = "dev"
-	ProfileDeploy  = "deploy"
+	ProfileDefault    = "default"
+	ProfileDev        = "dev"
+	ProfileDeploy     = "deploy"
+	ProfileRestricted = "restricted"
+	ProfilePrivileged = "privileged"
+	ProfileUnconfined = "unconfined"
 )
 
 type SecurityProfile struct {

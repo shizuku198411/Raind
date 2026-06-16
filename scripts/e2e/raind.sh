@@ -433,6 +433,36 @@ assert_deploy_security_profile_applied() {
   assert_security_profile_runtime_applied "${cid}"
 }
 
+assert_restricted_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify restricted security profile for ${cid}"
+  sudo_cmd jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    any(.linux.seccomp.syscalls[]?.names[]?; . == "unshare") and
+    ((.process.capabilities.effective // []) | length == 0) and
+    ((.process.capabilities.bounding // []) | length == 0) and
+    ((.process.capabilities.permitted // []) | length == 0)
+  ' "${config}" >/dev/null || fail "restricted security profile was not written to ${config}"
+
+  assert_security_profile_runtime_applied "${cid}"
+}
+
+assert_unconfined_security_profile_applied() {
+  local cid="$1"
+  local config="/etc/raind/container/${cid}/config.json"
+
+  log "verify unconfined security profile for ${cid}"
+  sudo_cmd jq -e '
+    (.linux.seccomp == null) and
+    (.linux.apparmorProfile == null) and
+    (any(.process.capabilities.effective[]?; . == "CAP_NET_RAW")) and
+    ([.process.capabilities.effective[]?] | index("CAP_SYS_ADMIN") | not)
+  ' "${config}" >/dev/null || fail "unconfined security profile was not written to ${config}"
+}
+
 write_static_build_context() {
   local dir="$1"
   mkdir -p "${dir}/assets"
@@ -565,6 +595,32 @@ test_deploy_security_profile_container() {
   assert_deploy_security_profile_applied "${cid}"
   run_raind_allow_empty deploy-profile-stop container stop "${cid}"
   run_raind_allow_empty deploy-profile-rm container rm "${cid}"
+}
+
+test_restricted_security_profile_container() {
+  local cid
+  local name="e2e-restricted-profile-${SUFFIX}"
+
+  log "restricted security profile container test"
+  run_raind restricted-profile-run container run --security-profile restricted --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id restricted-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_restricted_security_profile_applied "${cid}"
+  run_raind_allow_empty restricted-profile-stop container stop "${cid}"
+  run_raind_allow_empty restricted-profile-rm container rm "${cid}"
+}
+
+test_unconfined_security_profile_container() {
+  local cid
+  local name="e2e-unconfined-profile-${SUFFIX}"
+
+  log "unconfined security profile container test"
+  run_raind unconfined-profile-run container run --security-profile unconfined --name "${name}" busybox:latest sleep 30
+  cid="$(extract_created_id unconfined-profile-run)"
+  cid="$(resolve_container_id "${cid}" "${name}")"
+  assert_unconfined_security_profile_applied "${cid}"
+  run_raind_allow_empty unconfined-profile-stop container stop "${cid}"
+  run_raind_allow_empty unconfined-profile-rm container rm "${cid}"
 }
 
 test_rootless_container_cache() {
@@ -975,6 +1031,8 @@ main() {
   test_container_deploy
   test_dev_security_profile_container
   test_deploy_security_profile_container
+  test_restricted_security_profile_container
+  test_unconfined_security_profile_container
   test_rootless_container_cache
   test_login_rootless_bind_mount
   test_bottle_deploy

@@ -229,6 +229,44 @@ run_smoke_e2e() {
     any(.process.capabilities.effective[]?; . == "CAP_NET_RAW")
   ' "${dev_bundle_dir}/config.json" >/dev/null
 
+  for profile in restricted privileged unconfined; do
+    profile_bundle_dir="${smoke_dir}/${profile}-bundle"
+    mkdir -p "${profile_bundle_dir}"
+
+    droplet spec \
+      --security-profile "${profile}" \
+      --rootfs "${rootfs}" \
+      --cwd "/" \
+      --command "/bin/sh -c 'echo smoke-${profile}'" \
+      --ns "mount" --ns "uts" \
+      --hostname "smoke-${profile}" \
+      --if_name "" --if_addr "" \
+      --image_layer "${layer}" \
+      --upper_dir "${upper}" \
+      --work_dir "${work}" \
+      --output "${profile_bundle_dir}"
+  done
+
+  jq -e '
+    .linux.apparmorProfile == "raind-default" and
+    .linux.seccomp.defaultAction == "SCMP_ACT_ALLOW" and
+    ((.process.capabilities.effective // []) | length == 0)
+  ' "${smoke_dir}/restricted-bundle/config.json" >/dev/null
+
+  jq -e '
+    (.linux.seccomp == null) and
+    (.linux.apparmorProfile == null) and
+    any(.process.capabilities.effective[]?; . == "CAP_SYS_ADMIN") and
+    any(.process.capabilities.effective[]?; . == "CAP_BPF")
+  ' "${smoke_dir}/privileged-bundle/config.json" >/dev/null
+
+  jq -e '
+    (.linux.seccomp == null) and
+    (.linux.apparmorProfile == null) and
+    any(.process.capabilities.effective[]?; . == "CAP_NET_RAW") and
+    ([.process.capabilities.effective[]?] | index("CAP_SYS_ADMIN") | not)
+  ' "${smoke_dir}/unconfined-bundle/config.json" >/dev/null
+
   cat > "${bundle_dir}/state.json" <<STATE_JSON
 {
   "ociVersion": "1.0.2",
