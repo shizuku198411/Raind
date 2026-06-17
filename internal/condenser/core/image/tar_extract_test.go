@@ -3,6 +3,8 @@ package image
 import (
 	"archive/tar"
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,6 +56,74 @@ func TestExtractTarToDirWithOptionsRejectsTooManyEntries(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too many entries")
+}
+
+func TestExtractTarToDirWithOptionsRejectsSymlinkOverwrite(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside-target")
+	require.NoError(t, os.WriteFile(outside, []byte("safe\n"), 0o666))
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "overwrite-me",
+		Typeflag: tar.TypeSymlink,
+		Linkname: outside,
+		Mode:     0o777,
+	}))
+	payload := []byte("overwritten\n")
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "overwrite-me",
+		Typeflag: tar.TypeReg,
+		Mode:     0o644,
+		Size:     int64(len(payload)),
+	}))
+	_, err := tw.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	err = ExtractTarToDirWithOptions(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractTarOptions{
+		MaxBytes:   int64(buf.Len() + 1024),
+		MaxFile:    1024,
+		MaxEntries: 10,
+	})
+
+	require.Error(t, err)
+	got, readErr := os.ReadFile(outside)
+	require.NoError(t, readErr)
+	assert.Equal(t, "safe\n", string(got))
+}
+
+func TestExtractTarToDirWithOptionsRejectsParentDirectorySymlink(t *testing.T) {
+	outside := t.TempDir()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "dir",
+		Typeflag: tar.TypeSymlink,
+		Linkname: outside,
+		Mode:     0o777,
+	}))
+	payload := []byte("data\n")
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "dir/file.txt",
+		Typeflag: tar.TypeReg,
+		Mode:     0o644,
+		Size:     int64(len(payload)),
+	}))
+	_, err := tw.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	err = ExtractTarToDirWithOptions(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractTarOptions{
+		MaxBytes:   int64(buf.Len() + 1024),
+		MaxFile:    1024,
+		MaxEntries: 10,
+	})
+
+	require.Error(t, err)
+	_, statErr := os.Stat(filepath.Join(outside, "file.txt"))
+	assert.True(t, os.IsNotExist(statErr), "outside file should not be created")
 }
 
 func buildTestTar(t *testing.T, files map[string]string) []byte {
