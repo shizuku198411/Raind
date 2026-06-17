@@ -675,12 +675,13 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 	if err := runtimeHandler.Start(runtime.StartModel{ContainerId: containerId, Tty: true}); err != nil {
 		return err
 	}
-	// RUN is executed as the container's init process.
+	// RUN is executed as the container's init process. Judge it only by a
+	// finalized exit status. A process-down monitor fallback is not a success.
 	info, err := waitBuildContainerStopped(csmHandler, containerId, 10*time.Minute)
 	if err != nil {
 		return err
 	}
-	if info.ExitCode != 0 && info.Message != "process down detected." {
+	if info.ExitCode != 0 {
 		return buildRunFailedError(info, containerDir)
 	}
 	_ = removeBuildRunScript(upperDir)
@@ -1151,24 +1152,70 @@ func removeBuildRunScript(mergedDir string) error {
 	return nil
 }
 
+var buildStatusPollInterval = 500 * time.Millisecond
+var buildExitStatusFinalizeTimeout = 5 * time.Second
+
 func waitBuildContainerStopped(csmHandler csm.CsmHandler, containerId string, timeout time.Duration) (csm.ContainerInfo, error) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	stopDeadline := time.Now().Add(timeout)
+	var finalDeadline time.Time
+	var lastInfo csm.ContainerInfo
+
+	for {
+		now := time.Now()
+		if finalDeadline.IsZero() && now.After(stopDeadline) {
+			return csm.ContainerInfo{}, fmt.Errorf("timeout waiting for build container to stop: %s", containerId)
+		}
+		if !finalDeadline.IsZero() && now.After(finalDeadline) {
+			return csm.ContainerInfo{}, buildRunExitStatusNotFinalError(lastInfo)
+		}
+
 		info, err := csmHandler.GetContainerById(containerId)
 		if err == nil {
+			lastInfo = info
 			switch info.State {
 			case "stopped":
-				return info, nil
+				if isBuildExitStatusFinal(info) {
+					return info, nil
+				}
+				if finalDeadline.IsZero() {
+					finalDeadline = time.Now().Add(buildExitStatusFinalizeTimeout)
+				}
 			case "running", "created", "creating":
-				time.Sleep(500 * time.Millisecond)
-				continue
+				// Still waiting for the build RUN container to terminate.
 			default:
 				return csm.ContainerInfo{}, fmt.Errorf("unexpected container state: %s", info.State)
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(buildStatusPollInterval)
 	}
-	return csm.ContainerInfo{}, fmt.Errorf("timeout waiting for build container to stop: %s", containerId)
+}
+
+func isBuildExitStatusFinal(info csm.ContainerInfo) bool {
+	if info.State != "stopped" {
+		return false
+	}
+	if info.ExitCode < 0 {
+		return false
+	}
+	if info.ExitCode != 0 {
+		return true
+	}
+	return strings.TrimSpace(info.Reason) != "" || strings.TrimSpace(info.Message) != ""
+}
+
+func buildRunExitStatusNotFinalError(info csm.ContainerInfo) error {
+	msg := fmt.Sprintf("RUN command exit status was not finalized: container_id=%s", info.ContainerId)
+	if strings.TrimSpace(info.State) != "" {
+		msg += ", state=" + info.State
+	}
+	msg += fmt.Sprintf(", exit_code=%d", info.ExitCode)
+	if strings.TrimSpace(info.Reason) != "" {
+		msg += ", reason=" + info.Reason
+	}
+	if strings.TrimSpace(info.Message) != "" {
+		msg += ", message=" + info.Message
+	}
+	return errors.New(msg)
 }
 
 func buildRunFailedError(info csm.ContainerInfo, containerDir string) error {
