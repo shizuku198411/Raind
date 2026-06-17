@@ -388,24 +388,25 @@ func (s *ImageService) applyCopy(state *buildState, contextDir string, stages []
 		if err != nil {
 			return err
 		}
-		targetPath := dstPath
-		if len(spec.sources) > 1 {
-			targetPath = filepath.Join(dstPath, filepath.Base(filepath.Clean(src)))
-		}
-		info, err := os.Lstat(srcPath)
+		resolvedSrcPath, info, err := resolveCopySourceWithinRoot(sourceRoot, srcPath, src)
 		if err != nil {
 			return err
 		}
+		targetPath := dstPath
+		sourceBase := filepath.Base(filepath.Clean(src))
+		if len(spec.sources) > 1 {
+			targetPath = filepath.Join(dstPath, sourceBase)
+		}
 		if info.IsDir() {
-			if err := copyDir(srcPath, targetPath); err != nil {
+			if err := copyDir(resolvedSrcPath, targetPath); err != nil {
 				return err
 			}
 			continue
 		}
 		if dstInfo, err := os.Lstat(targetPath); err == nil && dstInfo.IsDir() {
-			targetPath = filepath.Join(targetPath, filepath.Base(srcPath))
+			targetPath = filepath.Join(targetPath, sourceBase)
 		}
-		if err := copyFile(srcPath, targetPath, info.Mode()); err != nil {
+		if err := copyFile(resolvedSrcPath, targetPath, info.Mode()); err != nil {
 			return err
 		}
 		if spec.chmod != "" {
@@ -999,6 +1000,35 @@ func safeBuildSourceJoin(root string, src string, allowAbs bool) (string, error)
 		clean = strings.TrimPrefix(clean, string(os.PathSeparator))
 	}
 	return safeJoin(root, clean)
+}
+
+func resolveCopySourceWithinRoot(root string, srcPath string, originalSource string) (string, os.FileInfo, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", nil, err
+	}
+	resolvedSrc, err := filepath.EvalSymlinks(srcPath)
+	if err != nil {
+		return "", nil, err
+	}
+	if !pathWithinRoot(resolvedRoot, resolvedSrc) {
+		return "", nil, fmt.Errorf("COPY/ADD source escapes build context: %s", originalSource)
+	}
+	info, err := os.Stat(resolvedSrc)
+	if err != nil {
+		return "", nil, err
+	}
+	return resolvedSrc, info, nil
+}
+
+func pathWithinRoot(root string, target string) bool {
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
 func parseChmod(value string) (fs.FileMode, error) {
