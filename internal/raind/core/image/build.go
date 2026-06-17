@@ -102,10 +102,11 @@ func (s *ServiceImageBuild) Build(param ServiceImageBuildModel) error {
 
 func resolveBuildFile(contextDir string, requested string) (string, error) {
 	if requested != "" {
-		if _, err := os.Stat(filepath.Join(contextDir, requested)); err != nil {
+		buildFile, err := resolveRequestedBuildFile(contextDir, requested)
+		if err != nil {
 			return "", err
 		}
-		return requested, nil
+		return buildFile, nil
 	}
 	for _, candidate := range []string{"Dripfile", "Dockerfile"} {
 		if _, err := os.Stat(filepath.Join(contextDir, candidate)); err == nil {
@@ -113,6 +114,29 @@ func resolveBuildFile(contextDir string, requested string) (string, error) {
 		}
 	}
 	return "", os.ErrNotExist
+}
+
+func resolveRequestedBuildFile(contextDir string, requested string) (string, error) {
+	cleaned := filepath.Clean(requested)
+	if filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("dripfile path must be relative to build context: %s", requested)
+	}
+
+	root, err := filepath.Abs(contextDir)
+	if err != nil {
+		return "", err
+	}
+	full := filepath.Join(root, cleaned)
+
+	rel, err := filepath.Rel(root, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("dripfile path escapes build context: %s", requested)
+	}
+
+	if _, err := os.Stat(full); err != nil {
+		return "", err
+	}
+	return rel, nil
 }
 
 func sanitizeTarName(tag string) string {
