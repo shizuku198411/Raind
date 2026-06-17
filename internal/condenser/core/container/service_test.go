@@ -93,6 +93,24 @@ func TestContainerServiceStartResolvesNameToID(t *testing.T) {
 	assert.Equal(t, "cid-1", deps.runtime.startedID)
 }
 
+func TestContainerServiceStartRestoresForwardRulesForStoppedContainer(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	deps.csm.storeInfo("cid-1", csm.ContainerInfo{ContainerId: "cid-1", ContainerName: "web", State: "stopped"})
+	deps.ipam.forwards = map[string][]ipam.ForwardInfo{
+		"cid-1": {{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
+	}
+
+	id, err := deps.service.Start(ServiceStartModel{ContainerId: "web"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "cid-1", id)
+	assert.True(t, deps.runtime.createCalled)
+	assert.Equal(t, "cid-1", deps.runtime.startedID)
+	assert.Equal(t, []forwardingRuleCall{
+		{containerId: "cid-1", model: network.ServiceNetworkModel{HostPort: "8080", ContainerPort: "80", Protocol: "tcp"}},
+	}, deps.network.createdForwardingRules)
+}
+
 func TestContainerServiceStopRejectsNonRunningContainer(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	deps.csm.storeInfo("cid-1", csm.ContainerInfo{ContainerId: "cid-1", ContainerName: "web", State: "created"})
@@ -147,6 +165,7 @@ type containerServiceTestDeps struct {
 	ipam    *fakeIpamHandler
 	image   *fakeImageService
 	runtime *fakeRuntimeHandler
+	network *fakeNetworkService
 }
 
 func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
@@ -155,6 +174,7 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 	ipamHandler := &fakeIpamHandler{}
 	imageHandler := &fakeImageService{}
 	runtimeHandler := &fakeRuntimeHandler{}
+	networkHandler := &fakeNetworkService{}
 	service := &ContainerService{
 		filesystemHandler:      &fakeFilesystemHandler{},
 		runtimeHandler:         runtimeHandler,
@@ -163,7 +183,7 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 		csmHandler:             csmHandler,
 		psmHandler:             &fakePsmHandler{},
 		imageServiceHandler:    imageHandler,
-		networkServiceHandler:  &fakeNetworkService{},
+		networkServiceHandler:  networkHandler,
 		securityProfileService: securityprofile.NewService(),
 	}
 	return containerServiceTestDeps{
@@ -173,6 +193,7 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 		ipam:    ipamHandler,
 		image:   imageHandler,
 		runtime: runtimeHandler,
+		network: networkHandler,
 	}
 }
 
@@ -368,6 +389,7 @@ func (f *fakeCsmHandler) GetLogPath(string) (string, error) { return "", nil }
 
 type fakeIpamHandler struct {
 	released []string
+	forwards map[string][]ipam.ForwardInfo
 }
 
 func (f *fakeIpamHandler) Allocate(containerId string, bridge string) (string, error) {
@@ -398,8 +420,10 @@ func (f *fakeIpamHandler) GetInfoByIp(string) (string, string, error) { return "
 func (f *fakeIpamHandler) SetForwardInfo(string, int, int, string) error {
 	return nil
 }
-func (f *fakeIpamHandler) GetForwardInfo(string) ([]ipam.ForwardInfo, error) { return nil, nil }
-func (f *fakeIpamHandler) GetPoolList() ([]ipam.Pool, error)                 { return nil, nil }
+func (f *fakeIpamHandler) GetForwardInfo(containerId string) ([]ipam.ForwardInfo, error) {
+	return append([]ipam.ForwardInfo{}, f.forwards[containerId]...), nil
+}
+func (f *fakeIpamHandler) GetPoolList() ([]ipam.Pool, error) { return nil, nil }
 func (f *fakeIpamHandler) GetNetworkInfoById(string) (string, ipam.Allocation, error) {
 	return "", ipam.Allocation{}, nil
 }
@@ -453,7 +477,15 @@ func (f *fakePsmHandler) IsPodExist(string) bool                      { return f
 func (f *fakePsmHandler) IsPodOwner(string) bool                      { return true }
 func (f *fakePsmHandler) GetPodOwnerPid(string) (int, error)          { return 0, nil }
 
-type fakeNetworkService struct{}
+type forwardingRuleCall struct {
+	containerId string
+	model       network.ServiceNetworkModel
+}
+
+type fakeNetworkService struct {
+	createdForwardingRules []forwardingRuleCall
+	removedForwardingRules []forwardingRuleCall
+}
 
 func (f *fakeNetworkService) CreateNewNetwork(network.ServiceNewNetworkModel) error { return nil }
 func (f *fakeNetworkService) RemoveNetwork(network.ServiceRemoveNetworkModel) error { return nil }
@@ -462,12 +494,14 @@ func (f *fakeNetworkService) CreateMasqueradeRule(string, string) error         
 func (f *fakeNetworkService) InsertInputRule(int, network.InputRuleModel, string) error {
 	return nil
 }
-func (f *fakeNetworkService) CreateForwardingRule(string, network.ServiceNetworkModel) error {
+func (f *fakeNetworkService) CreateForwardingRule(containerId string, model network.ServiceNetworkModel) error {
+	f.createdForwardingRules = append(f.createdForwardingRules, forwardingRuleCall{containerId: containerId, model: model})
 	return nil
 }
 func (f *fakeNetworkService) CreateRedirectDnsTrafficRule(string, string) error { return nil }
 func (f *fakeNetworkService) RemoveRedirectDnsTrafficRule(string, string) error { return nil }
-func (f *fakeNetworkService) RemoveForwardingRule(string, network.ServiceNetworkModel) error {
+func (f *fakeNetworkService) RemoveForwardingRule(containerId string, model network.ServiceNetworkModel) error {
+	f.removedForwardingRules = append(f.removedForwardingRules, forwardingRuleCall{containerId: containerId, model: model})
 	return nil
 }
 

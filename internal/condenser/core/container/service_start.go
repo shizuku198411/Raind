@@ -48,6 +48,13 @@ func (s *ContainerService) Start(startParameter ServiceStartModel) (string, erro
 				return "", fmt.Errorf("start container failed: %w", err)
 			}
 		}
+		// restore forwarding rules before starting the container.
+		// Forwarding metadata is persisted in IPAM, while iptables rules are runtime state
+		// and can be lost after a host reboot.
+		if err := s.restoreForwardRules(containerId); err != nil {
+			return "", fmt.Errorf("restore forward rule failed: %w", err)
+		}
+
 		// start container
 		if err := s.startContainer(containerId, containerInfo.Tty); err != nil {
 			return "", fmt.Errorf("start container failed: %w", err)

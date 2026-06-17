@@ -354,26 +354,19 @@ func (s *NetworkService) getContainerAddress(containerId string) (string, string
 
 func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface string, containerAddr string, portParam ServiceNetworkModel) error {
 	// 1. dnat
-	dnatRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-A", "PREROUTING",
+	dnatRuleParam := []string{
 		"-i", hostInterface,
 		"-p", portParam.Protocol,
 		"--dport", portParam.HostPort,
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatRule := s.commandFactory.Command(dnatRuleCmd[0], dnatRuleCmd[1:]...)
-	if err := dnatRule.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("nat", "PREROUTING", "append", dnatRuleParam); err != nil {
 		return err
 	}
 
 	// 2. dnat for local host traffic from host namespace
-	dnatOutputRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-A", "OUTPUT",
+	dnatOutputRuleParam := []string{
 		"-m", "addrtype",
 		"--dst-type", "LOCAL",
 		"-p", portParam.Protocol,
@@ -381,16 +374,12 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatOutputRule := s.commandFactory.Command(dnatOutputRuleCmd[0], dnatOutputRuleCmd[1:]...)
-	if err := dnatOutputRule.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("nat", "OUTPUT", "append", dnatOutputRuleParam); err != nil {
 		return err
 	}
 
 	// 3. dnat for local host traffic from containers
-	dnatBridgeRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-A", "PREROUTING",
+	dnatBridgeRuleParam := []string{
 		"-i", bridgeInterface,
 		"-m", "addrtype",
 		"--dst-type", "LOCAL",
@@ -399,15 +388,12 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatBridgeRule := s.commandFactory.Command(dnatBridgeRuleCmd[0], dnatBridgeRuleCmd[1:]...)
-	if err := dnatBridgeRule.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("nat", "PREROUTING", "append", dnatBridgeRuleParam); err != nil {
 		return err
 	}
 
 	// 4. allow forward: in
-	forwardInCmd := []string{
-		"iptables",
-		"-A", "FORWARD",
+	forwardInParam := []string{
 		"-i", hostInterface,
 		"-o", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -415,15 +401,12 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		"-d", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardIn := s.commandFactory.Command(forwardInCmd[0], forwardInCmd[1:]...)
-	if err := forwardIn.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("", "FORWARD", "append", forwardInParam); err != nil {
 		return err
 	}
 
 	// 5. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
-	forwardHairpinCmd := []string{
-		"iptables",
-		"-I", "FORWARD", "1",
+	forwardHairpinParam := []string{
 		"-i", bridgeInterface,
 		"-o", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -433,15 +416,12 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		"-d", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardHairpin := s.commandFactory.Command(forwardHairpinCmd[0], forwardHairpinCmd[1:]...)
-	if err := forwardHairpin.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("", "FORWARD", "insert-first", forwardHairpinParam); err != nil {
 		return err
 	}
 
 	// 6. allow forward: out
-	forwardOutCmd := []string{
-		"iptables",
-		"-A", "FORWARD",
+	forwardOutParam := []string{
 		"-o", hostInterface,
 		"-i", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -449,8 +429,7 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		"-s", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardOut := s.commandFactory.Command(forwardOutCmd[0], forwardOutCmd[1:]...)
-	if err := forwardOut.Run(); err != nil {
+	if err := s.addIptablesRuleIfMissing("", "FORWARD", "append", forwardOutParam); err != nil {
 		return err
 	}
 
@@ -459,26 +438,19 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 
 func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterface string, containerAddr string, portParam ServiceNetworkModel) error {
 	// 1. dnat
-	dnatRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-D", "PREROUTING",
+	dnatRuleParam := []string{
 		"-i", hostInterface,
 		"-p", portParam.Protocol,
 		"--dport", portParam.HostPort,
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatRule := s.commandFactory.Command(dnatRuleCmd[0], dnatRuleCmd[1:]...)
-	if err := dnatRule.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("nat", "PREROUTING", dnatRuleParam); err != nil {
 		return err
 	}
 
 	// 2. dnat for local host traffic from host namespace
-	dnatOutputRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-D", "OUTPUT",
+	dnatOutputRuleParam := []string{
 		"-m", "addrtype",
 		"--dst-type", "LOCAL",
 		"-p", portParam.Protocol,
@@ -486,16 +458,12 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatOutputRule := s.commandFactory.Command(dnatOutputRuleCmd[0], dnatOutputRuleCmd[1:]...)
-	if err := dnatOutputRule.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("nat", "OUTPUT", dnatOutputRuleParam); err != nil {
 		return err
 	}
 
 	// 3. dnat for local host traffic from containers
-	dnatBridgeRuleCmd := []string{
-		"iptables",
-		"-t", "nat",
-		"-D", "PREROUTING",
+	dnatBridgeRuleParam := []string{
 		"-i", bridgeInterface,
 		"-m", "addrtype",
 		"--dst-type", "LOCAL",
@@ -504,15 +472,12 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		"-j", "DNAT",
 		"--to-destination", containerAddr + ":" + portParam.ContainerPort,
 	}
-	dnatBridgeRule := s.commandFactory.Command(dnatBridgeRuleCmd[0], dnatBridgeRuleCmd[1:]...)
-	if err := dnatBridgeRule.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("nat", "PREROUTING", dnatBridgeRuleParam); err != nil {
 		return err
 	}
 
 	// 4. allow forward: in
-	forwardInCmd := []string{
-		"iptables",
-		"-D", "FORWARD",
+	forwardInParam := []string{
 		"-i", hostInterface,
 		"-o", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -520,15 +485,12 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		"-d", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardIn := s.commandFactory.Command(forwardInCmd[0], forwardInCmd[1:]...)
-	if err := forwardIn.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("", "FORWARD", forwardInParam); err != nil {
 		return err
 	}
 
 	// 5. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
-	forwardHairpinCmd := []string{
-		"iptables",
-		"-D", "FORWARD",
+	forwardHairpinParam := []string{
 		"-i", bridgeInterface,
 		"-o", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -538,15 +500,12 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		"-d", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardHairpin := s.commandFactory.Command(forwardHairpinCmd[0], forwardHairpinCmd[1:]...)
-	if err := forwardHairpin.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("", "FORWARD", forwardHairpinParam); err != nil {
 		return err
 	}
 
 	// 6. allow forward: out
-	forwardOutCmd := []string{
-		"iptables",
-		"-D", "FORWARD",
+	forwardOutParam := []string{
 		"-o", hostInterface,
 		"-i", bridgeInterface,
 		"-p", portParam.Protocol,
@@ -554,10 +513,58 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		"-s", containerAddr,
 		"-j", "ACCEPT",
 	}
-	forwardOut := s.commandFactory.Command(forwardOutCmd[0], forwardOutCmd[1:]...)
-	if err := forwardOut.Run(); err != nil {
+	if err := s.deleteIptablesRuleIfExists("", "FORWARD", forwardOutParam); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *NetworkService) addIptablesRuleIfMissing(table string, chain string, mode string, ruleParam []string) error {
+	checkCmd := buildIptablesRuleCommand(table, "-C", chain, "", ruleParam)
+	check := s.commandFactory.Command(checkCmd[0], checkCmd[1:]...)
+	if err := check.Run(); err == nil {
+		return nil
+	}
+
+	var addCmd []string
+	switch mode {
+	case "insert-first":
+		addCmd = buildIptablesRuleCommand(table, "-I", chain, "1", ruleParam)
+	default:
+		addCmd = buildIptablesRuleCommand(table, "-A", chain, "", ruleParam)
+	}
+	add := s.commandFactory.Command(addCmd[0], addCmd[1:]...)
+	if err := add.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *NetworkService) deleteIptablesRuleIfExists(table string, chain string, ruleParam []string) error {
+	checkCmd := buildIptablesRuleCommand(table, "-C", chain, "", ruleParam)
+	check := s.commandFactory.Command(checkCmd[0], checkCmd[1:]...)
+	if err := check.Run(); err != nil {
+		return nil
+	}
+
+	deleteCmd := buildIptablesRuleCommand(table, "-D", chain, "", ruleParam)
+	deleteRule := s.commandFactory.Command(deleteCmd[0], deleteCmd[1:]...)
+	if err := deleteRule.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func buildIptablesRuleCommand(table string, op string, chain string, position string, ruleParam []string) []string {
+	cmd := []string{"iptables"}
+	if table != "" {
+		cmd = append(cmd, "-t", table)
+	}
+	cmd = append(cmd, op, chain)
+	if position != "" {
+		cmd = append(cmd, position)
+	}
+	cmd = append(cmd, ruleParam...)
+	return cmd
 }

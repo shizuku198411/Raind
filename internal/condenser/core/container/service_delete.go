@@ -106,6 +106,31 @@ func (s *ContainerService) cleanupForwardRules(containerId string) error {
 	return nil
 }
 
+func (s *ContainerService) restoreForwardRules(containerId string) error {
+	forwards, err := s.ipamHandler.GetForwardInfo(containerId)
+	if err != nil {
+		return err
+	}
+	if len(forwards) == 0 {
+		return nil
+	}
+
+	for _, f := range forwards {
+		if err := s.networkServiceHandler.CreateForwardingRule(
+			containerId,
+			network.ServiceNetworkModel{
+				HostPort:      strconv.Itoa(f.HostPort),
+				ContainerPort: strconv.Itoa(f.ContainerPort),
+				Protocol:      f.Protocol,
+			},
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (s *ContainerService) releaseAddress(containerId string) error {
 	if err := s.ipamHandler.Release(containerId); err != nil {
 		return err
