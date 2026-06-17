@@ -1300,11 +1300,14 @@ func readBuildLogTail(logPath string, containerDir string) string {
 
 func safeJoin(baseDir string, rel string) (string, error) {
 	clean := filepath.Clean(rel)
-	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("invalid path: %s", rel)
 	}
-	full := filepath.Join(baseDir, clean)
-	if !strings.HasPrefix(full, filepath.Clean(baseDir)+string(os.PathSeparator)) && filepath.Clean(baseDir) != full {
+
+	baseClean := filepath.Clean(baseDir)
+	full := filepath.Join(baseClean, clean)
+	relToBase, err := filepath.Rel(baseClean, full)
+	if err != nil || relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(os.PathSeparator)) || filepath.IsAbs(relToBase) {
 		return "", fmt.Errorf("invalid path: %s", rel)
 	}
 	return full, nil
