@@ -8,11 +8,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"raind/internal/condenser/api/http/logger"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/utils"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -61,9 +63,10 @@ func (r StaticResolver) ConsoleSockPath(containerId string) (string, error) {
 }
 
 type Handler struct {
-	Resolver   SockResolver
-	Upgrader   websocket.Upgrader
-	csmHandler csm.CsmHandler
+	Resolver       SockResolver
+	Upgrader       websocket.Upgrader
+	AllowedOrigins []string
+	csmHandler     csm.CsmHandler
 }
 
 // ServeHTTP handles GET /containers/{id}/attach (WebSocket)
@@ -101,7 +104,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	up := h.Upgrader
 	if up.CheckOrigin == nil {
-		up.CheckOrigin = func(r *http.Request) bool { return true }
+		up.CheckOrigin = h.checkOrigin
 	}
 
 	ws, err := up.Upgrade(w, r, nil)
@@ -175,6 +178,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	_ = e
+}
+
+func (h *Handler) checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	if sameOrigin(r, origin) {
+		return true
+	}
+	for _, allowed := range h.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOrigin(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // dialUnixWithRetry tries to connect to a unix domain socket until it succeeds
