@@ -9,6 +9,7 @@ import (
 	"raind/internal/condenser/core/image"
 	"raind/internal/condenser/core/network"
 	"raind/internal/condenser/runtime"
+	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/utils"
 	"slices"
@@ -123,19 +124,20 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 	} else {
 		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "init.log")
 	}
-	if err := s.csmHandler.StoreContainer(
-		containerId,
-		"creating",
-		0,
-		createParameter.Tty,
-		imageRepo,
-		imageRef,
-		command,
-		containerName,
-		createParameter.BottleId,
-		logPath,
-		createParameter.PodId,
-	); err != nil {
+	if err := s.csmHandler.StoreContainer(csm.StoreContainerRequest{
+		ContainerId:   containerId,
+		State:         "creating",
+		Pid:           0,
+		Tty:           createParameter.Tty,
+		Repository:    imageRepo,
+		Reference:     imageRef,
+		Command:       command,
+		ContainerName: containerName,
+		BottleId:      createParameter.BottleId,
+		LogPath:       logPath,
+		PodId:         createParameter.PodId,
+		DropletId:     utils.DefaultDropletId,
+	}); err != nil {
 		return "", err
 	}
 	rollbackFlag.CSMEntry = true

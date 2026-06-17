@@ -62,6 +62,11 @@ func (h *RequestHandler) SignCSRHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if err := h.authorizeDropletForContainer(r, id); err != nil {
+		apimodel.RespondFail(w, http.StatusForbidden, "droplet not authorized for container: "+err.Error(), nil)
+		return
+	}
+
 	ca, err := loadCA(utils.ClientIssuerCACertPath, utils.ClientIssuerCAKeyPath)
 	if err != nil {
 		apimodel.RespondFail(w, http.StatusInternalServerError, "load ca: "+err.Error(), nil)
@@ -89,6 +94,51 @@ func (h *RequestHandler) SignCSRHandler(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	_ = pem.Encode(w, &pem.Block{Type: "CERTIFICATE", Bytes: certDer})
+}
+
+func (h *RequestHandler) authorizeDropletForContainer(r *http.Request, containerId string) error {
+	dropletId, err := extractAuthenticatedDropletID(r)
+	if err != nil {
+		return err
+	}
+
+	containerInfo, err := h.csmHandler.GetContainerById(containerId)
+	if err != nil {
+		return fmt.Errorf("container not found")
+	}
+	if containerInfo.State != "creating" {
+		return fmt.Errorf("container is not creating")
+	}
+	if containerInfo.DropletId == "" {
+		return fmt.Errorf("container has no assigned droplet")
+	}
+	if containerInfo.DropletId != dropletId {
+		return fmt.Errorf("container assigned to different droplet")
+	}
+	return nil
+}
+
+func extractAuthenticatedDropletID(r *http.Request) (string, error) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return "", errors.New("missing peer certificate")
+	}
+
+	for _, u := range r.TLS.PeerCertificates[0].URIs {
+		if u == nil || u.Scheme != "spiffe" || u.Host != "raind" {
+			continue
+		}
+		path := strings.TrimPrefix(u.Path, "/")
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[0] != "droplet" || parts[1] == "" {
+			continue
+		}
+		if !isSafeID(parts[1]) {
+			return "", errors.New("invalid droplet id")
+		}
+		return parts[1], nil
+	}
+
+	return "", errors.New("missing droplet SPIFFE ID")
 }
 
 func ioReadAllLimit(r io.Reader, limit int64) ([]byte, error) {
