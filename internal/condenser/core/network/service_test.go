@@ -142,6 +142,56 @@ func TestNetworkServiceCreateBridgeRejectsUnmanagedNamespaceBridge(t *testing.T)
 	}, commands.calls)
 }
 
+func TestNetworkServiceCreateForwardingRuleSkipsExistingRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		hostInterface:   "eth0",
+		bridgeInterface: "raind1",
+		containerAddr:   "10.166.1.2",
+	}
+	commands := &fakeNetworkCommandFactory{}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: &fakePolicyService{}}
+
+	err := service.CreateForwardingRule("cid-1", ServiceNetworkModel{HostPort: "8080", ContainerPort: "80", Protocol: "tcp"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []networkCommandCall{
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "eth0", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "OUTPUT", "-m", "addrtype", "--dst-type", "LOCAL", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-m", "addrtype", "--dst-type", "LOCAL", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
+		{name: "iptables", args: []string{"-C", "FORWARD", "-i", "eth0", "-o", "raind1", "-p", "tcp", "--dport", "8080", "-d", "10.166.1.2", "-j", "ACCEPT"}},
+		{name: "iptables", args: []string{"-C", "FORWARD", "-i", "raind1", "-o", "raind1", "-p", "tcp", "-m", "conntrack", "--ctstate", "DNAT", "--dport", "80", "-d", "10.166.1.2", "-j", "ACCEPT"}},
+		{name: "iptables", args: []string{"-C", "FORWARD", "-o", "eth0", "-i", "raind1", "-p", "tcp", "--sport", "8080", "-s", "10.166.1.2", "-j", "ACCEPT"}},
+	}, commands.calls)
+}
+
+func TestNetworkServiceRemoveForwardingRuleIgnoresMissingRules(t *testing.T) {
+	ipamHandler := &fakeNetworkIpamHandler{
+		hostInterface:   "eth0",
+		bridgeInterface: "raind1",
+		containerAddr:   "10.166.1.2",
+	}
+	commands := &fakeNetworkCommandFactory{
+		runErrors: []error{
+			errors.New("dnat rule not found"),
+			errors.New("output rule not found"),
+			errors.New("bridge rule not found"),
+			errors.New("forward in rule not found"),
+			errors.New("hairpin rule not found"),
+			errors.New("forward out rule not found"),
+		},
+	}
+	service := &NetworkService{commandFactory: commands, ipamHandler: ipamHandler, policyHandler: &fakePolicyService{}}
+
+	err := service.RemoveForwardingRule("cid-1", ServiceNetworkModel{HostPort: "8080", ContainerPort: "80", Protocol: "tcp"})
+
+	require.NoError(t, err)
+	assert.Len(t, commands.calls, 6)
+	for _, call := range commands.calls {
+		assert.Contains(t, call.args, "-C")
+		assert.NotContains(t, call.args, "-D")
+	}
+}
+
 func TestParseLinkNames(t *testing.T) {
 	out := "1: lo: <LOOPBACK>\n2: rns-demo@if10: <BROADCAST>\n3: rd_abc@if2: <BROADCAST>\n"
 
@@ -202,10 +252,13 @@ func (e *fakeNetworkCommandExecutor) SetStderr(io.Writer)            {}
 func (e *fakeNetworkCommandExecutor) SetStdin(io.Reader)             {}
 
 type fakeNetworkIpamHandler struct {
-	storedBridges  []string
-	removedBridges []string
-	networkList    []ipam.NetworkList
-	dnsProxyAddr   string
+	storedBridges   []string
+	removedBridges  []string
+	networkList     []ipam.NetworkList
+	dnsProxyAddr    string
+	hostInterface   string
+	bridgeInterface string
+	containerAddr   string
 }
 
 func (f *fakeNetworkIpamHandler) Allocate(string, string) (string, error) { return "", nil }
@@ -239,7 +292,7 @@ func (f *fakeNetworkIpamHandler) GetDnsProxyInfo() (string, string, []string, er
 	return "raindDns", addr, []string{"8.8.8.8"}, nil
 }
 func (f *fakeNetworkIpamHandler) GetContainerAddress(string) (string, string, string, error) {
-	return "", "", "", nil
+	return f.hostInterface, f.bridgeInterface, f.containerAddr, nil
 }
 func (f *fakeNetworkIpamHandler) GetInfoByIp(string) (string, string, error) {
 	return "", "", nil
