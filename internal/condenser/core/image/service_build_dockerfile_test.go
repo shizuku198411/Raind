@@ -72,6 +72,60 @@ func TestApplyCopySupportsQuotedMultipleSources(t *testing.T) {
 	assert.Equal(t, "two", string(gotTwo))
 }
 
+func TestApplyCopyRejectsSymlinkEscapingBuildContext(t *testing.T) {
+	contextDir := t.TempDir()
+	outsideDir := t.TempDir()
+	currentRoot := t.TempDir()
+	realSecret := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(realSecret, []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(realSecret, filepath.Join(contextDir, "linked-secret")))
+
+	state := buildState{rootfsPath: currentRoot, workdir: "/"}
+	service := &ImageService{}
+
+	err := service.applyCopy(&state, contextDir, nil, nil, "linked-secret /proof/copied-secret")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "COPY/ADD source escapes build context")
+	_, statErr := os.Stat(filepath.Join(currentRoot, "proof", "copied-secret"))
+	assert.True(t, os.IsNotExist(statErr), "external secret should not be copied into the image rootfs")
+}
+
+func TestApplyCopyRejectsParentSymlinkEscapingBuildContext(t *testing.T) {
+	contextDir := t.TempDir()
+	outsideDir := t.TempDir()
+	currentRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(outsideDir, filepath.Join(contextDir, "linked-dir")))
+
+	state := buildState{rootfsPath: currentRoot, workdir: "/"}
+	service := &ImageService{}
+
+	err := service.applyCopy(&state, contextDir, nil, nil, "linked-dir/secret.txt /proof/copied-secret")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "COPY/ADD source escapes build context")
+	_, statErr := os.Stat(filepath.Join(currentRoot, "proof", "copied-secret"))
+	assert.True(t, os.IsNotExist(statErr), "external secret should not be copied into the image rootfs")
+}
+
+func TestApplyCopyAllowsSymlinkResolvingInsideBuildContext(t *testing.T) {
+	contextDir := t.TempDir()
+	currentRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(contextDir, "real.txt"), []byte("hello"), 0o644))
+	require.NoError(t, os.Symlink("real.txt", filepath.Join(contextDir, "linked.txt")))
+
+	state := buildState{rootfsPath: currentRoot, workdir: "/"}
+	service := &ImageService{}
+
+	err := service.applyCopy(&state, contextDir, nil, nil, "linked.txt /proof/copied")
+
+	require.NoError(t, err)
+	got, err := os.ReadFile(filepath.Join(currentRoot, "proof", "copied"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got))
+}
+
 func TestApplyEnvSupportsQuotedValues(t *testing.T) {
 	state := newBuildState()
 	service := &ImageService{}
