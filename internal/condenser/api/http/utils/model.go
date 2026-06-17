@@ -9,7 +9,10 @@ import (
 	"net/http"
 )
 
-const MaxJSONBodyBytes int64 = 1 << 20
+const (
+	MaxJSONBodyBytes     int64 = 1 << 20
+	MaxManifestBodyBytes int64 = 10 << 20
+)
 
 var ErrRequestBodyTooLarge = errors.New("request body too large")
 
@@ -30,7 +33,7 @@ type StreamEvent struct {
 }
 
 func DecodeRequestBody(r *http.Request, v any) error {
-	body, err := readLimitedBody(r.Body, MaxJSONBodyBytes)
+	body, err := ReadLimitedBody(r.Body, MaxJSONBodyBytes)
 	if err != nil {
 		return err
 	}
@@ -53,7 +56,7 @@ func DecodeErrorStatus(err error) int {
 	return http.StatusBadRequest
 }
 
-func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
+func ReadLimitedBody(r io.Reader, limit int64) ([]byte, error) {
 	lr := &io.LimitedReader{R: r, N: limit + 1}
 	body, err := io.ReadAll(lr)
 	if err != nil {

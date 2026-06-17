@@ -85,6 +85,16 @@ func TestDecodeRequestBodyRejectsMultipleJSONValues(t *testing.T) {
 	assert.Contains(t, err.Error(), "multiple JSON values")
 }
 
+func TestReadLimitedBodyRejectsTooLargeManifest(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("a", int(MaxManifestBodyBytes)+1))
+
+	_, err := ReadLimitedBody(body, MaxManifestBodyBytes)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRequestBodyTooLarge)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, DecodeErrorStatus(err))
+}
+
 func TestStreamJsonWritesNDJSONEvent(t *testing.T) {
 	rec := httptest.NewRecorder()
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	apimodel "raind/internal/condenser/api/http/utils"
 	core "raind/internal/condenser/core/securityprofile"
 
 	"github.com/go-chi/chi/v5"
@@ -157,6 +158,28 @@ func TestRegisterSecurityProfile(t *testing.T) {
 	assert.Equal(t, core.ProfileTypeCustom, resp.Data.Profile.Type)
 	assert.Contains(t, resp.Data.Profile.Capabilities.Base, "CAP_SYS_PTRACE")
 	assert.NotContains(t, resp.Data.Profile.Capabilities.Base, "CAP_NET_RAW")
+}
+
+func TestRegisterSecurityProfileRejectsTooLargeBody(t *testing.T) {
+	handler := &RequestHandler{service: core.NewServiceWithStoreDir(t.TempDir())}
+	body := strings.NewReader(strings.Repeat("a", int(apimodel.MaxJSONBodyBytes)+1))
+	req := httptest.NewRequest(http.MethodPost, "/v1/security/profiles", body)
+	w := httptest.NewRecorder()
+
+	handler.RegisterSecurityProfile(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+func TestRegisterSecurityProfileRejectsUnknownFields(t *testing.T) {
+	handler := &RequestHandler{service: core.NewServiceWithStoreDir(t.TempDir())}
+	reqBody := `{"apiVersion":"raind.io/v1","kind":"SecurityProfile","metadata":{"name":"custom-dev"},"spec":{"extends":"dev"},"unknown":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/security/profiles", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	handler.RegisterSecurityProfile(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestRegisterSecurityProfileRequiresExtends(t *testing.T) {
