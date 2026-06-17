@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"raind/internal/condenser/store/csm"
+	"raind/internal/condenser/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,7 +157,7 @@ func TestWaitBuildContainerStoppedWaitsForFinalizedExitStatus(t *testing.T) {
 	})
 
 	manager := csm.NewCsmManager(csm.NewCsmStore(filepath.Join(t.TempDir(), "csm.json")))
-	require.NoError(t, manager.StoreContainer("build-test", "stopped", 0, false, "build", "build", []string{"/bin/sh"}, "build-test", "", "", ""))
+	require.NoError(t, manager.StoreContainer(csm.StoreContainerRequest{ContainerId: "build-test", State: "stopped", Pid: 0, Tty: false, Repository: "build", Reference: "build", Command: []string{"/bin/sh"}, ContainerName: "build-test", DropletId: utils.DefaultDropletId}))
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)
@@ -180,7 +181,7 @@ func TestWaitBuildContainerStoppedFailsWhenExitStatusIsNotFinalized(t *testing.T
 	})
 
 	manager := csm.NewCsmManager(csm.NewCsmStore(filepath.Join(t.TempDir(), "csm.json")))
-	require.NoError(t, manager.StoreContainer("build-test", "stopped", 0, false, "build", "build", []string{"/bin/sh"}, "build-test", "", "", ""))
+	require.NoError(t, manager.StoreContainer(csm.StoreContainerRequest{ContainerId: "build-test", State: "stopped", Pid: 0, Tty: false, Repository: "build", Reference: "build", Command: []string{"/bin/sh"}, ContainerName: "build-test", DropletId: utils.DefaultDropletId}))
 	require.NoError(t, manager.UpdateExitStatus("build-test", -1, "Error", "process down detected."))
 
 	_, err := waitBuildContainerStopped(manager, "build-test", time.Second)

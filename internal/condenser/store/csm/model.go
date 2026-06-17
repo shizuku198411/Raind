@@ -2,10 +2,26 @@ package csm
 
 import "time"
 
+type StoreContainerRequest struct {
+	ContainerId   string
+	State         string
+	Pid           int
+	Tty           bool
+	Repository    string
+	Reference     string
+	Command       []string
+	ContainerName string
+	BottleId      string
+	LogPath       string
+	PodId         string
+	DropletId     string
+}
+
 type ContainerInfo struct {
 	ContainerId   string            `json:"containerId"`
 	ContainerName string            `json:"name"`
 	PodId         string            `json:"podId,omitempty"`
+	DropletId     string            `json:"dropletId,omitempty"`
 	SpiffeId      string            `json:"spiffeId"`
 	State         string            `json:"state"`
 	Pid           int               `json:"pid"`

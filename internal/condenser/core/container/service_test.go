@@ -16,6 +16,7 @@ import (
 	"raind/internal/condenser/store/ilm"
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/store/psm"
+	"raind/internal/condenser/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,7 @@ func TestContainerServiceCreatePullsMissingImageAndStoresContainer(t *testing.T)
 	require.Contains(t, deps.csm.containers, id)
 	assert.Equal(t, "web", deps.csm.containers[id].ContainerName)
 	assert.Equal(t, "creating", deps.csm.containers[id].State)
+	assert.Equal(t, utils.DefaultDropletId, deps.csm.containers[id].DropletId)
 }
 
 func TestContainerServiceCreateSkipsPullWhenImageExists(t *testing.T) {
@@ -264,19 +266,20 @@ func (f *fakeCsmHandler) storeInfo(id string, info csm.ContainerInfo) {
 	}
 }
 
-func (f *fakeCsmHandler) StoreContainer(containerId string, state string, pid int, tty bool, repo, ref string, command []string, name string, bottleId string, logPath string, podId string) error {
-	f.storeInfo(containerId, csm.ContainerInfo{
-		ContainerId:   containerId,
-		ContainerName: name,
-		PodId:         podId,
-		State:         state,
-		Pid:           pid,
-		Tty:           tty,
-		Repository:    repo,
-		Reference:     ref,
-		Command:       command,
-		BottleId:      bottleId,
-		LogPath:       logPath,
+func (f *fakeCsmHandler) StoreContainer(req csm.StoreContainerRequest) error {
+	f.storeInfo(req.ContainerId, csm.ContainerInfo{
+		ContainerId:   req.ContainerId,
+		ContainerName: req.ContainerName,
+		PodId:         req.PodId,
+		DropletId:     req.DropletId,
+		State:         req.State,
+		Pid:           req.Pid,
+		Tty:           req.Tty,
+		Repository:    req.Repository,
+		Reference:     req.Reference,
+		Command:       req.Command,
+		BottleId:      req.BottleId,
+		LogPath:       req.LogPath,
 		CreatedAt:     time.Now(),
 	})
 	return nil

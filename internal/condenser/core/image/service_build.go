@@ -616,19 +616,20 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 		return err
 	}
 
-	if err := csmHandler.StoreContainer(
-		containerId,
-		"creating",
-		0,
-		true,
-		"build",
-		"build",
-		[]string{"/bin/sh", "-e", runScriptPath},
-		containerId,
-		"",
-		filepath.Join(containerDir, "logs", "console.log"),
-		"",
-	); err != nil {
+	if err := csmHandler.StoreContainer(csm.StoreContainerRequest{
+		ContainerId:   containerId,
+		State:         "creating",
+		Pid:           0,
+		Tty:           true,
+		Repository:    "build",
+		Reference:     "build",
+		Command:       []string{"/bin/sh", "-e", runScriptPath},
+		ContainerName: containerId,
+		BottleId:      "",
+		LogPath:       filepath.Join(containerDir, "logs", "console.log"),
+		PodId:         "",
+		DropletId:     utils.DefaultDropletId,
+	}); err != nil {
 		return err
 	}
 	rollback.csmEntry = true
