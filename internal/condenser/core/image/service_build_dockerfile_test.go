@@ -3,7 +3,11 @@ package image
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"raind/internal/condenser/store/csm"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,4 +81,56 @@ func TestApplyEnvSupportsQuotedValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, state.env, "APP_NAME=hello world")
 	assert.Contains(t, state.env, "LOG_LEVEL=debug")
+}
+
+func TestIsBuildExitStatusFinal(t *testing.T) {
+	assert.False(t, isBuildExitStatusFinal(csm.ContainerInfo{State: "running", ExitCode: 0}))
+	assert.False(t, isBuildExitStatusFinal(csm.ContainerInfo{State: "stopped", ExitCode: -1, Reason: "Error", Message: "process down detected."}))
+	assert.False(t, isBuildExitStatusFinal(csm.ContainerInfo{State: "stopped", ExitCode: 0}))
+	assert.True(t, isBuildExitStatusFinal(csm.ContainerInfo{State: "stopped", ExitCode: 0, Reason: "Completed", Message: "exit code: 0"}))
+	assert.True(t, isBuildExitStatusFinal(csm.ContainerInfo{State: "stopped", ExitCode: 42, Reason: "Error", Message: "exit status 42"}))
+}
+
+func TestWaitBuildContainerStoppedWaitsForFinalizedExitStatus(t *testing.T) {
+	oldPoll := buildStatusPollInterval
+	oldFinalize := buildExitStatusFinalizeTimeout
+	buildStatusPollInterval = 5 * time.Millisecond
+	buildExitStatusFinalizeTimeout = 500 * time.Millisecond
+	t.Cleanup(func() {
+		buildStatusPollInterval = oldPoll
+		buildExitStatusFinalizeTimeout = oldFinalize
+	})
+
+	manager := csm.NewCsmManager(csm.NewCsmStore(filepath.Join(t.TempDir(), "csm.json")))
+	require.NoError(t, manager.StoreContainer("build-test", "stopped", 0, false, "build", "build", []string{"/bin/sh"}, "build-test", "", "", ""))
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_ = manager.UpdateExitStatus("build-test", 42, "Error", "exit status 42")
+	}()
+
+	info, err := waitBuildContainerStopped(manager, "build-test", time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, 42, info.ExitCode)
+	assert.Equal(t, "exit status 42", info.Message)
+}
+
+func TestWaitBuildContainerStoppedFailsWhenExitStatusIsNotFinalized(t *testing.T) {
+	oldPoll := buildStatusPollInterval
+	oldFinalize := buildExitStatusFinalizeTimeout
+	buildStatusPollInterval = 5 * time.Millisecond
+	buildExitStatusFinalizeTimeout = 30 * time.Millisecond
+	t.Cleanup(func() {
+		buildStatusPollInterval = oldPoll
+		buildExitStatusFinalizeTimeout = oldFinalize
+	})
+
+	manager := csm.NewCsmManager(csm.NewCsmStore(filepath.Join(t.TempDir(), "csm.json")))
+	require.NoError(t, manager.StoreContainer("build-test", "stopped", 0, false, "build", "build", []string{"/bin/sh"}, "build-test", "", "", ""))
+	require.NoError(t, manager.UpdateExitStatus("build-test", -1, "Error", "process down detected."))
+
+	_, err := waitBuildContainerStopped(manager, "build-test", time.Second)
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "exit status was not finalized"), err.Error())
+	assert.True(t, strings.Contains(err.Error(), "process down detected"), err.Error())
 }
