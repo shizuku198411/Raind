@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -82,6 +83,41 @@ func TestSafeJoinRejectsTarTraversal(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid path")
+}
+
+func TestSafeJoinRejectsParentDirectory(t *testing.T) {
+	_, err := safeJoin("/context", "..")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid path")
+}
+
+func TestSafeJoinRejectsAbsolutePath(t *testing.T) {
+	_, err := safeJoin("/context", filepath.Join(string(os.PathSeparator), "absolute", "path"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid path")
+}
+
+func TestSafeJoinAllowsNameStartingWithDotDot(t *testing.T) {
+	got, err := safeJoin("/context", "..data")
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/context", "..data"), got)
+}
+
+func TestSafeJoinAllowsNestedNameStartingWithDotDot(t *testing.T) {
+	got, err := safeJoin("/context", filepath.Join("dir", "..data", "file.txt"))
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/context", "dir", "..data", "file.txt"), got)
+}
+
+func TestSafeJoinAllowsDotDotWellKnownName(t *testing.T) {
+	got, err := safeJoin("/context", filepath.Join("..well-known", "config.json"))
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/context", "..well-known", "config.json"), got)
 }
 
 type fakeRegistryHandler struct {
