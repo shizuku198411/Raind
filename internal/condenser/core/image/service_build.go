@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
+	"golang.org/x/sys/unix"
 )
 
 type buildState struct {
@@ -1521,11 +1522,11 @@ func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) 
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
+			if err := ensureSafeExtractionDir(dst, target, os.FileMode(hdr.Mode).Perm()); err != nil {
 				return err
 			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		case tar.TypeReg, tar.TypeRegA:
+			if err := ensureSafeExtractionDir(dst, filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
 			if hdr.Size < 0 {
@@ -1534,7 +1535,7 @@ func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) 
 			if hdr.Size > opt.MaxFile {
 				return fmt.Errorf("build context file too large: %s max=%d bytes", hdr.Name, opt.MaxFile)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			f, err := openRegularFileNoFollow(target, os.FileMode(hdr.Mode).Perm())
 			if err != nil {
 				return err
 			}
@@ -1546,7 +1547,10 @@ func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) 
 				return err
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := ensureSafeExtractionDir(dst, filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := ensureExtractionTargetAbsentOrNotSymlink(target, hdr.Name); err != nil {
 				return err
 			}
 			if err := os.Symlink(hdr.Linkname, target); err != nil {
@@ -1556,6 +1560,83 @@ func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) 
 			// ignore other types
 		}
 	}
+}
+
+func ensureSafeExtractionDir(root string, dir string, perm fs.FileMode) error {
+	root = filepath.Clean(root)
+	dir = filepath.Clean(dir)
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("invalid extraction directory: %s", dir)
+	}
+
+	current := root
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return fmt.Errorf("invalid extraction directory: %s", dir)
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing to follow symlink while extracting tar: %s", current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("not a directory while extracting tar: %s", current)
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(current, perm); err != nil {
+			if !os.IsExist(err) {
+				return err
+			}
+			info, statErr := os.Lstat(current)
+			if statErr != nil {
+				return statErr
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing to follow symlink while extracting tar: %s", current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("not a directory while extracting tar: %s", current)
+			}
+		}
+	}
+	return nil
+}
+
+func ensureExtractionTargetAbsentOrNotSymlink(target string, name string) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to overwrite symlink while extracting tar: %s", name)
+	}
+	return nil
+}
+
+func openRegularFileNoFollow(target string, mode fs.FileMode) (*os.File, error) {
+	fd, err := unix.Open(target, unix.O_CREAT|unix.O_WRONLY|unix.O_TRUNC|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode.Perm()))
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), target), nil
 }
 
 type buildContextLimitReader struct {
