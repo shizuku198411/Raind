@@ -14,12 +14,29 @@ type PodInfo struct {
 	IPCNS         string            `json:"ipcNS"`
 	UTSNS         string            `json:"utsNS"`
 	UserNS        string            `json:"userNS"`
+	Rootless      bool              `json:"rootless,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Annotations   map[string]string `json:"annotations,omitempty"`
 	CreatedAt     time.Time         `json:"createdAt"`
 	StartedAt     time.Time         `json:"startedAt"`
 	StoppedAt     time.Time         `json:"stoppedAt"`
 	StoppedByUser bool              `json:"stoppedByUser"`
+}
+
+type StorePodRequest struct {
+	PodId       string
+	TemplateId  string
+	Name        string
+	Namespace   string
+	UID         string
+	State       string
+	NetworkNS   string
+	IPCNS       string
+	UTSNS       string
+	UserNS      string
+	Rootless    bool
+	Labels      map[string]string
+	Annotations map[string]string
 }
 
 type PodTemplateSpec struct {
@@ -29,6 +46,7 @@ type PodTemplateSpec struct {
 	IPCNS       string                  `json:"ipcNS"`
 	UTSNS       string                  `json:"utsNS"`
 	UserNS      string                  `json:"userNS"`
+	Rootless    bool                    `json:"rootless,omitempty"`
 	Labels      map[string]string       `json:"labels,omitempty"`
 	Annotations map[string]string       `json:"annotations,omitempty"`
 	Containers  []ContainerTemplateSpec `json:"containers,omitempty"`

@@ -24,10 +24,17 @@ import (
 // == service: create ==
 func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string, err error) {
 	createParameter = normalizeRootlessCreateParameter(createParameter)
-	if createParameter.Rootless && createParameter.PodId != "" {
-		return "", fmt.Errorf("rootless mode is currently supported for single containers only")
-	}
 	if createParameter.PodId != "" && !createParameter.IsPodInfra {
+		podInfo, err := s.psmHandler.GetPodById(createParameter.PodId)
+		if err != nil {
+			return "", err
+		}
+		if podInfo.Rootless {
+			createParameter.Rootless = true
+			createParameter = normalizeRootlessCreateParameter(createParameter)
+		} else if createParameter.Rootless {
+			return "", fmt.Errorf("rootless mode is a pod-level setting; set spec.hostUsers=false on the pod")
+		}
 		if err := s.ensurePodInfra(createParameter.PodId, createParameter.Network); err != nil {
 			return "", err
 		}
@@ -461,6 +468,9 @@ func (s *ContainerService) createContainerSpec(
 			namespace = []string{"mount", "pid", "cgroup"}
 		} else {
 			namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
+			if createParameter.Rootless {
+				namespace = append(namespace, "user")
+			}
 		}
 	} else {
 		namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
@@ -726,6 +736,7 @@ func (s *ContainerService) ensurePodInfra(podId string, network string) error {
 		Name:       infraName,
 		PodId:      podId,
 		IsPodInfra: true,
+		Rootless:   podInfo.Rootless,
 	})
 	if err != nil {
 		return err

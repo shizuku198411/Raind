@@ -19,6 +19,7 @@ type PodManifest struct {
 	Labels      map[string]string
 	Annotations map[string]string
 	Containers  []psm.ContainerTemplateSpec
+	Rootless    bool
 	Replicas    int
 	Selector    map[string]string
 }
@@ -31,6 +32,7 @@ type manifestMeta struct {
 }
 
 type podManifestSpec struct {
+	HostUsers  *bool               `yaml:"hostUsers"`
 	Containers []containerManifest `yaml:"containers"`
 	Volumes    []manifestVolume    `yaml:"volumes"`
 }
@@ -152,7 +154,7 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 			if err := yaml.Unmarshal(rawBytes, &pod); err != nil {
 				return nil, err
 			}
-			manifest, err := buildPodManifest(pod.Metadata, pod.Spec.Containers, pod.Spec.Volumes)
+			manifest, err := buildPodManifest(pod.Metadata, pod.Spec)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +172,7 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 			if meta.Name == "" {
 				meta.Name = rs.Metadata.Name
 			}
-			manifest, err := buildPodManifest(meta, rs.Spec.Template.Spec.Containers, rs.Spec.Template.Spec.Volumes)
+			manifest, err := buildPodManifest(meta, rs.Spec.Template.Spec)
 			if err != nil {
 				return nil, err
 			}
@@ -211,7 +213,7 @@ func DecodeK8sManifests(body []byte) ([]PodManifest, error) {
 			if meta.Name == "" {
 				meta.Name = deploy.Metadata.Name
 			}
-			manifest, err := buildPodManifest(meta, deploy.Spec.Template.Spec.Containers, deploy.Spec.Template.Spec.Volumes)
+			manifest, err := buildPodManifest(meta, deploy.Spec.Template.Spec)
 			if err != nil {
 				return nil, err
 			}
@@ -307,17 +309,17 @@ func buildHostPathVolumeMap(volumes []manifestVolume) (map[string]string, error)
 	return volumeHostPath, nil
 }
 
-func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes []manifestVolume) (PodManifest, error) {
+func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, error) {
 	if meta.Namespace == "" {
 		meta.Namespace = "default"
 	}
-	volumeHostPath, err := buildHostPathVolumeMap(volumes)
+	volumeHostPath, err := buildHostPathVolumeMap(podSpec.Volumes)
 	if err != nil {
 		return PodManifest{}, err
 	}
 
-	specs := make([]psm.ContainerTemplateSpec, 0, len(containers))
-	for _, c := range containers {
+	specs := make([]psm.ContainerTemplateSpec, 0, len(podSpec.Containers))
+	for _, c := range podSpec.Containers {
 		cmd := c.Command
 		if len(c.Args) > 0 {
 			cmd = append(append([]string{}, c.Command...), c.Args...)
@@ -374,7 +376,12 @@ func buildPodManifest(meta manifestMeta, containers []containerManifest, volumes
 		Labels:      meta.Labels,
 		Annotations: meta.Annotations,
 		Containers:  specs,
+		Rootless:    rootlessFromHostUsers(podSpec.HostUsers),
 	}, nil
+}
+
+func rootlessFromHostUsers(hostUsers *bool) bool {
+	return hostUsers != nil && !*hostUsers
 }
 
 func mergeLabels(base, extra map[string]string) map[string]string {

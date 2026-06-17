@@ -67,6 +67,7 @@ func (h *RequestHandler) CreatePod(w http.ResponseWriter, r *http.Request) {
 		IPCNS:       req.IPCNS,
 		UTSNS:       req.UTSNS,
 		UserNS:      req.UserNS,
+		Rootless:    rootlessFromHostUsers(req.HostUsers),
 		Labels:      req.Labels,
 		Annotations: req.Annotations,
 		Containers: func() []psm.ContainerTemplateSpec {
@@ -281,6 +282,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 					Namespace:   m.Namespace,
 					Labels:      m.Labels,
 					Annotations: m.Annotations,
+					Rootless:    m.Rootless,
 					Containers:  m.Containers,
 				}); err != nil {
 					rollbackApplied()
@@ -330,6 +332,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 					Namespace:   m.Namespace,
 					Labels:      m.Labels,
 					Annotations: m.Annotations,
+					Rootless:    m.Rootless,
 					Containers:  m.Containers,
 				}); err != nil {
 					rollbackApplied()
@@ -372,6 +375,7 @@ func (h *RequestHandler) ApplyPodYaml(w http.ResponseWriter, r *http.Request) {
 				Namespace:   m.Namespace,
 				Labels:      m.Labels,
 				Annotations: m.Annotations,
+				Rootless:    m.Rootless,
 				Containers:  m.Containers,
 			})
 			if err != nil {
@@ -1316,4 +1320,8 @@ func (h *RequestHandler) GetPodById(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apimodel.RespondSuccess(w, http.StatusOK, "retrieve pod success", podInfo)
+}
+
+func rootlessFromHostUsers(hostUsers *bool) bool {
+	return hostUsers != nil && !*hostUsers
 }
