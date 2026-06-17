@@ -1,7 +1,6 @@
 package securityprofile
 
 import (
-	"encoding/json"
 	"net/http"
 	apimodel "raind/internal/condenser/api/http/utils"
 	core "raind/internal/condenser/core/securityprofile"
@@ -62,8 +61,8 @@ func (h *RequestHandler) ShowSecurityProfile(w http.ResponseWriter, r *http.Requ
 // @Router /v1/security/profiles [post]
 func (h *RequestHandler) RegisterSecurityProfile(w http.ResponseWriter, r *http.Request) {
 	var req RegisterSecurityProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid security profile request: "+err.Error(), RegisterSecurityProfileResponse{})
+	if err := apimodel.DecodeRequestBody(r, &req); err != nil {
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid security profile request: "+err.Error(), RegisterSecurityProfileResponse{})
 		return
 	}
 	profile, err := h.service.Register(req)

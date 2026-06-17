@@ -2,7 +2,6 @@ package bottle
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	apimodel "raind/internal/condenser/api/http/utils"
@@ -43,9 +42,9 @@ type RequestHandler struct {
 // @Success 201 {object} apimodel.ApiResponse
 // @Router /v1/bottle [post]
 func (h *RequestHandler) RegisterBottle(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
+	body, err := apimodel.ReadLimitedBody(r.Body, apimodel.MaxManifestBodyBytes)
 	if err != nil {
-		apimodel.RespondFail(w, http.StatusBadRequest, "invalid body: "+err.Error(), nil)
+		apimodel.RespondFail(w, apimodel.DecodeErrorStatus(err), "invalid body: "+err.Error(), nil)
 		return
 	}
 
