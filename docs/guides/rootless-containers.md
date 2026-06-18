@@ -1,8 +1,8 @@
 # Rootless Containers
 
-Raind supports rootless execution for standalone containers by creating a user namespace and mapping container IDs to non-root host IDs.
+Raind supports rootless execution by creating a user namespace and mapping container IDs to non-root host IDs.
 
-Rootless support is currently focused on single containers created through `raind container create` and `raind container run`. Pod-managed containers are not yet supported in rootless mode.
+Rootless support is available for standalone containers created through `raind container create` and `raind container run`. Pod manifests can also request rootless execution by setting `spec.hostUsers: false`.
 
 ## Modes
 
@@ -67,6 +67,45 @@ hello.txt is owned by the login user's UID/GID
 
 This mode is useful when a development container writes into a host project directory and the host user should be able to edit or remove those files without manual `chown`.
 
+## Rootless Pods
+
+For Pod manifests, set `spec.hostUsers: false`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rootless-worker
+  namespace: demo
+spec:
+  hostUsers: false
+  containers:
+    - name: worker
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+      args:
+        - trap "exit 0" TERM INT; while true; do id; cat /proc/self/uid_map; sleep 30; done
+```
+
+Apply it with:
+
+```sh
+raind resource apply -f rootless-pod.yaml
+raind resource pod ls --namespace demo
+```
+
+Current behavior:
+
+- `spec.hostUsers: false` enables rootless mode for Pod-managed containers.
+- The default mapping mode is `shifted-root`.
+- Pod-managed rootless containers are started as rootless containers and tracked as Pod members.
+- Rootless Pod app containers currently use their own rootless runtime namespaces instead of joining the infra container's existing network, IPC, UTS, and user namespaces.
+- For rootless Pods, prefer long-running commands when checking readiness.
+
+See also [Pod resources](../resources/pod.md).
+
 ## UID/GID source for `login-root`
 
 The CLI sends the intended host UID/GID to Condenser and Droplet.
@@ -111,8 +150,7 @@ The exec path also adopts the target process root and OCI working directory so b
 
 Current limitations:
 
-- rootless is supported for standalone containers only
-- Pod-managed containers reject rootless mode
+- rootless Pod manifests support `spec.hostUsers: false`, but Pod namespace sharing is not yet equivalent to rootful Pods
 - host device access remains constrained by the host and runtime permissions
 - rootless networking still depends on Raind's host-side network setup
 - subordinate ID ranges are environment-configured, not yet read from `/etc/subuid` and `/etc/subgid`

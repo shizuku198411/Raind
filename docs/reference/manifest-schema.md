@@ -159,6 +159,7 @@ metadata:
   annotations:                 # optional
     <key>: <value>
 spec:
+  hostUsers: false             # optional; false enables rootless Pod containers
   volumes:                     # optional
     - name: <volume-name>
       hostPath:
@@ -198,6 +199,14 @@ spec:
 | `metadata.namespace` | No | Defaults to `default`. |
 | `metadata.labels` | No | Used by Services and higher-level selectors. |
 | `metadata.annotations` | No | Stored with the Pod. |
+
+### Pod spec fields
+
+| Field | Required | Notes |
+|---|---:|---|
+| `spec.hostUsers` | No | Defaults to `true`. Set to `false` to request rootless execution for Pod-managed containers. |
+| `spec.containers` | Yes for useful workloads | Container list. |
+| `spec.volumes` | No | Kubernetes-style host directory volumes. |
 
 ### Container fields
 
@@ -305,6 +314,35 @@ Validation rules:
 - Only `hostPath` volumes are supported.
 
 `readOnly: true` appends `:ro` to the generated Raind mount string.
+
+### Rootless Pods
+
+Set `spec.hostUsers: false` to run Pod-managed containers in rootless mode:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rootless-worker
+  namespace: demo
+spec:
+  hostUsers: false
+  containers:
+    - name: worker
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+      args:
+        - trap "exit 0" TERM INT; while true; do id; cat /proc/self/uid_map; sleep 30; done
+```
+
+Current rootless Pod behavior:
+
+- `hostUsers: false` enables rootless mode for Pod-managed containers.
+- The default rootless mapping mode is `shifted-root`.
+- Rootless Pod app containers are managed as Pod members, but currently use their own rootless runtime namespaces instead of joining the infra container's existing network, IPC, UTS, and user namespaces.
+- Use long-running container commands when you expect the Pod to remain `Ready`.
 
 ## `ReplicaSet`
 

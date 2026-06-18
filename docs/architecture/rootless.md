@@ -1,6 +1,6 @@
 # Rootless Architecture
 
-This document describes how Raind implements rootless standalone containers.
+This document describes how Raind implements rootless containers.
 
 For user-facing commands, see [Rootless containers](../guides/rootless-containers.md). For a compact mode reference, see [Rootless modes](../reference/rootless-modes.md).
 
@@ -29,6 +29,8 @@ Droplet
   v
 container process
 ```
+
+For Pod manifests, `spec.hostUsers: false` enables rootless execution for Pod-managed containers. Rootless Pod app containers are currently managed as Pod members while using their own rootless runtime namespaces; they do not yet join the infra container's existing network, IPC, UTS, and user namespaces in the same way as rootful Pod app containers.
 
 ## Spec annotation
 
@@ -137,6 +139,14 @@ nsenter -t <pid> -U --setuid 0 --setgid 0 -m -u -i -n -p -C --root --wd=<cwd> --
 
 Command lookup resolves bare executables against `/proc/<pid>/root` and the container `PATH`, so commands are resolved inside the container rootfs.
 
-## Why standalone-only for now
+## Pod status
 
-Condenser currently rejects rootless mode for Pod-managed containers. Pod rootless support needs additional design around infra containers, shared namespace ownership, Service endpoint behavior, and ID-map compatibility across app containers.
+Rootless Pod manifests are supported through `spec.hostUsers: false`.
+
+Current implementation notes:
+
+- the Pod infra container and app containers are created with rootless annotations
+- app containers are tracked as Pod members
+- app containers use their own rootless runtime namespaces instead of joining the infra container's existing namespace paths
+
+Full Kubernetes-style user namespace sharing for Pod members still needs additional design around infra container ownership, namespace path access, Service endpoint behavior, and ID-map compatibility across app containers.
