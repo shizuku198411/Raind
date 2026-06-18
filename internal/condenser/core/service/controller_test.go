@@ -2,9 +2,11 @@ package service
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/ssm"
 	"raind/internal/condenser/utils"
 
@@ -43,6 +45,55 @@ func TestAddClusterIPJumpRuleUsesClusterIPDestination(t *testing.T) {
 	require.Len(t, commands.commands, 2)
 	assert.Contains(t, commands.commands[0], "-A PREROUTING -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-abc-80")
 	assert.Contains(t, commands.commands[1], "-A OUTPUT -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-abc-80")
+}
+
+func TestReconcileCleansPreviousServiceRulesByServiceID(t *testing.T) {
+	dir := t.TempDir()
+	ssmHandler := ssm.NewSsmManager(ssm.NewSsmStore(filepath.Join(dir, "ssm.json")))
+	psmHandler := psm.NewPsmManager(psm.NewPsmStore(filepath.Join(dir, "psm.json")))
+	commands := &recordedCommandFactory{}
+
+	oldSvc := ssm.ServiceInfo{
+		ServiceId: "svc-1",
+		Name:      "web",
+		Namespace: "default",
+		Type:      ssm.ServiceTypeNodePort,
+		Ports: []ssm.ServicePort{{
+			Port:       80,
+			TargetPort: 80,
+			Protocol:   "tcp",
+		}},
+	}
+	newSvc := ssm.ServiceInfo{
+		Name:      "web",
+		Namespace: "default",
+		Type:      ssm.ServiceTypeNodePort,
+		Ports: []ssm.ServicePort{{
+			Port:       8080,
+			TargetPort: 80,
+			Protocol:   "tcp",
+		}},
+	}
+	require.NoError(t, ssmHandler.StoreService("svc-1", newSvc))
+
+	controller := &ServiceController{
+		psmHandler:     psmHandler,
+		ssmHandler:     ssmHandler,
+		commandFactory: commands,
+		lastState: map[string]string{
+			"svc-1": "old-state",
+		},
+		lastServices: map[string]ssm.ServiceInfo{
+			"svc-1": oldSvc,
+		},
+	}
+
+	require.NoError(t, controller.reconcileOnce())
+
+	assert.Contains(t, commands.commands, "iptables -t nat -D PREROUTING -p tcp --dport 80 -j RAIND-SVC-svc-1-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -D OUTPUT -m addrtype --dst-type LOCAL -p tcp --dport 80 -j RAIND-SVC-svc-1-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SVC-svc-1-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SVC-svc-1-80")
 }
 
 func TestServiceTypeDefaultsToClusterIP(t *testing.T) {
