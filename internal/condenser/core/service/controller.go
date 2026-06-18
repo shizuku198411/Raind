@@ -68,8 +68,8 @@ func (c *ServiceController) reconcileOnce() error {
 			}
 			stateKey := c.buildStateKey(svc, endpoints)
 			if prev := c.lastState[svc.ServiceId]; prev != stateKey {
-				if prevSvc, ok := c.lastState[svc.ServiceId]; ok {
-					c.cleanupService(prevSvc)
+				if _, ok := c.lastState[svc.ServiceId]; ok {
+					c.cleanupService(svc.ServiceId)
 				}
 				c.lastState[svc.ServiceId] = stateKey
 				c.lastServices[svc.ServiceId] = svc
