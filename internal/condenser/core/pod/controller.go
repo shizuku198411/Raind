@@ -100,20 +100,25 @@ func (c *PodController) reconcileOnce() error {
 				if p.StoppedByUser {
 					continue
 				}
+
+				// The infra container owns the pod namespaces. If it is stopped or
+				// removed while the pod state is still running, member containers may
+				// keep running but the pod cannot safely reuse the old namespace paths.
+				// Recreate the whole pod from its template instead of only restarting
+				// member containers.
+				infraState, err := c.getPodInfraState(p.PodId)
+				if err != nil {
+					log.Printf("pod controller infra check failed: podId=%s err=%v", p.PodId, err)
+					continue
+				}
+				if infraState != "running" {
+					if err := c.recreatePod(p); err != nil {
+						log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
+					}
+					continue
+				}
+
 				if p.State == "degraded" {
-					infraState, err := c.getPodInfraState(p.PodId)
-					if err != nil {
-						log.Printf("pod controller infra check failed: podId=%s err=%v", p.PodId, err)
-						continue
-					}
-					// If infra is not running, namespace continuity is broken.
-					// Recreate pod from template (infra + members) to avoid stale ns path usage.
-					if infraState != "running" {
-						if err := c.recreatePod(p); err != nil {
-							log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
-						}
-						continue
-					}
 					// Infra is running, so only recover member containers.
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
