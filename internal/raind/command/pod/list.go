@@ -1,6 +1,7 @@
 package podcommand
 
 import (
+	watchcommand "raind/internal/raind/command/watch"
 	"raind/internal/raind/core/pod"
 
 	"github.com/urfave/cli/v2"
@@ -12,8 +13,13 @@ func CommandList() *cli.Command {
 		Usage: "list pods",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "filter by namespace"},
+			watchcommand.Flag(),
 		},
-		Action: runList,
+		Action: func(ctx *cli.Context) error {
+			return watchcommand.Run(watchcommand.Enabled(ctx), func() error {
+				return runList(ctx)
+			})
+		},
 	}
 }
 
