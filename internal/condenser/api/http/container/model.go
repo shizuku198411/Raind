@@ -1,5 +1,7 @@
 package container
 
+import corecontainer "raind/internal/condenser/core/container"
+
 // == create ==
 type CreateContainerRequest struct {
 	Image           string   `json:"image" example:"alpine:latest"`
@@ -52,4 +54,8 @@ type ExecContainerResponse struct {
 // == delete ==
 type DeleteContainerResponse struct {
 	Id string `json:"id"`
+}
+
+type InspectContainerResponse struct {
+	Container corecontainer.ContainerInspect `json:"container"`
 }

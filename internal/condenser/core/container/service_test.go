@@ -47,6 +47,15 @@ func TestContainerServiceCreateSkipsPullWhenImageExists(t *testing.T) {
 	assert.Zero(t, deps.image.pullCalls)
 }
 
+func TestContainerServiceCreateStoresResolvedSecurityProfileName(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+
+	id, err := deps.service.Create(ServiceCreateModel{Image: "alpine:3.20", Name: "web", SecurityProfile: "deploy"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "deploy", deps.csm.containers[id].SecurityProfile)
+}
+
 func TestContainerServiceCreateRejectsDuplicateName(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	deps.csm.nameToID["web"] = "existing"
@@ -56,6 +65,34 @@ func TestContainerServiceCreateRejectsDuplicateName(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already used")
 	assert.False(t, deps.runtime.specCalled)
+}
+
+func TestContainerServiceInspectSanitizesSecurityDetails(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	deps.csm.storeInfo("cid-1", csm.ContainerInfo{
+		ContainerId:     "cid-1",
+		ContainerName:   "web",
+		State:           "running",
+		Pid:             1234,
+		Repository:      "library/nginx",
+		Reference:       "latest",
+		Command:         []string{"nginx", "-g", "daemon off;"},
+		SecurityProfile: "deploy",
+		LogPath:         "/etc/raind/container/cid-1/logs/init.log",
+	})
+
+	inspect, err := deps.service.InspectContainer("web")
+
+	require.NoError(t, err)
+	assert.Equal(t, "cid-1", inspect.ContainerId)
+	assert.Equal(t, "web", inspect.Name)
+	assert.Equal(t, "deploy", inspect.SecurityProfile)
+
+	process := inspect.Config["process"].(map[string]any)
+	assert.NotContains(t, process, "capabilities")
+	linuxSpec := inspect.Config["linux"].(map[string]any)
+	assert.NotContains(t, linuxSpec, "seccomp")
+	assert.NotContains(t, linuxSpec, "apparmorProfile")
 }
 
 func TestContainerServiceCreateRollbackRemovesCSMEntryOnSpecFailure(t *testing.T) {
@@ -289,19 +326,20 @@ func (f *fakeCsmHandler) storeInfo(id string, info csm.ContainerInfo) {
 
 func (f *fakeCsmHandler) StoreContainer(req csm.StoreContainerRequest) error {
 	f.storeInfo(req.ContainerId, csm.ContainerInfo{
-		ContainerId:   req.ContainerId,
-		ContainerName: req.ContainerName,
-		PodId:         req.PodId,
-		DropletId:     req.DropletId,
-		State:         req.State,
-		Pid:           req.Pid,
-		Tty:           req.Tty,
-		Repository:    req.Repository,
-		Reference:     req.Reference,
-		Command:       req.Command,
-		BottleId:      req.BottleId,
-		LogPath:       req.LogPath,
-		CreatedAt:     time.Now(),
+		ContainerId:     req.ContainerId,
+		ContainerName:   req.ContainerName,
+		PodId:           req.PodId,
+		DropletId:       req.DropletId,
+		State:           req.State,
+		Pid:             req.Pid,
+		Tty:             req.Tty,
+		Repository:      req.Repository,
+		Reference:       req.Reference,
+		Command:         req.Command,
+		BottleId:        req.BottleId,
+		LogPath:         req.LogPath,
+		SecurityProfile: req.SecurityProfile,
+		CreatedAt:       time.Now(),
 	})
 	return nil
 }
@@ -507,8 +545,25 @@ func (f *fakeNetworkService) RemoveForwardingRule(containerId string, model netw
 
 type fakeFilesystemHandler struct{}
 
-func (f *fakeFilesystemHandler) MkdirAll(string, os.FileMode) error                  { return nil }
-func (f *fakeFilesystemHandler) ReadFile(string) ([]byte, error)                     { return nil, nil }
+func (f *fakeFilesystemHandler) MkdirAll(string, os.FileMode) error { return nil }
+func (f *fakeFilesystemHandler) ReadFile(string) ([]byte, error) {
+	return []byte(`{
+		"hostname":"cid-1",
+		"process":{
+			"cwd":"/app",
+			"args":["nginx","-g","daemon off;"],
+			"env":["PATH=/bin"],
+			"capabilities":{"effective":["CAP_CHOWN"]}
+		},
+		"linux":{
+			"namespaces":[{"type":"mount"},{"type":"network"}],
+			"seccomp":{"defaultAction":"SCMP_ACT_ALLOW"},
+			"apparmorProfile":"raind-default"
+		},
+		"root":{"path":"/etc/raind/container/cid-1/merged"},
+		"mounts":[{"destination":"/proc","type":"proc","source":"proc","options":["nosuid"]}]
+	}`), nil
+}
 func (f *fakeFilesystemHandler) WriteFile(string, []byte, os.FileMode) error         { return nil }
 func (f *fakeFilesystemHandler) Open(string) (*os.File, error)                       { return nil, nil }
 func (f *fakeFilesystemHandler) OpenFile(string, int, os.FileMode) (*os.File, error) { return nil, nil }

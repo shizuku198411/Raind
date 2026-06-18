@@ -13,17 +13,18 @@ func TestCsmManagerStoresResolvesUpdatesAndRemovesContainer(t *testing.T) {
 	manager := NewCsmManager(NewCsmStore(filepath.Join(t.TempDir(), "csm.json")))
 
 	require.NoError(t, manager.StoreContainer(StoreContainerRequest{
-		ContainerId:   "cid-1",
-		State:         "created",
-		Pid:           123,
-		Tty:           false,
-		Repository:    "library/alpine",
-		Reference:     "latest",
-		Command:       []string{"/bin/sh"},
-		ContainerName: "web",
-		LogPath:       "/tmp/init.log",
-		PodId:         "pod-1",
-		DropletId:     "container",
+		ContainerId:     "cid-1",
+		State:           "created",
+		Pid:             123,
+		Tty:             false,
+		Repository:      "library/alpine",
+		Reference:       "latest",
+		Command:         []string{"/bin/sh"},
+		ContainerName:   "web",
+		LogPath:         "/tmp/init.log",
+		PodId:           "pod-1",
+		DropletId:       "container",
+		SecurityProfile: "deploy",
 	}))
 
 	got, err := manager.GetContainerById("cid-1")
@@ -31,6 +32,7 @@ func TestCsmManagerStoresResolvesUpdatesAndRemovesContainer(t *testing.T) {
 	assert.Equal(t, "web", got.ContainerName)
 	assert.Equal(t, "created", got.State)
 	assert.Equal(t, "container", got.DropletId)
+	assert.Equal(t, "deploy", got.SecurityProfile)
 	assert.True(t, manager.IsNameAlreadyUsed("web"))
 
 	list, err := manager.GetContainerList()

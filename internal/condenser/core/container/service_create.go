@@ -118,6 +118,12 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 	} else {
 		command = slices.Concat(imageConfig.Config.Entrypoint, imageConfig.Config.Cmd)
 	}
+	resolvedSecurityProfile, err := s.securityProfileService.Resolve(createParameter.SecurityProfile)
+	if err != nil {
+		return "", err
+	}
+	createParameter.SecurityProfile = resolvedSecurityProfile.Name
+
 	logPath := ""
 	if createParameter.Tty {
 		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "console.log")
@@ -125,18 +131,19 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "init.log")
 	}
 	if err := s.csmHandler.StoreContainer(csm.StoreContainerRequest{
-		ContainerId:   containerId,
-		State:         "creating",
-		Pid:           0,
-		Tty:           createParameter.Tty,
-		Repository:    imageRepo,
-		Reference:     imageRef,
-		Command:       command,
-		ContainerName: containerName,
-		BottleId:      createParameter.BottleId,
-		LogPath:       logPath,
-		PodId:         createParameter.PodId,
-		DropletId:     utils.DefaultDropletId,
+		ContainerId:     containerId,
+		State:           "creating",
+		Pid:             0,
+		Tty:             createParameter.Tty,
+		Repository:      imageRepo,
+		Reference:       imageRef,
+		Command:         command,
+		ContainerName:   containerName,
+		BottleId:        createParameter.BottleId,
+		LogPath:         logPath,
+		PodId:           createParameter.PodId,
+		DropletId:       utils.DefaultDropletId,
+		SecurityProfile: createParameter.SecurityProfile,
 	}); err != nil {
 		return "", err
 	}

@@ -108,9 +108,11 @@ raind container run --security-profile deploy nginx:latest
 ```sh
 raind container create --name web --security-profile restricted nginx:latest
 raind container start web
+raind container inspect web
 ```
 
 You can still use `--cap-add` and `--cap-drop` on the container command. The selected security profile provides the base capability set, and the per-container capability flags are applied on top of that container spec.
+Container inspect output shows the applied profile name instead of expanding the raw capability, seccomp, and AppArmor definitions.
 
 ```sh
 raind container run \

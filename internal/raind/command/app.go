@@ -34,6 +34,7 @@ func NewApp() *cli.App {
 					containercommand.CommandRun(),
 					containercommand.CommandExec(),
 					containercommand.CommandLogs(),
+					containercommand.CommandInspect(),
 				},
 			},
 			{
