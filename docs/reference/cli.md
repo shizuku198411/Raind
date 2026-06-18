@@ -39,6 +39,7 @@ raind container ls
 raind container attach <container-id>
 raind container exec [--tty] <container-id> [command]
 raind container logs [--line <n>] [--pager] <container-id>
+raind container inspect <container-id-or-name> [--json]
 ```
 
 Common create and run flags:

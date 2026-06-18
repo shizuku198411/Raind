@@ -418,6 +418,35 @@ func (h *RequestHandler) GetContainerSpec(w http.ResponseWriter, r *http.Request
 	apimodel.RespondSuccess(w, http.StatusOK, "retrieve container config spec success", spec)
 }
 
+// InspectContainer godoc
+// @Summary inspect container config
+// @Description inspect a container config with security profile summary
+// @Tags containers
+// @Param containerId path string true "Container ID or name"
+// @Success 200 {object} apimodel.ApiResponse
+// @Router /v1/containers/{containerId}/inspect [get]
+func (h *RequestHandler) InspectContainer(w http.ResponseWriter, r *http.Request) {
+	containerId := chi.URLParam(r, "containerId")
+	if containerId == "" {
+		apimodel.RespondFail(w, http.StatusBadRequest, "missing container Id", nil)
+		return
+	}
+
+	logContainerId, logContainerName, _ := h.csmHandler.GetContainerIdAndName(containerId)
+	logger.SetTarget(r.Context(), logger.Target{
+		ContainerId:   logContainerId,
+		ContainerName: logContainerName,
+	})
+
+	inspect, err := h.serviceHandler.InspectContainer(containerId)
+	if err != nil {
+		apimodel.RespondFail(w, http.StatusInternalServerError, "inspect container failed: "+err.Error(), nil)
+		return
+	}
+
+	apimodel.RespondSuccess(w, http.StatusOK, "inspect container success", InspectContainerResponse{Container: inspect})
+}
+
 // ListContainerStats godoc
 // @Summary list container stats
 // @Description list container stats

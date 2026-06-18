@@ -14,6 +14,7 @@ raind container ls
 raind container attach <container-id-or-name>
 raind container exec   [--tty] <container-id-or-name> [command...]
 raind container logs   [--line <n>] [--pager] <container-id-or-name>
+raind container inspect <container-id-or-name> [--json]
 ```
 
 `container run` creates and starts a container. It does not currently use a Docker-style `-d` flag. For long-running detached-style workflows, run a long-lived foreground process such as `nginx`, `sleep`, or your service entrypoint.
@@ -71,6 +72,15 @@ Read logs:
 ```sh
 raind container logs --line 80 web
 ```
+
+Inspect the stored runtime configuration:
+
+```sh
+raind container inspect web
+raind container inspect web --json
+```
+
+The inspect output is based on the container `config.json`, but capability, seccomp, and AppArmor details are summarized as the applied Raind security profile name.
 
 Stop and remove:
 

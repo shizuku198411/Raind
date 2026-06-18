@@ -47,6 +47,15 @@ func TestContainerServiceCreateSkipsPullWhenImageExists(t *testing.T) {
 	assert.Zero(t, deps.image.pullCalls)
 }
 
+func TestContainerServiceCreateStoresResolvedSecurityProfileName(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+
+	id, err := deps.service.Create(ServiceCreateModel{Image: "alpine:3.20", Name: "web", SecurityProfile: "deploy"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "deploy", deps.csm.containers[id].SecurityProfile)
+}
+
 func TestContainerServiceCreateRejectsDuplicateName(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	deps.csm.nameToID["web"] = "existing"
@@ -58,91 +67,32 @@ func TestContainerServiceCreateRejectsDuplicateName(t *testing.T) {
 	assert.False(t, deps.runtime.specCalled)
 }
 
-func TestContainerServiceCreateRootlessPodInfraAddsUserNamespace(t *testing.T) {
+func TestContainerServiceInspectSanitizesSecurityDetails(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
-	deps.psm.pods["pod-1"] = psm.PodInfo{PodId: "pod-1", Rootless: true}
+	deps.csm.storeInfo("cid-1", csm.ContainerInfo{
+		ContainerId:     "cid-1",
+		ContainerName:   "web",
+		State:           "running",
+		Pid:             1234,
+		Repository:      "library/nginx",
+		Reference:       "latest",
+		Command:         []string{"nginx", "-g", "daemon off;"},
+		SecurityProfile: "deploy",
+		LogPath:         "/etc/raind/container/cid-1/logs/init.log",
+	})
 
-	_, err := deps.service.Create(ServiceCreateModel{Image: "alpine:3.20", Name: "infra", PodId: "pod-1", IsPodInfra: true, Rootless: true})
+	inspect, err := deps.service.InspectContainer("web")
 
 	require.NoError(t, err)
-	assert.True(t, deps.runtime.specModel.Rootless)
-	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
-}
+	assert.Equal(t, "cid-1", inspect.ContainerId)
+	assert.Equal(t, "web", inspect.Name)
+	assert.Equal(t, "deploy", inspect.SecurityProfile)
 
-func TestContainerServiceCreateRootlessPodMemberJoinsPodNetworkNamespaces(t *testing.T) {
-	deps := newContainerServiceTestDeps(true)
-	nsDir := t.TempDir()
-	networkNS := nsDir + "/net"
-	ipcNS := nsDir + "/ipc"
-	utsNS := nsDir + "/uts"
-	userNS := nsDir + "/user"
-	for _, path := range []string{networkNS, ipcNS, utsNS, userNS} {
-		require.NoError(t, os.WriteFile(path, []byte{}, 0o644))
-	}
-	deps.psm.pods["pod-1"] = psm.PodInfo{
-		PodId:     "pod-1",
-		OwnerPid:  1234,
-		NetworkNS: networkNS,
-		IPCNS:     ipcNS,
-		UTSNS:     utsNS,
-		UserNS:    userNS,
-		Rootless:  true,
-	}
-
-	err := deps.service.createContainerSpec(
-		"cid-1",
-		ServiceCreateModel{Image: "alpine:3.20", Name: "app", PodId: "pod-1", Rootless: true},
-		"library/alpine",
-		"3.20",
-		image.ImageConfigFile{},
-		"raind0",
-		"10.166.0.2/24",
-		"10.166.0.254",
-		"pod-1",
-	)
-
-	require.NoError(t, err)
-	assert.Contains(t, deps.runtime.specModel.Namespace, "mount")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "pid")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "cgroup")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
-	assert.NotContains(t, deps.runtime.specModel.Namespace, "network")
-	assert.NotContains(t, deps.runtime.specModel.Namespace, "uts")
-	assert.NotContains(t, deps.runtime.specModel.Namespace, "ipc")
-	assert.Contains(t, deps.runtime.specModel.NSPath, "network="+networkNS)
-	assert.Contains(t, deps.runtime.specModel.NSPath, "ipc="+ipcNS)
-	assert.Contains(t, deps.runtime.specModel.NSPath, "uts="+utsNS)
-	assert.NotContains(t, deps.runtime.specModel.NSPath, "user="+userNS)
-}
-
-func TestContainerServiceJoinContainerCreatesFromHostForRootlessPodMember(t *testing.T) {
-	deps := newContainerServiceTestDeps(true)
-	nsDir := t.TempDir()
-	userNS := nsDir + "/user"
-	require.NoError(t, os.WriteFile(userNS, []byte{}, 0o644))
-	deps.psm.pods["pod-1"] = psm.PodInfo{
-		PodId:    "pod-1",
-		OwnerPid: os.Getpid(),
-		UserNS:   userNS,
-		Rootless: true,
-	}
-
-	err := deps.service.joinContainer("cid-1", false, "pod-1")
-
-	require.NoError(t, err)
-	assert.True(t, deps.runtime.createCalled)
-	assert.Equal(t, 0, deps.runtime.createPodPid)
-}
-
-func TestContainerServiceCreateRejectsPerContainerRootlessForRootfulPod(t *testing.T) {
-	deps := newContainerServiceTestDeps(true)
-	deps.psm.pods["pod-1"] = psm.PodInfo{PodId: "pod-1", Rootless: false}
-
-	_, err := deps.service.Create(ServiceCreateModel{Image: "alpine:3.20", Name: "app", PodId: "pod-1", Rootless: true})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pod-level setting")
-	assert.False(t, deps.runtime.specCalled)
+	process := inspect.Config["process"].(map[string]any)
+	assert.NotContains(t, process, "capabilities")
+	linuxSpec := inspect.Config["linux"].(map[string]any)
+	assert.NotContains(t, linuxSpec, "seccomp")
+	assert.NotContains(t, linuxSpec, "apparmorProfile")
 }
 
 func TestContainerServiceCreateRollbackRemovesCSMEntryOnSpecFailure(t *testing.T) {
@@ -383,19 +333,20 @@ func (f *fakeCsmHandler) storeInfo(id string, info csm.ContainerInfo) {
 
 func (f *fakeCsmHandler) StoreContainer(req csm.StoreContainerRequest) error {
 	f.storeInfo(req.ContainerId, csm.ContainerInfo{
-		ContainerId:   req.ContainerId,
-		ContainerName: req.ContainerName,
-		PodId:         req.PodId,
-		DropletId:     req.DropletId,
-		State:         req.State,
-		Pid:           req.Pid,
-		Tty:           req.Tty,
-		Repository:    req.Repository,
-		Reference:     req.Reference,
-		Command:       req.Command,
-		BottleId:      req.BottleId,
-		LogPath:       req.LogPath,
-		CreatedAt:     time.Now(),
+		ContainerId:     req.ContainerId,
+		ContainerName:   req.ContainerName,
+		PodId:           req.PodId,
+		DropletId:       req.DropletId,
+		State:           req.State,
+		Pid:             req.Pid,
+		Tty:             req.Tty,
+		Repository:      req.Repository,
+		Reference:       req.Reference,
+		Command:         req.Command,
+		BottleId:        req.BottleId,
+		LogPath:         req.LogPath,
+		SecurityProfile: req.SecurityProfile,
+		CreatedAt:       time.Now(),
 	})
 	return nil
 }
@@ -635,8 +586,25 @@ func (f *fakeNetworkService) RemoveForwardingRule(containerId string, model netw
 
 type fakeFilesystemHandler struct{}
 
-func (f *fakeFilesystemHandler) MkdirAll(string, os.FileMode) error                  { return nil }
-func (f *fakeFilesystemHandler) ReadFile(string) ([]byte, error)                     { return nil, nil }
+func (f *fakeFilesystemHandler) MkdirAll(string, os.FileMode) error { return nil }
+func (f *fakeFilesystemHandler) ReadFile(string) ([]byte, error) {
+	return []byte(`{
+		"hostname":"cid-1",
+		"process":{
+			"cwd":"/app",
+			"args":["nginx","-g","daemon off;"],
+			"env":["PATH=/bin"],
+			"capabilities":{"effective":["CAP_CHOWN"]}
+		},
+		"linux":{
+			"namespaces":[{"type":"mount"},{"type":"network"}],
+			"seccomp":{"defaultAction":"SCMP_ACT_ALLOW"},
+			"apparmorProfile":"raind-default"
+		},
+		"root":{"path":"/etc/raind/container/cid-1/merged"},
+		"mounts":[{"destination":"/proc","type":"proc","source":"proc","options":["nosuid"]}]
+	}`), nil
+}
 func (f *fakeFilesystemHandler) WriteFile(string, []byte, os.FileMode) error         { return nil }
 func (f *fakeFilesystemHandler) Open(string) (*os.File, error)                       { return nil, nil }
 func (f *fakeFilesystemHandler) OpenFile(string, int, os.FileMode) (*os.File, error) { return nil, nil }

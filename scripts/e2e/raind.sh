@@ -886,6 +886,12 @@ test_container_deploy() {
   run_raind container-start container start "${cid}"
   assert_output_contains container-start "started"
   wait_http_ok "http://${HOST_ADDR}:${port}/"
+  run_raind container-inspect container inspect "${cid}"
+  assert_output_contains container-inspect "Security Profile:"
+  assert_output_contains container-inspect "default"
+  run_raind container-inspect-json container inspect "${cid}" --json
+  jq -e '.containerId == "'"${cid}"'" and .securityProfile == "default"' "${E2E_WORK_DIR}/container-inspect-json.out" >/dev/null || fail "container inspect json missing expected id/security profile"
+  jq -e '(.config.process.capabilities? == null) and (.config.linux.seccomp? == null) and (.config.linux.apparmorProfile? == null)' "${E2E_WORK_DIR}/container-inspect-json.out" >/dev/null || fail "container inspect json leaked security implementation details"
   run_raind_allow_empty container-exec container exec "${cid}" nginx -v
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
@@ -1006,6 +1012,8 @@ YAML
   cid="$(extract_created_id custom-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_custom_security_profile_applied "${cid}"
+  run_raind custom-profile-inspect container inspect "${cid}" --json
+  jq -e '.securityProfile == "'"${profile}"'"' "${E2E_WORK_DIR}/custom-profile-inspect.out" >/dev/null || fail "custom profile was not stored in container inspect"
   run_raind_allow_empty custom-profile-stop container stop "${cid}"
   cleanup_container custom-profile-rm "${cid}"
   run_raind custom-profile-delete security profile delete "${profile}"

@@ -18,20 +18,21 @@ type CsmManager struct {
 func (m *CsmManager) StoreContainer(req StoreContainerRequest) error {
 	return m.csmStore.withLock(func(st *ContainerState) error {
 		st.Containers[req.ContainerId] = ContainerInfo{
-			ContainerId:   req.ContainerId,
-			ContainerName: req.ContainerName,
-			PodId:         req.PodId,
-			DropletId:     req.DropletId,
-			State:         req.State,
-			Pid:           req.Pid,
-			ExitCode:      0,
-			LogPath:       req.LogPath,
-			Tty:           req.Tty,
-			Repository:    req.Repository,
-			Reference:     req.Reference,
-			BottleId:      req.BottleId,
-			Command:       req.Command,
-			CreatedAt:     time.Now(),
+			ContainerId:     req.ContainerId,
+			ContainerName:   req.ContainerName,
+			PodId:           req.PodId,
+			DropletId:       req.DropletId,
+			State:           req.State,
+			Pid:             req.Pid,
+			ExitCode:        0,
+			LogPath:         req.LogPath,
+			Tty:             req.Tty,
+			Repository:      req.Repository,
+			Reference:       req.Reference,
+			BottleId:        req.BottleId,
+			Command:         req.Command,
+			CreatedAt:       time.Now(),
+			SecurityProfile: req.SecurityProfile,
 		}
 		return nil
 	})
