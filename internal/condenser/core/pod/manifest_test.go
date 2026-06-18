@@ -307,3 +307,98 @@ spec:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported hostPath.type")
 }
+
+func TestDecodeK8sManifestsDecodesHostUsersFalseAsRootlessPod(t *testing.T) {
+	body := []byte(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  hostUsers: false
+  containers:
+    - name: app
+      image: alpine:latest
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Rootless)
+}
+
+func TestDecodeK8sManifestsDefaultsHostUsersToRootful(t *testing.T) {
+	body := []byte(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+  containers:
+    - name: app
+      image: alpine:latest
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.False(t, got[0].Rootless)
+}
+
+func TestDecodeK8sManifestsDecodesDeploymentTemplateHostUsersFalse(t *testing.T) {
+	body := []byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      hostUsers: false
+      containers:
+        - name: app
+          image: nginx:latest
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Rootless)
+}
+
+func TestDecodeK8sManifestsDecodesReplicaSetTemplateHostUsersTrueAsRootful(t *testing.T) {
+	body := []byte(`
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: web
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      hostUsers: true
+      containers:
+        - name: app
+          image: nginx:latest
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.False(t, got[0].Rootless)
+}

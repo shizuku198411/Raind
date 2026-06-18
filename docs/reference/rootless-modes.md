@@ -1,6 +1,6 @@
 # Rootless Modes Reference
 
-Rootless mode is configured through `raind container create/run` flags.
+Rootless mode is configured through `raind container create/run` flags for standalone containers, and through `spec.hostUsers: false` for Pod manifests.
 
 ## Flags
 
@@ -38,6 +38,9 @@ Detection order:
 | Workload type | Rootless support |
 |---|---:|
 | standalone container | yes |
-| Pod app container | no |
+| Pod app container | yes, shares Pod network/IPC/UTS with a per-container user namespace |
 | Bottle container | depends on current Bottle-to-container flag support; rootless is not the primary Bottle path yet |
-| Kubernetes-style resources | no rootless Pod support yet |
+| Kubernetes-style Pod resource | yes, set `spec.hostUsers: false` |
+| Kubernetes-style ReplicaSet / Deployment template | uses the Pod template path; set `spec.template.spec.hostUsers: false` |
+
+Rootless Pod app containers are tracked as Pod members. They share the infra container's network, IPC, and UTS namespaces so Service and Ingress resources can target the Pod IP, while each app container keeps its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.

@@ -124,6 +124,7 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 			return err
 		}
 	}
+	nestedRootless := shouldSkipHostSideSetupForNestedRootless(spec)
 
 	// 2. create state.json
 	//      status = creating
@@ -196,24 +197,28 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 
 	// wait for pidfile from shim
 	stage = "wait_init_pid"
-	initPid, err = c.waitInitPid(opt.ContainerId, 3*time.Second, 20*time.Millisecond)
+	initPid, err = c.waitInitPid(opt.ContainerId, 10*time.Second, 20*time.Millisecond)
 	if err != nil {
-		return err
+		return c.wrapInitPidWaitError(opt.ContainerId, err)
 	}
 	pid = initPid
 
 	// 6. cgroup setup
-	stage = "setup_cgroup"
-	err = c.containerCgroupPreparer.prepare(opt.ContainerId, spec, initPid)
-	if err != nil {
-		return err
+	if !nestedRootless {
+		stage = "setup_cgroup"
+		err = c.containerCgroupPreparer.prepare(opt.ContainerId, spec, initPid)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 7. network setup
-	stage = "setup_network"
-	err = c.containerNetworkPreparer.prepare(opt.ContainerId, initPid, spec.Annotations)
-	if err != nil {
-		return err
+	if !nestedRootless {
+		stage = "setup_network"
+		err = c.containerNetworkPreparer.prepare(opt.ContainerId, initPid, spec.Annotations)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 8. update state.json
@@ -240,6 +245,10 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		return err
 	}
 	return nil
+}
+
+func shouldSkipHostSideSetupForNestedRootless(containerSpec spec.Spec) bool {
+	return isRootlessSpec(containerSpec) && currentUserNamespaceDiffersFromInit()
 }
 
 func (c *ContainerCreator) specSecureLoad(containerId string) (spec.Spec, error) {
@@ -355,6 +364,9 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 }
 
 func prepareRootlessInitLog(path string, rootlessConfig spec.RootlessConfigObject) error {
+	if currentUserNamespaceDiffersFromInit() {
+		return nil
+	}
 	uid, gid := rootlessHostRootID(rootlessConfig)
 	return os.Chown(path, uid, gid)
 }
@@ -384,6 +396,35 @@ func (c *ContainerCreator) waitInitPid(containerId string, timeout time.Duration
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return c.waitInitPidContext(ctx, containerId, pollInterval)
+}
+
+func (c *ContainerCreator) wrapInitPidWaitError(containerId string, err error) error {
+	details := []string{}
+	if tail := tailFileForError(utils.ShimLogPath(containerId), 12); tail != "" {
+		details = append(details, "shim log:\n"+tail)
+	}
+	if tail := tailFileForError(utils.InitLogPath(containerId), 12); tail != "" {
+		details = append(details, "init log:\n"+tail)
+	}
+	if len(details) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w\n%s", err, strings.Join(details, "\n"))
+}
+
+func tailFileForError(path string, maxLines int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return ""
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // WaitInitPidContext is the context-aware variant.

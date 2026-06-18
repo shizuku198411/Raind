@@ -203,6 +203,7 @@ type containerServiceTestDeps struct {
 	image   *fakeImageService
 	runtime *fakeRuntimeHandler
 	network *fakeNetworkService
+	psm     *fakePsmHandler
 }
 
 func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
@@ -212,13 +213,14 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 	imageHandler := &fakeImageService{}
 	runtimeHandler := &fakeRuntimeHandler{}
 	networkHandler := &fakeNetworkService{}
+	psmHandler := &fakePsmHandler{pods: map[string]psm.PodInfo{}}
 	service := &ContainerService{
 		filesystemHandler:      &fakeFilesystemHandler{},
 		runtimeHandler:         runtimeHandler,
 		ipamHandler:            ipamHandler,
 		ilmHandler:             ilmHandler,
 		csmHandler:             csmHandler,
-		psmHandler:             &fakePsmHandler{},
+		psmHandler:             psmHandler,
 		imageServiceHandler:    imageHandler,
 		networkServiceHandler:  networkHandler,
 		securityProfileService: securityprofile.NewService(),
@@ -231,6 +233,7 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 		image:   imageHandler,
 		runtime: runtimeHandler,
 		network: networkHandler,
+		psm:     psmHandler,
 	}
 }
 
@@ -239,18 +242,22 @@ type fakeRuntimeHandler struct {
 	createCalled bool
 	deleteCalled bool
 	startedID    string
+	createPodPid int
 	execModel    runtime.ExecModel
+	specModel    runtime.SpecModel
 	specErr      error
 	createErr    error
 	deleteHook   func(containerId string)
 }
 
-func (f *fakeRuntimeHandler) Spec(runtime.SpecModel) error {
+func (f *fakeRuntimeHandler) Spec(m runtime.SpecModel) error {
 	f.specCalled = true
+	f.specModel = m
 	return f.specErr
 }
-func (f *fakeRuntimeHandler) Create(runtime.CreateModel, int) error {
+func (f *fakeRuntimeHandler) Create(_ runtime.CreateModel, podPid int) error {
 	f.createCalled = true
+	f.createPodPid = podPid
 	return f.createErr
 }
 func (f *fakeRuntimeHandler) Start(m runtime.StartModel) error {
@@ -467,9 +474,29 @@ func (f *fakeIpamHandler) GetNetworkInfoById(string) (string, ipam.Allocation, e
 }
 func (f *fakeIpamHandler) GetVethById(string) (string, error) { return "", nil }
 
-type fakePsmHandler struct{}
+type fakePsmHandler struct {
+	pods map[string]psm.PodInfo
+}
 
-func (f *fakePsmHandler) StorePod(string, string, string, string, string, string, string, string, string, string, map[string]string, map[string]string) error {
+func (f *fakePsmHandler) StorePod(req psm.StorePodRequest) error {
+	if f.pods == nil {
+		f.pods = map[string]psm.PodInfo{}
+	}
+	f.pods[req.PodId] = psm.PodInfo{
+		PodId:       req.PodId,
+		TemplateId:  req.TemplateId,
+		Name:        req.Name,
+		Namespace:   req.Namespace,
+		UID:         req.UID,
+		State:       req.State,
+		NetworkNS:   req.NetworkNS,
+		IPCNS:       req.IPCNS,
+		UTSNS:       req.UTSNS,
+		UserNS:      req.UserNS,
+		Rootless:    req.Rootless,
+		Labels:      req.Labels,
+		Annotations: req.Annotations,
+	}
 	return nil
 }
 func (f *fakePsmHandler) StorePodTemplate(string, psm.PodTemplateSpec) error { return nil }
@@ -503,17 +530,31 @@ func (f *fakePsmHandler) UpdatePodStoppedByUser(string, bool) error        { ret
 func (f *fakePsmHandler) UpdatePodNamespaces(int, string, string, string, string, string) error {
 	return nil
 }
-func (f *fakePsmHandler) ResetPodNamespaces(string) error        { return nil }
-func (f *fakePsmHandler) GetPodList() ([]psm.PodInfo, error)     { return nil, nil }
-func (f *fakePsmHandler) GetPodById(string) (psm.PodInfo, error) { return psm.PodInfo{}, nil }
-func (f *fakePsmHandler) IsNameAlreadyUsed(string, string) bool  { return false }
+func (f *fakePsmHandler) ResetPodNamespaces(string) error    { return nil }
+func (f *fakePsmHandler) GetPodList() ([]psm.PodInfo, error) { return nil, nil }
+func (f *fakePsmHandler) GetPodById(podId string) (psm.PodInfo, error) {
+	if f.pods != nil {
+		if pod, ok := f.pods[podId]; ok {
+			return pod, nil
+		}
+	}
+	return psm.PodInfo{PodId: podId}, nil
+}
+func (f *fakePsmHandler) IsNameAlreadyUsed(string, string) bool { return false }
 func (f *fakePsmHandler) GetPodIdByName(string, string) (string, error) {
 	return "", nil
 }
 func (f *fakePsmHandler) ResolvePodId(string, string) (string, error) { return "", nil }
 func (f *fakePsmHandler) IsPodExist(string) bool                      { return false }
-func (f *fakePsmHandler) IsPodOwner(string) bool                      { return true }
-func (f *fakePsmHandler) GetPodOwnerPid(string) (int, error)          { return 0, nil }
+func (f *fakePsmHandler) IsPodOwner(podId string) bool {
+	if f.pods != nil {
+		if pod, ok := f.pods[podId]; ok {
+			return pod.OwnerPid == 0
+		}
+	}
+	return true
+}
+func (f *fakePsmHandler) GetPodOwnerPid(string) (int, error) { return 0, nil }
 
 type forwardingRuleCall struct {
 	containerId string

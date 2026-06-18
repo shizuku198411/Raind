@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"raind/internal/condenser/core/cert"
 	"raind/internal/condenser/core/image"
 	"raind/internal/condenser/core/network"
 	"raind/internal/condenser/runtime"
@@ -24,10 +25,17 @@ import (
 // == service: create ==
 func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string, err error) {
 	createParameter = normalizeRootlessCreateParameter(createParameter)
-	if createParameter.Rootless && createParameter.PodId != "" {
-		return "", fmt.Errorf("rootless mode is currently supported for single containers only")
-	}
 	if createParameter.PodId != "" && !createParameter.IsPodInfra {
+		podInfo, err := s.psmHandler.GetPodById(createParameter.PodId)
+		if err != nil {
+			return "", err
+		}
+		if podInfo.Rootless {
+			createParameter.Rootless = true
+			createParameter = normalizeRootlessCreateParameter(createParameter)
+		} else if createParameter.Rootless {
+			return "", fmt.Errorf("rootless mode is a pod-level setting; set spec.hostUsers=false on the pod")
+		}
 		if err := s.ensurePodInfra(createParameter.PodId, createParameter.Network); err != nil {
 			return "", err
 		}
@@ -172,6 +180,15 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 		bridgeInterface, containerAddr, containerGateway, createParameter.PodId,
 	); err != nil {
 		return "", fmt.Errorf("create spec failed: %w", err)
+	}
+
+	if createParameter.Rootless && createParameter.PodId != "" && !createParameter.IsPodInfra {
+		if err := s.issueRootlessPodMemberClientCert(containerId); err != nil {
+			return "", fmt.Errorf("issue rootless pod member client cert failed: %w", err)
+		}
+		if err := s.prepareRootlessPodMemberBundle(containerId, createParameter); err != nil {
+			return "", fmt.Errorf("prepare rootless pod member bundle failed: %w", err)
+		}
 	}
 
 	// 11. setup forward rule
@@ -356,6 +373,49 @@ func (s *ContainerService) setupContainerDirectory(containerId string) error {
 	return nil
 }
 
+func (s *ContainerService) issueRootlessPodMemberClientCert(containerId string) error {
+	certPath := filepath.Join(utils.ContainerRootDir, containerId, "cert", "client.crt")
+	keyPath := filepath.Join(utils.ContainerRootDir, containerId, "cert", "client.key")
+	return cert.NewCertManager().IssueClientCert(
+		certPath,
+		keyPath,
+		utils.ClientIssuerCACertPath,
+		utils.ClientIssuerCAKeyPath,
+		cert.ClientCertConfig{
+			CommonName: "raind-client",
+			SpiiffeId:  "spiffe://raind/container/" + containerId,
+			ValidFor:   365 * 24 * time.Hour,
+		},
+	)
+}
+
+func (s *ContainerService) prepareRootlessPodMemberBundle(containerId string, createParameter ServiceCreateModel) error {
+	uid, gid := rootlessRuntimeHostRootID(createParameter)
+	containerDir := filepath.Join(utils.ContainerRootDir, containerId)
+	return filepath.WalkDir(containerDir, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Lchown(path, uid, gid)
+	})
+}
+
+func rootlessRuntimeHostRootID(createParameter ServiceCreateModel) (uid int, gid int) {
+	if createParameter.RootlessMode == rootlessModeLoginRoot {
+		uid = createParameter.RootlessRootUID
+		gid = createParameter.RootlessRootGID
+		if uid <= 0 {
+			uid = os.Getuid()
+		}
+		if gid <= 0 {
+			gid = os.Getgid()
+		}
+		return uid, gid
+	}
+	uidBase, gidBase, _ := rootlessCacheIDMapConfig()
+	return uidBase, gidBase
+}
+
 func (s *ContainerService) setupEtcFiles(containerId string, containerAddr string, containerGateway string) error {
 	etcDir := filepath.Join(utils.ContainerRootDir, containerId, "etc")
 
@@ -466,8 +526,14 @@ func (s *ContainerService) createContainerSpec(
 			utsPath := "uts=" + podInfo.UTSNS
 			nspath = []string{networkPath, ipcPath, utsPath}
 			namespace = []string{"mount", "pid", "cgroup"}
+			if createParameter.Rootless {
+				namespace = append(namespace, "user")
+			}
 		} else {
 			namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
+			if createParameter.Rootless {
+				namespace = append(namespace, "user")
+			}
 		}
 	} else {
 		namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
@@ -681,13 +747,7 @@ func (s *ContainerService) joinContainer(containerId string, tty bool, podId str
 		return s.createContainer(containerId, tty)
 	}
 
-	podPid := 0
-	if podInfo.UserNS != "" && s.nsPathExists(podInfo.UserNS) && s.nsPathExists(fmt.Sprintf("/proc/%d/ns/user", podInfo.OwnerPid)) {
-		podPid = podInfo.OwnerPid
-	}
-
-	// runtime: create
-	if err := s.runtimeHandler.Create(runtime.CreateModel{ContainerId: containerId, Tty: tty}, podPid); err != nil {
+	if err := s.runtimeHandler.Create(runtime.CreateModel{ContainerId: containerId, Tty: tty}, 0); err != nil {
 		return err
 	}
 	return nil
@@ -733,6 +793,7 @@ func (s *ContainerService) ensurePodInfra(podId string, network string) error {
 		Name:       infraName,
 		PodId:      podId,
 		IsPodInfra: true,
+		Rootless:   podInfo.Rootless,
 	})
 	if err != nil {
 		return err

@@ -22,6 +22,7 @@ func (s *PodService) Create(createParameter ServiceCreateModel) (string, error) 
 		IPCNS:       createParameter.IPCNS,
 		UTSNS:       createParameter.UTSNS,
 		UserNS:      createParameter.UserNS,
+		Rootless:    createParameter.Rootless,
 		Labels:      createParameter.Labels,
 		Annotations: createParameter.Annotations,
 		Containers:  containers,
@@ -56,6 +57,7 @@ func (s *PodService) CreateFromTemplate(templateId string, nameOverride string) 
 		IPCNS:       template.Spec.IPCNS,
 		UTSNS:       template.Spec.UTSNS,
 		UserNS:      template.Spec.UserNS,
+		Rootless:    template.Spec.Rootless,
 		Labels:      template.Spec.Labels,
 		Annotations: template.Spec.Annotations,
 	}
@@ -91,20 +93,21 @@ func (s *PodService) createWithTemplate(templateId string, createParameter Servi
 	}
 
 	podId := utils.NewUlid()
-	if err := s.psmHandler.StorePod(
-		podId,
-		templateId,
-		createParameter.Name,
-		createParameter.Namespace,
-		createParameter.UID,
-		"created",
-		createParameter.NetworkNS,
-		createParameter.IPCNS,
-		createParameter.UTSNS,
-		createParameter.UserNS,
-		createParameter.Labels,
-		createParameter.Annotations,
-	); err != nil {
+	if err := s.psmHandler.StorePod(psm.StorePodRequest{
+		PodId:       podId,
+		TemplateId:  templateId,
+		Name:        createParameter.Name,
+		Namespace:   createParameter.Namespace,
+		UID:         createParameter.UID,
+		State:       "created",
+		NetworkNS:   createParameter.NetworkNS,
+		IPCNS:       createParameter.IPCNS,
+		UTSNS:       createParameter.UTSNS,
+		UserNS:      createParameter.UserNS,
+		Rootless:    createParameter.Rootless,
+		Labels:      createParameter.Labels,
+		Annotations: createParameter.Annotations,
+	}); err != nil {
 		return "", err
 	}
 

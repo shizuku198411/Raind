@@ -1,6 +1,6 @@
 # Rootless Architecture
 
-This document describes how Raind implements rootless standalone containers.
+This document describes how Raind implements rootless containers.
 
 For user-facing commands, see [Rootless containers](../guides/rootless-containers.md). For a compact mode reference, see [Rootless modes](../reference/rootless-modes.md).
 
@@ -29,6 +29,8 @@ Droplet
   v
 container process
 ```
+
+For Pod manifests, `spec.hostUsers: false` enables rootless execution for Pod-managed containers. Rootless Pod app containers share the infra container's network, IPC, and UTS namespaces so Service and Ingress resources can target the Pod IP, while each app container keeps its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.
 
 ## Spec annotation
 
@@ -110,7 +112,7 @@ Rootless containers use a user namespace. Droplet constructs `syscall.SysProcAtt
 
 - namespace clone flags
 - UID/GID mappings
-- `GidMappingsEnableSetgroups=false` for rootless maps
+- `GidMappingsEnableSetgroups=true` for rootless maps, so images that call `initgroups(3)` while dropping privileges can still start workers inside the mapped GID range
 - `Credential{Uid: 0, Gid: 0, NoSetGroups: true}` so the init process starts as root inside the new user namespace
 
 The init process then performs the normal container setup path: mount preparation, rootfs setup, `pivot_root`, capabilities/seccomp/AppArmor handling, and final `exec`.
@@ -137,6 +139,16 @@ nsenter -t <pid> -U --setuid 0 --setgid 0 -m -u -i -n -p -C --root --wd=<cwd> --
 
 Command lookup resolves bare executables against `/proc/<pid>/root` and the container `PATH`, so commands are resolved inside the container rootfs.
 
-## Why standalone-only for now
+## Pod status
 
-Condenser currently rejects rootless mode for Pod-managed containers. Pod rootless support needs additional design around infra containers, shared namespace ownership, Service endpoint behavior, and ID-map compatibility across app containers.
+Rootless Pod manifests are supported through `spec.hostUsers: false`.
+
+Current implementation notes:
+
+- the Pod infra container and app containers are created with rootless annotations
+- app containers are tracked as Pod members
+- app containers pre-join the infra container's network, IPC, and UTS namespaces before creating their own user namespace
+- app containers keep independent user namespace mappings instead of sharing the infra container's user namespace
+- app containers set the shared network namespace's `net.ipv4.ip_unprivileged_port_start` to `0` before entering their rootless user namespace, allowing ports such as 80 without granting host root privileges
+
+Full Kubernetes-style shared user namespace behavior for Pod members still needs additional design around infra container ownership and ID-map compatibility across app containers.

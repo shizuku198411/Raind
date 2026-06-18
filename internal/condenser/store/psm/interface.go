@@ -5,7 +5,7 @@ type PsmStoreHandler interface {
 }
 
 type PsmHandler interface {
-	StorePod(podId, templateId, name, namespace, uid, state, networkNS, ipcNS, utsNS, userNS string, labels, annotations map[string]string) error
+	StorePod(req StorePodRequest) error
 	StorePodTemplate(templateId string, spec PodTemplateSpec) error
 	GetPodTemplate(templateId string) (PodTemplateInfo, error)
 	GetPodTemplateList() ([]PodTemplateInfo, error)
