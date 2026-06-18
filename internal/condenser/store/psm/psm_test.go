@@ -44,7 +44,7 @@ func TestPsmManagerStoresPodsAndReplicaSets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, rs.ReconcileAttempt)
 	assert.Equal(t, "create failed", rs.LastReconcileError)
-	assert.Equal(t, next, rs.NextReconcileAt)
+	assert.True(t, next.Equal(rs.NextReconcileAt), "expected %s, got %s", next, rs.NextReconcileAt)
 
 	require.NoError(t, manager.ClearReplicaSetReconcileStatus("rs-1"))
 	rs, err = manager.GetReplicaSet("rs-1")
