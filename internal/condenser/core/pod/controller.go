@@ -61,16 +61,18 @@ func (c *PodController) reconcileOnce() error {
 
 	// ReplicaSet reconcile
 	if len(replicaSets) > 0 {
-		podsByTemplate := make(map[string][]psm.PodInfo, len(templates))
-		for _, p := range pods {
-			if p.TemplateId == "" {
+		templateRefs := replicaSetTemplateRefs(replicaSets)
+		for _, rs := range replicaSets {
+			if shouldSkipReplicaSet(rs) {
 				continue
 			}
-			podsByTemplate[p.TemplateId] = append(podsByTemplate[p.TemplateId], p)
-		}
-		for _, rs := range replicaSets {
-			podList := podsByTemplate[rs.Spec.TemplateId]
-			podList = c.cleanupStoppedManagedPods(podList)
+			var reconcileErr error
+			podList := filterReplicaSetPods(rs, pods, templateRefs)
+			podList, reconcileErr = c.cleanupStoppedManagedPods(podList)
+			if reconcileErr != nil {
+				c.recordReplicaSetReconcileError(rs, reconcileErr)
+				continue
+			}
 			current := len(podList)
 			if current < rs.Spec.Replicas {
 				for i := 0; i < rs.Spec.Replicas-current; i++ {
@@ -78,10 +80,17 @@ func (c *PodController) reconcileOnce() error {
 					podId, err := c.podHandler.CreateFromTemplate(rs.Spec.TemplateId, name)
 					if err != nil {
 						log.Printf("pod controller recreate failed: templateId=%s err=%v", rs.Spec.TemplateId, err)
+						reconcileErr = err
+						break
+					}
+					if err := c.psmHandler.UpdatePodOwner(podId, psm.OwnerKindReplicaSet, rs.ReplicaSetId); err != nil {
+						log.Printf("pod controller owner update failed: podId=%s err=%v", podId, err)
+						reconcileErr = err
 						break
 					}
 					if _, err := c.podHandler.Start(podId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", podId, err)
+						reconcileErr = err
 						if podInfo, getErr := c.psmHandler.GetPodById(podId); getErr == nil {
 							if delErr := c.deletePod(podInfo); delErr != nil {
 								log.Printf("pod controller cleanup failed: podId=%s err=%v", podId, delErr)
@@ -94,8 +103,14 @@ func (c *PodController) reconcileOnce() error {
 				for i := 0; i < excess; i++ {
 					if err := c.deletePod(podList[i]); err != nil {
 						log.Printf("pod controller delete failed: podId=%s err=%v", podList[i].PodId, err)
+						reconcileErr = err
+						break
 					}
 				}
+			}
+			if reconcileErr != nil {
+				c.recordReplicaSetReconcileError(rs, reconcileErr)
+				continue
 			}
 			for _, p := range podList {
 				if p.StoppedByUser {
@@ -110,37 +125,47 @@ func (c *PodController) reconcileOnce() error {
 				infraState, err := c.getPodInfraState(p.PodId)
 				if err != nil {
 					log.Printf("pod controller infra check failed: podId=%s err=%v", p.PodId, err)
+					reconcileErr = err
 					continue
 				}
-				if infraState != "running" {
+				if infraState != psm.ContainerStateRunning {
 					if err := c.recreatePod(p); err != nil {
 						log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
+						reconcileErr = err
 					}
 					continue
 				}
 
-				if p.State == "degraded" {
+				if p.State == psm.PodStateDegraded {
 					// Infra is running, so only recover member containers.
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+						reconcileErr = err
 					}
 					continue
 				}
-				if p.State == "stopped" {
+				if p.State == psm.PodStateStopped {
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+						reconcileErr = err
 					}
 					continue
 				}
-				if p.State == "created" {
+				if p.State == psm.PodStateCreated {
 					if _, err := c.podHandler.Start(p.PodId); err != nil {
 						log.Printf("pod controller start failed: podId=%s err=%v", p.PodId, err)
+						reconcileErr = err
 						if err := c.recreatePod(p); err != nil {
 							log.Printf("pod controller recreate failed: podId=%s err=%v", p.PodId, err)
 						}
 					}
 				}
 			}
+			if reconcileErr != nil {
+				c.recordReplicaSetReconcileError(rs, reconcileErr)
+				continue
+			}
+			c.clearReplicaSetReconcileStatus(rs)
 		}
 	}
 	podsByTemplate := make(map[string][]psm.PodInfo, len(templates))
@@ -172,7 +197,7 @@ func (c *PodController) reconcileOnce() error {
 		var degradedPodId string
 		var stoppedPodId string
 		for _, p := range podList {
-			if p.State == "created" {
+			if p.State == psm.PodStateCreated {
 				hasActive = true
 				break
 			}
@@ -188,10 +213,10 @@ func (c *PodController) reconcileOnce() error {
 					break
 				}
 			}
-			if p.State == "degraded" && !p.StoppedByUser && degradedPodId == "" {
+			if p.State == psm.PodStateDegraded && !p.StoppedByUser && degradedPodId == "" {
 				degradedPodId = p.PodId
 			}
-			if p.State != "stopped" {
+			if p.State != psm.PodStateStopped {
 				hasActive = true
 				break
 			}
@@ -219,7 +244,68 @@ func (c *PodController) reconcileOnce() error {
 	return nil
 }
 
-func (c *PodController) cleanupStoppedManagedPods(pods []psm.PodInfo) []psm.PodInfo {
+func replicaSetTemplateRefs(replicaSets []psm.ReplicaSetInfo) map[string]int {
+	refs := make(map[string]int, len(replicaSets))
+	for _, rs := range replicaSets {
+		refs[rs.Spec.TemplateId]++
+	}
+	return refs
+}
+
+func filterReplicaSetPods(rs psm.ReplicaSetInfo, pods []psm.PodInfo, templateRefs map[string]int) []psm.PodInfo {
+	out := make([]psm.PodInfo, 0, len(pods))
+	for _, p := range pods {
+		if p.OwnerKind == psm.OwnerKindReplicaSet || p.OwnerId != "" {
+			if p.OwnerKind == psm.OwnerKindReplicaSet && p.OwnerId == rs.ReplicaSetId {
+				out = append(out, p)
+			}
+			continue
+		}
+		if p.TemplateId == rs.Spec.TemplateId && templateRefs[rs.Spec.TemplateId] == 1 && strings.HasPrefix(p.Name, rs.Spec.Name+"-") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func shouldSkipReplicaSet(rs psm.ReplicaSetInfo) bool {
+	return !rs.NextReconcileAt.IsZero() && time.Now().Before(rs.NextReconcileAt)
+}
+
+func (c *PodController) recordReplicaSetReconcileError(rs psm.ReplicaSetInfo, err error) {
+	if err == nil {
+		return
+	}
+	attempt := rs.ReconcileAttempt + 1
+	delay := time.Duration(1<<min(attempt-1, 6)) * c.interval
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+	if delay > time.Minute {
+		delay = time.Minute
+	}
+	if statusErr := c.psmHandler.UpdateReplicaSetReconcileStatus(rs.ReplicaSetId, attempt, err.Error(), time.Now().Add(delay)); statusErr != nil {
+		log.Printf("pod controller reconcile status update failed: replicaSetId=%s err=%v", rs.ReplicaSetId, statusErr)
+	}
+}
+
+func (c *PodController) clearReplicaSetReconcileStatus(rs psm.ReplicaSetInfo) {
+	if rs.ReconcileAttempt == 0 && rs.LastReconcileError == "" && rs.NextReconcileAt.IsZero() {
+		return
+	}
+	if err := c.psmHandler.ClearReplicaSetReconcileStatus(rs.ReplicaSetId); err != nil {
+		log.Printf("pod controller reconcile status clear failed: replicaSetId=%s err=%v", rs.ReplicaSetId, err)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (c *PodController) cleanupStoppedManagedPods(pods []psm.PodInfo) ([]psm.PodInfo, error) {
 	active := make([]psm.PodInfo, 0, len(pods))
 	for _, p := range pods {
 		if !p.StoppedByUser {
@@ -228,9 +314,10 @@ func (c *PodController) cleanupStoppedManagedPods(pods []psm.PodInfo) []psm.PodI
 		}
 		if err := c.deletePod(p); err != nil {
 			log.Printf("pod controller delete stopped managed pod failed: podId=%s err=%v", p.PodId, err)
+			return active, err
 		}
 	}
-	return active
+	return active, nil
 }
 
 func (c *PodController) reconcileDeployments() error {
@@ -294,7 +381,7 @@ func (c *PodController) isPodInfraDown(podId string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return state != "running", nil
+	return state != psm.ContainerStateRunning, nil
 }
 
 func (c *PodController) getPodInfraState(podId string) (string, error) {
@@ -305,15 +392,26 @@ func (c *PodController) getPodInfraState(podId string) (string, error) {
 	if len(containers) == 0 {
 		return "missing", nil
 	}
+	runningInfra := 0
+	stoppedInfra := 0
 	for _, cinfo := range containers {
 		if strings.HasPrefix(cinfo.Name, utils.PodInfraContainerNamePrefix) {
-			if cinfo.State == "running" {
-				return "running", nil
+			if cinfo.State == psm.ContainerStateRunning {
+				runningInfra++
+				continue
 			}
-			return "stopped", nil
+			stoppedInfra++
 		}
 	}
-	// infra missing
+	if runningInfra == 1 && stoppedInfra == 0 {
+		return psm.ContainerStateRunning, nil
+	}
+	if runningInfra > 1 {
+		return "duplicate", nil
+	}
+	if stoppedInfra > 0 {
+		return psm.ContainerStateStopped, nil
+	}
 	return "missing", nil
 }
 
@@ -323,7 +421,7 @@ func (c *PodController) recreatePod(podInfo psm.PodInfo) error {
 		return err
 	}
 	for _, cinfo := range containers {
-		if cinfo.State == "running" {
+		if cinfo.State == psm.ContainerStateRunning {
 			_, _ = c.containerHandler.Stop(container.ServiceStopModel{ContainerId: cinfo.ContainerId})
 		}
 		_, _ = c.containerHandler.Delete(container.ServiceDeleteModel{ContainerId: cinfo.ContainerId})
@@ -341,6 +439,11 @@ func (c *PodController) recreatePod(podInfo psm.PodInfo) error {
 	if err != nil {
 		return err
 	}
+	if podInfo.OwnerKind != "" || podInfo.OwnerId != "" {
+		if err := c.psmHandler.UpdatePodOwner(newPodId, podInfo.OwnerKind, podInfo.OwnerId); err != nil {
+			return err
+		}
+	}
 	_, err = c.podHandler.Start(newPodId)
 	return err
 }
@@ -354,7 +457,7 @@ func (c *PodController) deletePod(podInfo psm.PodInfo) error {
 		return err
 	}
 	for _, cinfo := range containers {
-		if cinfo.State == "running" {
+		if cinfo.State == psm.ContainerStateRunning {
 			_, _ = c.containerHandler.Stop(container.ServiceStopModel{ContainerId: cinfo.ContainerId})
 		}
 		_, _ = c.containerHandler.Delete(container.ServiceDeleteModel{ContainerId: cinfo.ContainerId})

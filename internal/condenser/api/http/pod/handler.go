@@ -916,7 +916,7 @@ func (h *RequestHandler) GetReplicaSetList(w http.ResponseWriter, r *http.Reques
 		current := 0
 		ready := 0
 		for _, p := range pods {
-			if p.TemplateId != rs.Spec.TemplateId {
+			if !replicaSetOwnsPod(rs, p) {
 				continue
 			}
 			current++
@@ -929,16 +929,19 @@ func (h *RequestHandler) GetReplicaSetList(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		res = append(res, ReplicaSetSummary{
-			ReplicaSetId: rs.ReplicaSetId,
-			Name:         rs.Spec.Name,
-			Namespace:    rs.Spec.Namespace,
-			Replicas:     rs.Spec.Replicas,
-			Desired:      rs.Spec.Replicas,
-			Current:      current,
-			Ready:        ready,
-			TemplateId:   rs.Spec.TemplateId,
-			Selector:     rs.Spec.Selector,
-			CreatedAt:    rs.CreatedAt.Format(time.RFC3339),
+			ReplicaSetId:       rs.ReplicaSetId,
+			Name:               rs.Spec.Name,
+			Namespace:          rs.Spec.Namespace,
+			Replicas:           rs.Spec.Replicas,
+			Desired:            rs.Spec.Replicas,
+			Current:            current,
+			Ready:              ready,
+			TemplateId:         rs.Spec.TemplateId,
+			Selector:           rs.Spec.Selector,
+			ReconcileAttempt:   rs.ReconcileAttempt,
+			LastReconcileError: rs.LastReconcileError,
+			NextReconcileAt:    formatOptionalTime(rs.NextReconcileAt),
+			CreatedAt:          rs.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	apimodel.RespondSuccess(w, http.StatusOK, "replicaset list", res)
@@ -976,7 +979,7 @@ func (h *RequestHandler) GetReplicaSetById(w http.ResponseWriter, r *http.Reques
 	ready := 0
 	templateCount := len(template.Spec.Containers)
 	for _, p := range pods {
-		if p.TemplateId != rs.Spec.TemplateId {
+		if !replicaSetOwnsPod(rs, p) {
 			continue
 		}
 		current++
@@ -989,17 +992,27 @@ func (h *RequestHandler) GetReplicaSetById(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	apimodel.RespondSuccess(w, http.StatusOK, "replicaset detail", ReplicaSetDetail{
-		ReplicaSetId: rs.ReplicaSetId,
-		Name:         rs.Spec.Name,
-		Namespace:    rs.Spec.Namespace,
-		Replicas:     rs.Spec.Replicas,
-		Desired:      rs.Spec.Replicas,
-		Current:      current,
-		Ready:        ready,
-		Selector:     rs.Spec.Selector,
-		Template:     template.Spec,
-		CreatedAt:    rs.CreatedAt.Format(time.RFC3339),
+		ReplicaSetId:       rs.ReplicaSetId,
+		Name:               rs.Spec.Name,
+		Namespace:          rs.Spec.Namespace,
+		Replicas:           rs.Spec.Replicas,
+		Desired:            rs.Spec.Replicas,
+		Current:            current,
+		Ready:              ready,
+		Selector:           rs.Spec.Selector,
+		Template:           template.Spec,
+		ReconcileAttempt:   rs.ReconcileAttempt,
+		LastReconcileError: rs.LastReconcileError,
+		NextReconcileAt:    formatOptionalTime(rs.NextReconcileAt),
+		CreatedAt:          rs.CreatedAt.Format(time.RFC3339),
 	})
+}
+
+func formatOptionalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // RemoveReplicaSet godoc
@@ -1039,7 +1052,7 @@ func (h *RequestHandler) deploymentReplicaCounts(deploy psm.DeploymentInfo) (int
 	current := 0
 	ready := 0
 	for _, p := range pods {
-		if p.TemplateId != rs.Spec.TemplateId {
+		if !replicaSetOwnsPod(rs, p) {
 			continue
 		}
 		current++
@@ -1052,6 +1065,13 @@ func (h *RequestHandler) deploymentReplicaCounts(deploy psm.DeploymentInfo) (int
 		}
 	}
 	return current, ready, nil
+}
+
+func replicaSetOwnsPod(rs psm.ReplicaSetInfo, p psm.PodInfo) bool {
+	if p.OwnerKind == psm.OwnerKindReplicaSet || p.OwnerId != "" {
+		return p.OwnerKind == psm.OwnerKindReplicaSet && p.OwnerId == rs.ReplicaSetId
+	}
+	return p.TemplateId == rs.Spec.TemplateId
 }
 
 // ScaleDeployment godoc

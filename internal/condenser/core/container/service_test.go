@@ -485,6 +485,8 @@ func (f *fakePsmHandler) StorePod(req psm.StorePodRequest) error {
 	f.pods[req.PodId] = psm.PodInfo{
 		PodId:       req.PodId,
 		TemplateId:  req.TemplateId,
+		OwnerKind:   req.OwnerKind,
+		OwnerId:     req.OwnerId,
 		Name:        req.Name,
 		Namespace:   req.Namespace,
 		UID:         req.UID,
@@ -515,6 +517,10 @@ func (f *fakePsmHandler) GetReplicaSet(string) (psm.ReplicaSetInfo, error) {
 func (f *fakePsmHandler) GetReplicaSetList() ([]psm.ReplicaSetInfo, error) { return nil, nil }
 func (f *fakePsmHandler) IsTemplateReferenced(string) (bool, error)        { return false, nil }
 func (f *fakePsmHandler) UpdateReplicaSetReplicas(string, int) error       { return nil }
+func (f *fakePsmHandler) UpdateReplicaSetReconcileStatus(string, int, string, time.Time) error {
+	return nil
+}
+func (f *fakePsmHandler) ClearReplicaSetReconcileStatus(string) error      { return nil }
 func (f *fakePsmHandler) RemoveReplicaSet(string) error                    { return nil }
 func (f *fakePsmHandler) StoreDeployment(string, psm.DeploymentSpec) error { return nil }
 func (f *fakePsmHandler) GetDeployment(string) (psm.DeploymentInfo, error) {
@@ -526,6 +532,7 @@ func (f *fakePsmHandler) UpdateDeploymentReplicaSet(string, string) error  { ret
 func (f *fakePsmHandler) RemoveDeployment(string) error                    { return nil }
 func (f *fakePsmHandler) RemovePod(string) error                           { return nil }
 func (f *fakePsmHandler) UpdatePod(string, string) error                   { return nil }
+func (f *fakePsmHandler) UpdatePodOwner(string, string, string) error      { return nil }
 func (f *fakePsmHandler) UpdatePodStoppedByUser(string, bool) error        { return nil }
 func (f *fakePsmHandler) UpdatePodNamespaces(int, string, string, string, string, string) error {
 	return nil

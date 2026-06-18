@@ -20,6 +20,8 @@ func (m *PsmManager) StorePod(req StorePodRequest) error {
 		st.Pods[req.PodId] = PodInfo{
 			PodId:       req.PodId,
 			TemplateId:  req.TemplateId,
+			OwnerKind:   req.OwnerKind,
+			OwnerId:     req.OwnerId,
 			Name:        req.Name,
 			Namespace:   req.Namespace,
 			UID:         req.UID,
@@ -163,6 +165,34 @@ func (m *PsmManager) UpdateReplicaSetReplicas(replicaSetId string, replicas int)
 	})
 }
 
+func (m *PsmManager) UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		rs, ok := st.ReplicaSets[replicaSetId]
+		if !ok {
+			return fmt.Errorf("replicaSetId=%s not found", replicaSetId)
+		}
+		rs.ReconcileAttempt = attempt
+		rs.LastReconcileError = lastError
+		rs.NextReconcileAt = nextReconcileAt
+		st.ReplicaSets[replicaSetId] = rs
+		return nil
+	})
+}
+
+func (m *PsmManager) ClearReplicaSetReconcileStatus(replicaSetId string) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		rs, ok := st.ReplicaSets[replicaSetId]
+		if !ok {
+			return fmt.Errorf("replicaSetId=%s not found", replicaSetId)
+		}
+		rs.ReconcileAttempt = 0
+		rs.LastReconcileError = ""
+		rs.NextReconcileAt = time.Time{}
+		st.ReplicaSets[replicaSetId] = rs
+		return nil
+	})
+}
+
 func (m *PsmManager) IsTemplateReferenced(templateId string) (bool, error) {
 	var referenced bool
 	err := m.psmStore.withRLock(func(st *PodState) error {
@@ -288,14 +318,27 @@ func (m *PsmManager) UpdatePod(podId string, state string) error {
 
 		p.State = state
 		switch state {
-		case "created":
+		case PodStateCreated:
 			p.CreatedAt = time.Now()
-		case "running":
+		case PodStateRunning:
 			p.StartedAt = time.Now()
-		case "stopped":
+		case PodStateStopped:
 			p.StoppedAt = time.Now()
 		}
 
+		st.Pods[podId] = p
+		return nil
+	})
+}
+
+func (m *PsmManager) UpdatePodOwner(podId, ownerKind, ownerId string) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		p, ok := st.Pods[podId]
+		if !ok {
+			return fmt.Errorf("podId=%s not found", podId)
+		}
+		p.OwnerKind = ownerKind
+		p.OwnerId = ownerId
 		st.Pods[podId] = p
 		return nil
 	})

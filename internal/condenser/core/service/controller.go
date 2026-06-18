@@ -129,7 +129,7 @@ func (c *ServiceController) buildEndpoints(svc ssm.ServiceInfo, pods []psm.PodIn
 }
 
 func (c *ServiceController) getReadyInfraContainerId(p psm.PodInfo) (string, bool) {
-	if p.State != "running" || p.StoppedByUser {
+	if p.State != psm.PodStateRunning || p.StoppedByUser {
 		return "", false
 	}
 
@@ -148,14 +148,14 @@ func (c *ServiceController) getReadyInfraContainerId(p psm.PodInfo) (string, boo
 	)
 	for _, cinfo := range containers {
 		if strings.HasPrefix(cinfo.Name, utils.PodInfraContainerNamePrefix) {
-			if cinfo.State != "running" {
+			if cinfo.State != psm.ContainerStateRunning {
 				return "", false
 			}
 			infraId = cinfo.ContainerId
 			continue
 		}
 		memberCount++
-		if cinfo.State != "running" {
+		if cinfo.State != psm.ContainerStateRunning {
 			return "", false
 		}
 		runningByName[cinfo.Name] = struct{}{}

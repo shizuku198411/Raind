@@ -26,7 +26,7 @@ func (s *PodService) Start(podId string) (string, error) {
 
 	for _, c := range containers {
 		if s.isPodInfraName(c.Name) {
-			if c.State == "running" {
+			if c.State == psm.ContainerStateRunning {
 				continue
 			}
 			if _, err := s.containerHandler.Start(container.ServiceStartModel{ContainerId: c.ContainerId, Tty: false}); err != nil {
@@ -39,7 +39,7 @@ func (s *PodService) Start(podId string) (string, error) {
 		if s.isPodInfraName(c.Name) {
 			continue
 		}
-		if c.State == "running" {
+		if c.State == psm.ContainerStateRunning {
 			continue
 		}
 		if _, err := s.containerHandler.Start(container.ServiceStartModel{ContainerId: c.ContainerId, Tty: false}); err != nil {
@@ -47,7 +47,7 @@ func (s *PodService) Start(podId string) (string, error) {
 		}
 	}
 
-	if err := s.psmHandler.UpdatePod(podId, "running"); err != nil {
+	if err := s.psmHandler.UpdatePod(podId, psm.PodStateRunning); err != nil {
 		return "", err
 	}
 	_ = s.psmHandler.UpdatePodStoppedByUser(podId, false)
