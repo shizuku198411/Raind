@@ -64,6 +64,73 @@ func TestPodControllerRecreatesReplicaSetPodWhenInfraIsStopped(t *testing.T) {
 	}
 }
 
+func TestPodControllerReplacesUserStoppedReplicaSetPod(t *testing.T) {
+	psmHandler := &fakeControllerPsm{
+		replicaSets: []psm.ReplicaSetInfo{{
+			ReplicaSetId: "rs-1",
+			Spec: psm.ReplicaSetSpec{
+				Name:       "demo-web",
+				Namespace:  "demo",
+				Replicas:   2,
+				TemplateId: "tpl-1",
+			},
+		}},
+		templates: []psm.PodTemplateInfo{{TemplateId: "tpl-1"}},
+		pods: map[string]psm.PodInfo{
+			"pod-running": {
+				PodId:      "pod-running",
+				TemplateId: "tpl-1",
+				Name:       "demo-web-running",
+				Namespace:  "demo",
+				State:      "running",
+			},
+			"pod-stopped": {
+				PodId:         "pod-stopped",
+				TemplateId:    "tpl-1",
+				Name:          "demo-web-stopped",
+				Namespace:     "demo",
+				State:         "stopped",
+				StoppedByUser: true,
+			},
+		},
+	}
+	podHandler := &fakeControllerPodService{createPodId: "pod-replacement"}
+	containerHandler := &fakeControllerContainerService{
+		containersByPod: map[string][]container.ContainerState{
+			"pod-running": {
+				{ContainerId: "infra-running", Name: utils.PodInfraContainerNamePrefix + "pod-running", PodId: "pod-running", State: "running"},
+				{ContainerId: "member-running", Name: "web", PodId: "pod-running", State: "running"},
+			},
+			"pod-stopped": {
+				{ContainerId: "infra-stopped", Name: utils.PodInfraContainerNamePrefix + "pod-stopped", PodId: "pod-stopped", State: "running"},
+				{ContainerId: "member-stopped", Name: "web", PodId: "pod-stopped", State: "stopped"},
+			},
+		},
+	}
+	controller := &PodController{
+		psmHandler:       psmHandler,
+		podHandler:       podHandler,
+		containerHandler: containerHandler,
+	}
+
+	if err := controller.reconcileOnce(); err != nil {
+		t.Fatalf("reconcileOnce returned error: %v", err)
+	}
+
+	if !psmHandler.removedPods["pod-stopped"] {
+		t.Fatalf("expected user-stopped managed pod to be removed")
+	}
+	if !containerHandler.stopped["infra-stopped"] || !containerHandler.deleted["infra-stopped"] || !containerHandler.deleted["member-stopped"] {
+		t.Fatalf("expected stopped managed pod containers to be cleaned up")
+	}
+	if podHandler.createdTemplateId != "tpl-1" {
+		t.Fatalf("expected replacement pod to be created from template tpl-1, got %q", podHandler.createdTemplateId)
+	}
+	if podHandler.startedPodId != "pod-replacement" {
+		t.Fatalf("expected replacement pod to be started, got %q", podHandler.startedPodId)
+	}
+}
+
 type fakeControllerPsm struct {
 	pods        map[string]psm.PodInfo
 	templates   []psm.PodTemplateInfo
@@ -145,6 +212,9 @@ func (f *fakeControllerPsm) IsPodOwner(string) bool                      { retur
 func (f *fakeControllerPsm) GetPodOwnerPid(string) (int, error)          { return 0, nil }
 
 type fakeControllerPodService struct {
+	createPodId         string
+	createdTemplateId   string
+	createdName         string
 	recreatePodId       string
 	recreatedTemplateId string
 	startedPodId        string
@@ -155,7 +225,11 @@ func (f *fakeControllerPodService) RecreateFromTemplate(templateId string) (stri
 	f.recreatedTemplateId = templateId
 	return f.recreatePodId, nil
 }
-func (f *fakeControllerPodService) CreateFromTemplate(string, string) (string, error) { return "", nil }
+func (f *fakeControllerPodService) CreateFromTemplate(templateId, name string) (string, error) {
+	f.createdTemplateId = templateId
+	f.createdName = name
+	return f.createPodId, nil
+}
 func (f *fakeControllerPodService) Start(podId string) (string, error) {
 	f.startedPodId = podId
 	return podId, nil
