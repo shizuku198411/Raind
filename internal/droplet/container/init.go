@@ -271,9 +271,12 @@ type rootContainerEnvPreparer struct {
 // steps are not executed.
 func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (err error) {
 	// 0. join existing namespaces (net/ipc/uts) if specified in spec
-	err = joinExistingNamespaces(spec)
-	if err != nil {
-		return fmt.Errorf("join namespaces: %w", err)
+	prejoinedNamespaces := os.Getenv(raindNamespacesPrejoinedEnv) == "1"
+	if !prejoinedNamespaces {
+		err = joinExistingNamespaces(spec)
+		if err != nil {
+			return fmt.Errorf("join namespaces: %w", err)
+		}
 	}
 	// 1. change uid=0(root) inside container
 	err = p.switchToUserNamespaceRoot()
@@ -281,9 +284,11 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 		return fmt.Errorf("switch to user namespace root: %w", err)
 	}
 	// 2. set hostname
-	err = p.setHostnameToContainerId(spec.Hostname)
-	if err != nil {
-		return fmt.Errorf("set hostname: %w", err)
+	if !prejoinedNamespaces {
+		err = p.setHostnameToContainerId(spec.Hostname)
+		if err != nil {
+			return fmt.Errorf("set hostname: %w", err)
+		}
 	}
 	// 3. set env
 	err = p.setEnv(spec.Process.Env)
@@ -650,6 +655,10 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 		},
 	}
 
+	if os.Getenv(raindNamespacesPrejoinedEnv) == "1" {
+		prerequiredMounts = filterRootlessPrejoinedMounts(prerequiredMounts)
+	}
+
 	// user mounts
 	for _, user_mount := range mountList {
 		if err := validateUserMount(user_mount); err != nil {
@@ -793,6 +802,18 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 	}
 
 	return nil
+}
+
+func filterRootlessPrejoinedMounts(mounts []spec.MountObject) []spec.MountObject {
+	filtered := make([]spec.MountObject, 0, len(mounts))
+	for _, mountConfig := range mounts {
+		destination := filepath.Clean(mountConfig.Destination)
+		if destination == "/sys" || strings.HasPrefix(destination, "/sys/") || destination == "/dev/mqueue" {
+			continue
+		}
+		filtered = append(filtered, mountConfig)
+	}
+	return filtered
 }
 
 // mountStdDevice bind-mounts standard device files into the container's /dev.

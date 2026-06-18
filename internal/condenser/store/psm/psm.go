@@ -15,21 +15,22 @@ type PsmManager struct {
 	psmStore *PsmStore
 }
 
-func (m *PsmManager) StorePod(podId, templateId, name, namespace, uid, state, networkNS, ipcNS, utsNS, userNS string, labels, annotations map[string]string) error {
+func (m *PsmManager) StorePod(req StorePodRequest) error {
 	return m.psmStore.withLock(func(st *PodState) error {
-		st.Pods[podId] = PodInfo{
-			PodId:       podId,
-			TemplateId:  templateId,
-			Name:        name,
-			Namespace:   namespace,
-			UID:         uid,
-			State:       state,
-			NetworkNS:   networkNS,
-			IPCNS:       ipcNS,
-			UTSNS:       utsNS,
-			UserNS:      userNS,
-			Labels:      labels,
-			Annotations: annotations,
+		st.Pods[req.PodId] = PodInfo{
+			PodId:       req.PodId,
+			TemplateId:  req.TemplateId,
+			Name:        req.Name,
+			Namespace:   req.Namespace,
+			UID:         req.UID,
+			State:       req.State,
+			NetworkNS:   req.NetworkNS,
+			IPCNS:       req.IPCNS,
+			UTSNS:       req.UTSNS,
+			UserNS:      req.UserNS,
+			Rootless:    req.Rootless,
+			Labels:      req.Labels,
+			Annotations: req.Annotations,
 			CreatedAt:   time.Now(),
 		}
 		return nil

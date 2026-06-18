@@ -13,6 +13,7 @@ type ServiceCreateModel struct {
 	IPCNS       string
 	UTSNS       string
 	UserNS      string
+	Rootless    bool
 	Labels      map[string]string
 	Annotations map[string]string
 	Containers  []psm.ContainerTemplateSpec
@@ -30,6 +31,7 @@ type PodState struct {
 	IPCNS             string            `json:"ipcNS"`
 	UTSNS             string            `json:"utsNS"`
 	UserNS            string            `json:"userNS"`
+	Rootless          bool              `json:"rootless,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	CreatedAt         time.Time         `json:"createdAt"`

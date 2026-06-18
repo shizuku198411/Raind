@@ -10,6 +10,7 @@ type CreatePodRequest struct {
 	IPCNS       string                      `json:"ipcNS"`
 	UTSNS       string                      `json:"utsNS"`
 	UserNS      string                      `json:"userNS"`
+	HostUsers   *bool                       `json:"hostUsers,omitempty"`
 	Labels      map[string]string           `json:"labels"`
 	Annotations map[string]string           `json:"annotations"`
 	Containers  []CreatePodContainerRequest `json:"containers"`

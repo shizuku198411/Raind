@@ -28,6 +28,7 @@ kind: Pod
 |---|---:|---|
 | `spec.containers` | yes | List of container specs. |
 | `spec.volumes` | no | Host directory volumes. Only `hostPath` is currently supported. |
+| `spec.hostUsers` | no | Set to `false` to run Pod-managed containers in rootless mode. Defaults to `true`. |
 
 ### Container Spec
 
@@ -120,6 +121,52 @@ spec:
       tty: true
 ```
 
+## Rootless Pod Example
+
+Set `spec.hostUsers: false` to request rootless execution for the Pod containers.
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-rootless
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rootless-worker
+  namespace: demo-rootless
+  labels:
+    app: rootless-worker
+spec:
+  hostUsers: false
+  containers:
+    - name: worker
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+      args:
+        - trap "exit 0" TERM INT; while true; do id; cat /proc/self/uid_map; sleep 30; done
+```
+
+Apply and verify:
+
+```sh
+raind resource apply -f rootless-pod.yaml
+raind resource pod ls --namespace demo-rootless
+raind resource rm -f rootless-pod.yaml
+```
+
+Current rootless Pod behavior:
+
+- `spec.hostUsers: false` enables rootless mode for Pod-managed containers.
+- Raind creates user namespaces for the Pod infra container and app containers.
+- Rootless Pod app containers share the infra container's network, IPC, and UTS namespaces, so Service and Ingress resources can target the Pod IP.
+- Each rootless Pod app container still gets its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.
+- The default rootless mapping mode is `shifted-root`, the same as `raind container run --rootless`.
+- Rootless Pod manifests should use long-running commands when you want the Pod to remain `Ready`.
+
 ## Create
 
 Create from a manifest:
@@ -154,6 +201,7 @@ raind resource rm -f pod.yaml
 
 - `metadata.namespace` defaults to `default`.
 - Pod containers share the Pod network namespace through the infra container.
+- Rootless Pods are enabled with `spec.hostUsers: false`.
 - `ports[].hostPort` publishes a container port on the host. Prefer a Service for workload-level exposure.
 - `hostPath.path` and `volumeMounts.mountPath` must be absolute paths.
 - Only host directory mounts are supported through Kubernetes-style `volumes`.

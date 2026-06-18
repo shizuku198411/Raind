@@ -124,6 +124,9 @@ func (c *containerFifoHandler) writeFifo(path string) error {
 // range (100000:100000 by default). Keeping the FIFO mode at 0600 is fine as
 // long as the FIFO owner is the host ID that represents namespace root.
 func prepareRootlessFifo(path string, rootlessConfig spec.RootlessConfigObject) error {
+	if currentUserNamespaceDiffersFromInit() {
+		return nil
+	}
 	uid, gid := rootlessHostRootID(rootlessConfig)
 	return os.Chown(path, uid, gid)
 }

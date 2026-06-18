@@ -161,6 +161,7 @@ func (s *PodService) ensurePodTemplateContainers(podInfo psm.PodInfo) error {
 			Tty:             spec.Tty,
 			Name:            spec.Name,
 			PodId:           podInfo.PodId,
+			Rootless:        podInfo.Rootless,
 		}); err != nil {
 			return err
 		}

@@ -159,6 +159,23 @@ api_curl() {
     "https://127.0.0.1:7755$1"
 }
 
+api_curl_json() {
+  local method="$1"
+  local path="$2"
+  local body="$3"
+
+  sudo_cmd curl -sS \
+    --connect-timeout 1 \
+    --max-time 3 \
+    --cert /etc/raind/cert/raindClient.crt \
+    --key /etc/raind/cert/raindClient.key \
+    --cacert /etc/raind/cert/raind.crt \
+    -X "${method}" \
+    -H 'Content-Type: application/json' \
+    --data-binary "@${body}" \
+    "https://127.0.0.1:7755${path}"
+}
+
 wait_ready() {
   log "wait for condenser management API"
   local out="${E2E_WORK_DIR}/ready.json"
@@ -422,6 +439,39 @@ run_cli_write_checks() {
   # ID around for late cleanup.
   run_raind pod-rm resource pod rm "${pod_id}"
   assert_output_contains pod-rm "removed"
+
+  local rootless_pod_name="e2e-cli-rootless-pod-$$"
+  local rootless_pod_json="${E2E_WORK_DIR}/rootless-pod.json"
+  local rootless_pod_out="${E2E_WORK_DIR}/rootless-pod-create-api.out"
+  local rootless_pod_id
+  cat >"${rootless_pod_json}" <<JSON
+{
+  "name": "${rootless_pod_name}",
+  "namespace": "default",
+  "hostUsers": false,
+  "labels": {
+    "app": "e2e-cli-rootless"
+  }
+}
+JSON
+  log "POST /v1/pods hostUsers=false"
+  api_curl_json POST /v1/pods "${rootless_pod_json}" >"${rootless_pod_out}"
+  jq -e '.status == "success" and (.data.podId // .data.id // "") != ""' "${rootless_pod_out}" >/dev/null || {
+    cat "${rootless_pod_out}" >&2 || true
+    fail "rootless pod API create failed"
+  }
+  rootless_pod_id="$(jq -r '.data.podId // .data.id' "${rootless_pod_out}")"
+  local rootless_psm_dump="${E2E_WORK_DIR}/rootless-pod-psm.json"
+  sudo_cmd cat /etc/raind/store/psm.json >"${rootless_psm_dump}"
+  jq -e --arg pod "${rootless_pod_id}" --arg name "${rootless_pod_name}" '
+    (.pods[$pod] // (.pods | to_entries | map(select(.value.name == $name)) | first | .value)) as $p |
+    $p != null and
+    $p.rootless == true and
+    (.podTemplates[$p.templateId].spec.rootless == true)
+  ' "${rootless_psm_dump}" >/dev/null || fail "rootless pod was not persisted in PSM"
+  run_raind rootless-pod-ls resource pod ls
+  assert_output_contains rootless-pod-ls "${rootless_pod_name}"
+  run_raind_allow_empty rootless-pod-rm resource pod rm "${rootless_pod_id}"
 
   cat >"${E2E_WORK_DIR}/service.yaml" <<YAML
 apiVersion: v1

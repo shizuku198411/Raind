@@ -87,6 +87,9 @@ func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
 	if !ok {
 		return nil
 	}
+	if currentUserNamespaceDiffersFromInit() {
+		return nil
+	}
 
 	var imageConfig spec.ImageConfigObject
 	if err := utils.StringToJson(containerSpec.Annotations.Image, &imageConfig); err != nil {
@@ -107,6 +110,9 @@ func prepareRootlessWritableFilesystem(containerSpec spec.Spec) error {
 }
 
 func prepareRootlessShiftedLayerCache(src string, policy rootlessIDMapPolicy) (string, error) {
+	if rootlessShiftedLayerCacheReady(src, rootlessShiftedLayerCompleteMarker(filepath.Dir(src))) && isRootlessShiftedLayerPath(src) {
+		return src, nil
+	}
 	cacheRoot, err := rootlessShiftedLayerCacheRootForPolicy(src, policy)
 	if err != nil {
 		return "", err
@@ -163,6 +169,11 @@ func prepareRootlessShiftedLayerCache(src string, policy rootlessIDMapPolicy) (s
 		return "", err
 	}
 	return cacheRootfs, nil
+}
+
+func isRootlessShiftedLayerPath(src string) bool {
+	cleanSrc := filepath.Clean(src)
+	return filepath.Base(cleanSrc) == "rootfs" && filepath.Base(filepath.Dir(filepath.Dir(cleanSrc))) == "rootless-shifted"
 }
 
 func waitRootlessShiftedLayerCache(rootfsPath string, completeMarker string, timeout time.Duration) error {

@@ -143,6 +143,24 @@ func TestRootlessShiftedLayerCacheReadyRequiresRootfsAndMarker(t *testing.T) {
 	assert.True(t, rootlessShiftedLayerCacheReady(rootfs, marker))
 }
 
+func TestPrepareRootlessShiftedLayerCacheReusesAlreadyShiftedLayer(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, "rootless-shifted", "uid_100000_gid_100000_size_65536_v1")
+	rootfs := filepath.Join(cacheRoot, "rootfs")
+	require.NoError(t, os.MkdirAll(rootfs, 0o755))
+	require.NoError(t, os.WriteFile(rootlessShiftedLayerCompleteMarker(cacheRoot), []byte("complete\n"), 0o644))
+
+	got, err := prepareRootlessShiftedLayerCache(rootfs, rootlessIDMapPolicy{
+		mode:    spec.RootlessModeShiftedRoot,
+		uidBase: 100000,
+		gidBase: 100000,
+		mapSize: 65536,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, rootfs, got)
+}
+
 func TestShiftRootlessIDsMapsLoginRootSeparately(t *testing.T) {
 	policy := rootlessIDMapPolicy{
 		mode:    spec.RootlessModeLoginRoot,
@@ -183,4 +201,70 @@ func TestRootlessShiftedLayerCacheKeySeparatesLoginRootCache(t *testing.T) {
 	assert.Equal(t, "uid_100000_gid_100000_size_65536_v1", shifted)
 	assert.NotEqual(t, shifted, login)
 	assert.Contains(t, login, "mode_login-root")
+}
+
+func TestIsNonInitialUserNamespace(t *testing.T) {
+	tests := []struct {
+		name   string
+		uidMap string
+		want   bool
+	}{
+		{name: "initial namespace", uidMap: "         0          0 4294967295\n", want: false},
+		{name: "shifted rootless namespace", uidMap: "         0     100000      65536\n", want: true},
+		{name: "login rootless namespace", uidMap: "         0       1000          1\n         1     100000      65535\n", want: true},
+		{name: "empty", uidMap: "", want: false},
+		{name: "malformed host id", uidMap: "0 nope 1\n", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isNonInitialUserNamespace(tt.uidMap))
+		})
+	}
+}
+
+func TestUserNamespaceDiffersFromInit(t *testing.T) {
+	tests := []struct {
+		name string
+		self string
+		init string
+		want bool
+	}{
+		{
+			name: "same initial namespace",
+			self: "         0          0 4294967295\n",
+			init: "         0          0 4294967295\n",
+			want: false,
+		},
+		{
+			name: "same shifted workshop namespace",
+			self: "         0     100000      65536\n",
+			init: "         0     100000      65536\n",
+			want: false,
+		},
+		{
+			name: "nested rootless namespace",
+			self: "         0     200000      65536\n",
+			init: "         0     100000      65536\n",
+			want: true,
+		},
+		{
+			name: "empty self",
+			self: "",
+			init: "         0     100000      65536\n",
+			want: false,
+		},
+		{
+			name: "empty init",
+			self: "         0     200000      65536\n",
+			init: "",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, userNamespaceDiffersFromInit(tt.self, tt.init))
+		})
+	}
 }

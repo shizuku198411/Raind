@@ -166,6 +166,10 @@ func (c *PodController) reconcileOnce() error {
 		var degradedPodId string
 		var stoppedPodId string
 		for _, p := range podList {
+			if p.State == "created" {
+				hasActive = true
+				break
+			}
 			if !p.StoppedByUser {
 				infraDown, err := c.isPodInfraDown(p.PodId)
 				if err != nil {

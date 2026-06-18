@@ -106,6 +106,18 @@ func TestBuildNamespaceJoinTargetsIncludesPathNamespacesInStableOrder(t *testing
 	}, targets)
 }
 
+func TestUserNamespacePathReturnsPathNamespace(t *testing.T) {
+	containerSpec := spec.Spec{
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{
+				{Type: "user", Path: "/proc/1/ns/user"},
+			},
+		},
+	}
+
+	assert.Equal(t, "/proc/1/ns/user", userNamespacePath(containerSpec))
+}
+
 func TestBuildRootUserNamespaceIDMapReturnsIdentityMapOnlyWhenUserNamespaceEnabled(t *testing.T) {
 	// == exercise ==
 	uidMap, gidMap := buildRootUserNamespaceIDMap(namespaceConfig{user: true})
@@ -159,7 +171,7 @@ func TestBuildProcAttrForRootlessContainerStartsAsUserNamespaceRoot(t *testing.T
 	// == assert ==
 	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.uidMap)
 	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.gidMap)
-	assert.False(t, procAttr.setGroupsFlag)
+	assert.True(t, procAttr.setGroupsFlag)
 	if assert.NotNil(t, procAttr.credential) {
 		assert.Equal(t, uint32(0), procAttr.credential.Uid)
 		assert.Equal(t, uint32(0), procAttr.credential.Gid)
