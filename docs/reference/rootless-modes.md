@@ -38,9 +38,9 @@ Detection order:
 | Workload type | Rootless support |
 |---|---:|
 | standalone container | yes |
-| Pod app container | yes, with current namespace-sharing limitations |
+| Pod app container | yes, shares Pod network/IPC/UTS with a per-container user namespace |
 | Bottle container | depends on current Bottle-to-container flag support; rootless is not the primary Bottle path yet |
 | Kubernetes-style Pod resource | yes, set `spec.hostUsers: false` |
 | Kubernetes-style ReplicaSet / Deployment template | uses the Pod template path; set `spec.template.spec.hostUsers: false` |
 
-Rootless Pod app containers are tracked as Pod members, but currently use their own rootless runtime namespaces instead of joining the infra container's existing network, IPC, UTS, and user namespaces.
+Rootless Pod app containers are tracked as Pod members. They share the infra container's network, IPC, and UTS namespaces so Service and Ingress resources can target the Pod IP, while each app container keeps its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.

@@ -513,12 +513,15 @@ func (s *ContainerService) createContainerSpec(
 				nsReady = false
 			}
 		}
-		if nsReady && !createParameter.Rootless {
+		if nsReady {
 			networkPath := "network=" + podInfo.NetworkNS
 			ipcPath := "ipc=" + podInfo.IPCNS
 			utsPath := "uts=" + podInfo.UTSNS
 			nspath = []string{networkPath, ipcPath, utsPath}
 			namespace = []string{"mount", "pid", "cgroup"}
+			if createParameter.Rootless {
+				namespace = append(namespace, "user")
+			}
 		} else {
 			namespace = []string{"mount", "network", "uts", "pid", "ipc", "cgroup"}
 			if createParameter.Rootless {

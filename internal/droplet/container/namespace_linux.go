@@ -77,9 +77,11 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 
 	if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
 		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig, rootlessConfig)
-		// Rootless mappings should not allow setgroups in the child user namespace.
-		// Leaving this false makes Go write "deny" before gid_map.
-		setGroupsFlag = false
+		// Rootless containers still need setgroups inside the child user
+		// namespace for images such as nginx that drop workers to a non-root
+		// user through initgroups(3). The mapped GID range keeps those groups
+		// constrained to unprivileged host IDs.
+		setGroupsFlag = nsConfig.user
 
 		// Start the init process as uid/gid 0 inside the newly-created user namespace.
 		// With the rootless map below, that namespace root maps to an unprivileged

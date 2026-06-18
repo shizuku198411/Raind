@@ -292,6 +292,23 @@ func TestRootContainerEnvPreparerMountStdDeviceCreatesAndMountsDevices(t *testin
 	assert.Equal(t, initMountCall{source: "", target: "/rootfs/dev/random", fstype: "", flags: syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY | syscall.MS_NOEXEC | syscall.MS_NOSUID, data: ""}, syscalls.mounts[1])
 }
 
+func TestFilterRootlessPrejoinedMountsDropsKernelMountsOwnedBySharedNamespaces(t *testing.T) {
+	mounts := []spec.MountObject{
+		{Destination: "/proc", Type: "proc"},
+		{Destination: "/sys", Type: "sysfs"},
+		{Destination: "/sys/fs/cgroup", Type: "cgroup2"},
+		{Destination: "/dev/mqueue", Type: "mqueue"},
+		{Destination: "/dev/shm", Type: "tmpfs"},
+	}
+
+	filtered := filterRootlessPrejoinedMounts(mounts)
+
+	assert.Equal(t, []spec.MountObject{
+		{Destination: "/proc", Type: "proc"},
+		{Destination: "/dev/shm", Type: "tmpfs"},
+	}, filtered)
+}
+
 func TestRootContainerEnvPreparerCreateSymbolicLinkCreatesMissingLinks(t *testing.T) {
 	// == setup ==
 	syscalls := &fakeInitSyscallHandler{}

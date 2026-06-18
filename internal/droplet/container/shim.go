@@ -13,6 +13,7 @@ import (
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -92,9 +93,20 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	cmdArgs := initArgs
 	if userNS := userNamespacePath(spec); userNS != "" {
 		cmdName = "nsenter"
-		cmdArgs = append([]string{"--user=" + userNS, "--", utils.SelfBinPath()}, initArgs...)
+		cmdArgs = append([]string{"--user=" + userNS, "--setuid=0", "--setgid=0", "--", utils.SelfBinPath()}, initArgs...)
 	}
 	cmd := c.commandFactory.Command(cmdName, cmdArgs...)
+	prejoinedNamespaces, unlockOSThread, err := prejoinRootlessPathNamespaces(spec)
+	if unlockOSThread != nil {
+		defer unlockOSThread()
+	}
+	if err != nil {
+		logger.Printf("prejoin namespaces failed: %v", err)
+		return err
+	}
+	if prejoinedNamespaces {
+		cmd.SetEnv(append(os.Environ(), raindNamespacesPrejoinedEnv+"=1"))
+	}
 
 	// 3. configure stdio.
 	// TTY mode keeps the existing pty/socket attach path.
@@ -242,6 +254,41 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	}
 
 	return waitErr
+}
+
+const raindNamespacesPrejoinedEnv = "RAIND_NAMESPACES_PREJOINED"
+
+func prejoinRootlessPathNamespaces(containerSpec spec.Spec) (bool, func(), error) {
+	if !shouldPrejoinRootlessPathNamespaces(containerSpec) {
+		return false, nil, nil
+	}
+
+	runtime.LockOSThread()
+	unlock := runtime.UnlockOSThread
+	if err := joinExistingNamespaces(containerSpec); err != nil {
+		unlock()
+		return false, nil, fmt.Errorf("prejoin namespaces: %w", err)
+	}
+	if err := allowRootlessSharedNetworkLowPorts(); err != nil {
+		unlock()
+		return false, nil, err
+	}
+	return true, unlock, nil
+}
+
+func shouldPrejoinRootlessPathNamespaces(containerSpec spec.Spec) bool {
+	if !isRootlessSpec(containerSpec) {
+		return false
+	}
+	return len(buildNamespaceJoinTargets(containerSpec)) > 0
+}
+
+func allowRootlessSharedNetworkLowPorts() error {
+	const path = "/proc/sys/net/ipv4/ip_unprivileged_port_start"
+	if err := os.WriteFile(path, []byte("0\n"), 0644); err != nil {
+		return fmt.Errorf("allow rootless low ports in shared network namespace: %w", err)
+	}
+	return nil
 }
 
 func (c *ContainerShim) specSecureLoad(containerId string) (spec.Spec, error) {

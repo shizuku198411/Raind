@@ -341,7 +341,8 @@ Current rootless Pod behavior:
 
 - `hostUsers: false` enables rootless mode for Pod-managed containers.
 - The default rootless mapping mode is `shifted-root`.
-- Rootless Pod app containers are managed as Pod members, but currently use their own rootless runtime namespaces instead of joining the infra container's existing network, IPC, UTS, and user namespaces.
+- Rootless Pod app containers share the infra container's network, IPC, and UTS namespaces, so Service and Ingress resources can target the Pod IP.
+- Each rootless Pod app container still gets its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.
 - Use long-running container commands when you expect the Pod to remain `Ready`.
 
 ## `ReplicaSet`

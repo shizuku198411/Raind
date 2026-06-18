@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
 	"syscall"
 	"testing"
@@ -82,6 +83,36 @@ func TestContainerShimInitExitCodeUsesSignalWaitStatus(t *testing.T) {
 
 	// == assert ==
 	assert.Equal(t, 128+int(syscall.SIGKILL), code)
+}
+
+func TestShouldPrejoinRootlessPathNamespaces(t *testing.T) {
+	containerSpec := spec.Spec{
+		Annotations: spec.AnnotationObject{
+			Rootless: `{"enabled":true}`,
+		},
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{
+				{Type: "network", Path: "/proc/1/ns/net"},
+				{Type: "ipc", Path: "/proc/1/ns/ipc"},
+				{Type: "uts", Path: "/proc/1/ns/uts"},
+				{Type: "user"},
+			},
+		},
+	}
+
+	assert.True(t, shouldPrejoinRootlessPathNamespaces(containerSpec))
+}
+
+func TestShouldPrejoinRootlessPathNamespacesRequiresRootless(t *testing.T) {
+	containerSpec := spec.Spec{
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{
+				{Type: "network", Path: "/proc/1/ns/net"},
+			},
+		},
+	}
+
+	assert.False(t, shouldPrejoinRootlessPathNamespaces(containerSpec))
 }
 
 func TestContainerShimSetReasonAndMessageMapsExitCode(t *testing.T) {

@@ -673,6 +673,28 @@ wait_http_ok() {
   fail "timed out waiting for ${url}"
 }
 
+wait_http_ok_host() {
+  local url="$1"
+  local host="$2"
+  local out="${E2E_WORK_DIR}/http-host.out"
+
+  log "curl -H Host:${host} ${url}"
+  for _ in $(seq 1 120); do
+    if curl -fsS --connect-timeout 2 --max-time 3 -H "Host: ${host}" "${url}" >"${out}" 2>"${E2E_WORK_DIR}/http-host.err" &&
+      grep -qi "nginx" "${out}"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  cat "${E2E_WORK_DIR}/http-host.err" >&2 2>/dev/null || true
+  if [[ -f "${out}" ]]; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2 || true
+  fi
+  fail "timed out waiting for ${url} with host ${host}"
+}
+
 assert_security_profile_runtime_applied() {
   local cid="$1"
   local state="/etc/raind/container/${cid}/state.json"
@@ -1098,7 +1120,7 @@ wait_rootless_pod_runtime_state() {
       container_id="$(sudo_cmd jq -r --arg pod "${pod_id}" '
         .containers
         | to_entries[]?
-        | select(.value.podId == $pod and (.value.imageRepository | test("busybox$")))
+        | select(.value.podId == $pod and ((.value.name // "") | startswith("condenser-pod-infra-") | not))
         | .key
       ' "${csm_path}" 2>/dev/null | head -1)"
 
@@ -1174,6 +1196,158 @@ YAML
   assert_output_contains rootless-pod-rm "pod:"
   assert_output_contains rootless-pod-rm "namespace:"
   wait_resource_namespace_absent rootless-pod-namespace-removed "${ns}"
+}
+
+test_rootless_resource_ingress() {
+  local yaml="${E2E_WORK_DIR}/rootless-ingress.yaml"
+  local ns="e2e-rootless-ingress-ns-${SUFFIX}"
+  local host="e2e-rootless-${SUFFIX}.local"
+
+  log "rootless resource ingress test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-rootless-web
+  namespace: ${ns}
+  labels:
+    app: e2e-rootless-web
+spec:
+  hostUsers: false
+  containers:
+  - name: nginx
+    image: nginx:latest
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-rootless-web
+  namespace: ${ns}
+spec:
+  selector:
+    app: e2e-rootless-web
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: e2e-rootless-web
+  namespace: ${ns}
+spec:
+  rules:
+  - host: ${host}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: e2e-rootless-web
+            port:
+              number: 80
+YAML
+  run_resource_apply_with_retry rootless-ingress-apply "${yaml}"
+  assert_output_contains rootless-ingress-apply "pod:"
+  assert_output_contains rootless-ingress-apply "service:"
+  assert_output_contains rootless-ingress-apply "ingress:"
+  wait_pod_row_ready rootless-ingress-pod-ready e2e-rootless-web resource pod ls --namespace "${ns}"
+  wait_rootless_pod_runtime_state "${ns}" e2e-rootless-web
+  wait_raind_contains rootless-ingress-svc-ls e2e-rootless-web resource service ls --namespace "${ns}"
+  wait_http_ok_host "http://${HOST_ADDR}:7780/" "${host}"
+  run_raind rootless-ingress-rm resource rm -f "${yaml}"
+  assert_output_contains rootless-ingress-rm "ingress:"
+  assert_output_contains rootless-ingress-rm "service:"
+  assert_output_contains rootless-ingress-rm "pod:"
+  assert_output_contains rootless-ingress-rm "namespace:"
+  wait_resource_namespace_absent rootless-ingress-namespace-removed "${ns}"
+}
+
+test_rootless_deployment_ingress() {
+  local yaml="${E2E_WORK_DIR}/rootless-deployment-ingress.yaml"
+  local ns="e2e-rootless-deploy-ns-${SUFFIX}"
+  local host="e2e-rootless-deploy-${SUFFIX}.local"
+
+  log "rootless deployment ingress test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-rootless-deploy
+  namespace: ${ns}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: e2e-rootless-deploy
+  template:
+    metadata:
+      labels:
+        app: e2e-rootless-deploy
+    spec:
+      hostUsers: false
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-rootless-deploy
+  namespace: ${ns}
+spec:
+  selector:
+    app: e2e-rootless-deploy
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: e2e-rootless-deploy
+  namespace: ${ns}
+spec:
+  rules:
+  - host: ${host}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: e2e-rootless-deploy
+            port:
+              number: 80
+YAML
+  run_resource_apply_with_retry rootless-deployment-ingress-apply "${yaml}"
+  assert_output_contains rootless-deployment-ingress-apply "deployment:"
+  assert_output_contains rootless-deployment-ingress-apply "service:"
+  assert_output_contains rootless-deployment-ingress-apply "ingress:"
+  wait_resource_row_ready rootless-deployment-ingress-ready e2e-rootless-deploy 2 resource deployment ls --namespace "${ns}"
+  wait_raind_contains rootless-deployment-ingress-svc-ls e2e-rootless-deploy resource service ls --namespace "${ns}"
+  wait_http_ok_host "http://${HOST_ADDR}:7780/" "${host}"
+  run_raind rootless-deployment-ingress-rm resource rm -f "${yaml}"
+  assert_output_contains rootless-deployment-ingress-rm "ingress:"
+  assert_output_contains rootless-deployment-ingress-rm "service:"
+  assert_output_contains rootless-deployment-ingress-rm "deployment:"
+  assert_output_contains rootless-deployment-ingress-rm "namespace:"
+  wait_resource_namespace_absent rootless-deployment-ingress-namespace-removed "${ns}"
 }
 
 test_bottle_deploy() {
@@ -1503,6 +1677,8 @@ main() {
   test_custom_security_profile_container
   test_rootless_container_cache
   test_rootless_resource_pod
+  test_rootless_resource_ingress
+  test_rootless_deployment_ingress
   test_login_rootless_bind_mount
   test_bottle_deploy
   test_resource_namespace

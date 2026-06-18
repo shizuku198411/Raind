@@ -30,7 +30,7 @@ Droplet
 container process
 ```
 
-For Pod manifests, `spec.hostUsers: false` enables rootless execution for Pod-managed containers. Rootless Pod app containers are currently managed as Pod members while using their own rootless runtime namespaces; they do not yet join the infra container's existing network, IPC, UTS, and user namespaces in the same way as rootful Pod app containers.
+For Pod manifests, `spec.hostUsers: false` enables rootless execution for Pod-managed containers. Rootless Pod app containers share the infra container's network, IPC, and UTS namespaces so Service and Ingress resources can target the Pod IP, while each app container keeps its own user namespace mapping. Raind configures the shared Pod network namespace so rootless workloads can bind normal service ports such as 80.
 
 ## Spec annotation
 
@@ -112,7 +112,7 @@ Rootless containers use a user namespace. Droplet constructs `syscall.SysProcAtt
 
 - namespace clone flags
 - UID/GID mappings
-- `GidMappingsEnableSetgroups=false` for rootless maps
+- `GidMappingsEnableSetgroups=true` for rootless maps, so images that call `initgroups(3)` while dropping privileges can still start workers inside the mapped GID range
 - `Credential{Uid: 0, Gid: 0, NoSetGroups: true}` so the init process starts as root inside the new user namespace
 
 The init process then performs the normal container setup path: mount preparation, rootfs setup, `pivot_root`, capabilities/seccomp/AppArmor handling, and final `exec`.
@@ -147,6 +147,8 @@ Current implementation notes:
 
 - the Pod infra container and app containers are created with rootless annotations
 - app containers are tracked as Pod members
-- app containers use their own rootless runtime namespaces instead of joining the infra container's existing namespace paths
+- app containers pre-join the infra container's network, IPC, and UTS namespaces before creating their own user namespace
+- app containers keep independent user namespace mappings instead of sharing the infra container's user namespace
+- app containers set the shared network namespace's `net.ipv4.ip_unprivileged_port_start` to `0` before entering their rootless user namespace, allowing ports such as 80 without granting host root privileges
 
-Full Kubernetes-style user namespace sharing for Pod members still needs additional design around infra container ownership, namespace path access, Service endpoint behavior, and ID-map compatibility across app containers.
+Full Kubernetes-style shared user namespace behavior for Pod members still needs additional design around infra container ownership and ID-map compatibility across app containers.

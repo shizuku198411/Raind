@@ -69,7 +69,7 @@ func TestContainerServiceCreateRootlessPodInfraAddsUserNamespace(t *testing.T) {
 	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
 }
 
-func TestContainerServiceCreateRootlessPodMemberCreatesIsolatedRootlessNamespaces(t *testing.T) {
+func TestContainerServiceCreateRootlessPodMemberJoinsPodNetworkNamespaces(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	nsDir := t.TempDir()
 	networkNS := nsDir + "/net"
@@ -103,15 +103,15 @@ func TestContainerServiceCreateRootlessPodMemberCreatesIsolatedRootlessNamespace
 
 	require.NoError(t, err)
 	assert.Contains(t, deps.runtime.specModel.Namespace, "mount")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "network")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "uts")
-	assert.Contains(t, deps.runtime.specModel.Namespace, "ipc")
 	assert.Contains(t, deps.runtime.specModel.Namespace, "pid")
 	assert.Contains(t, deps.runtime.specModel.Namespace, "cgroup")
 	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
-	assert.NotContains(t, deps.runtime.specModel.NSPath, "network="+networkNS)
-	assert.NotContains(t, deps.runtime.specModel.NSPath, "ipc="+ipcNS)
-	assert.NotContains(t, deps.runtime.specModel.NSPath, "uts="+utsNS)
+	assert.NotContains(t, deps.runtime.specModel.Namespace, "network")
+	assert.NotContains(t, deps.runtime.specModel.Namespace, "uts")
+	assert.NotContains(t, deps.runtime.specModel.Namespace, "ipc")
+	assert.Contains(t, deps.runtime.specModel.NSPath, "network="+networkNS)
+	assert.Contains(t, deps.runtime.specModel.NSPath, "ipc="+ipcNS)
+	assert.Contains(t, deps.runtime.specModel.NSPath, "uts="+utsNS)
 	assert.NotContains(t, deps.runtime.specModel.NSPath, "user="+userNS)
 }
 
