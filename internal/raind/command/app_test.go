@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"raind/internal/raind/buildinfo"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
@@ -71,4 +73,25 @@ func TestCompletionRejectsUnsupportedShell(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported shell")
+}
+
+func TestVersionIncludesCommit(t *testing.T) {
+	origVersion := buildinfo.Version
+	origCommit := buildinfo.Commit
+	t.Cleanup(func() {
+		buildinfo.Version = origVersion
+		buildinfo.Commit = origCommit
+	})
+
+	buildinfo.Version = "1.2.3"
+	buildinfo.Commit = "abc1234"
+
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "--version"})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "raind version 1.2.3 (commit: abc1234)")
 }
