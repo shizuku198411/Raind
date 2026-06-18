@@ -94,6 +94,42 @@ func TestReconcileCleansPreviousServiceRulesByServiceID(t *testing.T) {
 	assert.Contains(t, commands.commands, "iptables -t nat -D OUTPUT -m addrtype --dst-type LOCAL -p tcp --dport 80 -j RAIND-SVC-svc-1-80")
 	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SVC-svc-1-80")
 	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SVC-svc-1-80")
+	assert.Contains(t, commands.commands, "iptables -D FORWARD -j RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -F RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -X RAIND-FWD-svc-1")
+}
+
+func TestApplyRulesUsesManagedForwardChain(t *testing.T) {
+	commands := &recordedCommandFactory{}
+	controller := &ServiceController{commandFactory: commands}
+	svc := ssm.ServiceInfo{
+		ServiceId: "svc-1",
+		Name:      "web",
+		Namespace: "default",
+		Type:      ssm.ServiceTypeNodePort,
+		Ports: []ssm.ServicePort{{
+			Port:       8080,
+			TargetPort: 80,
+			Protocol:   "tcp",
+		}},
+	}
+	endpoints := []svcEndpoint{{
+		Addr:          "10.166.0.2",
+		HostInterface: "eth0",
+		Bridge:        "rbr0",
+	}}
+
+	require.NoError(t, controller.applyRules(svc, endpoints))
+
+	assert.Contains(t, commands.commands, "iptables -N RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -F RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -D FORWARD -j RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -I FORWARD 1 -j RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i rbr0 -o rbr0 -p tcp -m conntrack --ctstate DNAT --dport 80 -d 10.166.0.2 -j ACCEPT")
+	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
+	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
+	assert.NotContains(t, commands.commands, "iptables -A FORWARD -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
+	assert.NotContains(t, commands.commands, "iptables -A FORWARD -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
 }
 
 func TestServiceTypeDefaultsToClusterIP(t *testing.T) {
