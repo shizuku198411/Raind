@@ -19,7 +19,7 @@ func NewApp() *cli.App {
 	app := &cli.App{
 		Name:    "raind",
 		Usage:   "raind container runtime",
-		Version: buildinfo.Version,
+		Version: buildinfo.VersionString(),
 		Commands: []*cli.Command{
 			{
 				Name:  "container",
