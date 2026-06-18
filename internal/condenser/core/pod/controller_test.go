@@ -1,8 +1,10 @@
 package pod
 
 import (
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"raind/internal/condenser/core/container"
 	"raind/internal/condenser/store/psm"
@@ -131,12 +133,96 @@ func TestPodControllerReplacesUserStoppedReplicaSetPod(t *testing.T) {
 	}
 }
 
+func TestFilterReplicaSetPodsUsesExplicitOwner(t *testing.T) {
+	rs := psm.ReplicaSetInfo{
+		ReplicaSetId: "rs-1",
+		Spec:         psm.ReplicaSetSpec{TemplateId: "tpl-1"},
+	}
+	pods := []psm.PodInfo{
+		{PodId: "owned", TemplateId: "tpl-1", OwnerKind: psm.OwnerKindReplicaSet, OwnerId: "rs-1"},
+		{PodId: "other-owner", TemplateId: "tpl-1", OwnerKind: psm.OwnerKindReplicaSet, OwnerId: "rs-2"},
+		{PodId: "unowned-ambiguous", TemplateId: "tpl-1"},
+	}
+
+	got := filterReplicaSetPods(rs, pods, map[string]int{"tpl-1": 2})
+
+	if len(got) != 1 || got[0].PodId != "owned" {
+		t.Fatalf("expected only explicitly owned pod, got %#v", got)
+	}
+}
+
+func TestPodControllerTreatsMultipleRunningInfraAsUnhealthy(t *testing.T) {
+	controller := &PodController{
+		containerHandler: &fakeControllerContainerService{
+			containersByPod: map[string][]container.ContainerState{
+				"pod-1": {
+					{ContainerId: "infra-1", Name: utils.PodInfraContainerNamePrefix + "pod-1", PodId: "pod-1", State: psm.ContainerStateRunning},
+					{ContainerId: "infra-2", Name: utils.PodInfraContainerNamePrefix + "pod-1-copy", PodId: "pod-1", State: psm.ContainerStateRunning},
+					{ContainerId: "member-1", Name: "web", PodId: "pod-1", State: psm.ContainerStateRunning},
+				},
+			},
+		},
+	}
+
+	state, err := controller.getPodInfraState("pod-1")
+
+	if err != nil {
+		t.Fatalf("getPodInfraState returned error: %v", err)
+	}
+	if state != "duplicate" {
+		t.Fatalf("expected duplicate infra state, got %q", state)
+	}
+}
+
+func TestPodControllerRecordsBackoffWhenReplicaSetReconcileFails(t *testing.T) {
+	psmHandler := &fakeControllerPsm{
+		replicaSets: []psm.ReplicaSetInfo{{
+			ReplicaSetId: "rs-1",
+			Spec: psm.ReplicaSetSpec{
+				Name:       "demo-web",
+				Namespace:  "demo",
+				Replicas:   1,
+				TemplateId: "tpl-1",
+			},
+		}},
+		templates: []psm.PodTemplateInfo{{TemplateId: "tpl-1"}},
+		pods:      map[string]psm.PodInfo{},
+	}
+	podHandler := &fakeControllerPodService{
+		createPodId: "pod-new",
+		startErr:    errors.New("start failed"),
+	}
+	controller := &PodController{
+		psmHandler:       psmHandler,
+		podHandler:       podHandler,
+		containerHandler: &fakeControllerContainerService{},
+		interval:         time.Second,
+	}
+
+	if err := controller.reconcileOnce(); err != nil {
+		t.Fatalf("reconcileOnce returned error: %v", err)
+	}
+
+	if psmHandler.reconcileAttempts["rs-1"] != 1 {
+		t.Fatalf("expected reconcile attempt to be recorded, got %d", psmHandler.reconcileAttempts["rs-1"])
+	}
+	if psmHandler.reconcileErrors["rs-1"] != "start failed" {
+		t.Fatalf("expected reconcile error to be recorded, got %q", psmHandler.reconcileErrors["rs-1"])
+	}
+}
+
 type fakeControllerPsm struct {
 	pods        map[string]psm.PodInfo
 	templates   []psm.PodTemplateInfo
 	replicaSets []psm.ReplicaSetInfo
 	deployments []psm.DeploymentInfo
 	removedPods map[string]bool
+	owners      map[string]struct {
+		kind string
+		id   string
+	}
+	reconcileAttempts map[string]int
+	reconcileErrors   map[string]string
 }
 
 func (f *fakeControllerPsm) StorePod(psm.StorePodRequest) error                 { return nil }
@@ -158,8 +244,28 @@ func (f *fakeControllerPsm) GetReplicaSet(string) (psm.ReplicaSetInfo, error) {
 func (f *fakeControllerPsm) GetReplicaSetList() ([]psm.ReplicaSetInfo, error) {
 	return f.replicaSets, nil
 }
-func (f *fakeControllerPsm) IsTemplateReferenced(string) (bool, error)        { return true, nil }
-func (f *fakeControllerPsm) UpdateReplicaSetReplicas(string, int) error       { return nil }
+func (f *fakeControllerPsm) IsTemplateReferenced(string) (bool, error)  { return true, nil }
+func (f *fakeControllerPsm) UpdateReplicaSetReplicas(string, int) error { return nil }
+func (f *fakeControllerPsm) UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error {
+	if f.reconcileAttempts == nil {
+		f.reconcileAttempts = make(map[string]int)
+	}
+	if f.reconcileErrors == nil {
+		f.reconcileErrors = make(map[string]string)
+	}
+	f.reconcileAttempts[replicaSetId] = attempt
+	f.reconcileErrors[replicaSetId] = lastError
+	return nil
+}
+func (f *fakeControllerPsm) ClearReplicaSetReconcileStatus(replicaSetId string) error {
+	if f.reconcileAttempts != nil {
+		delete(f.reconcileAttempts, replicaSetId)
+	}
+	if f.reconcileErrors != nil {
+		delete(f.reconcileErrors, replicaSetId)
+	}
+	return nil
+}
 func (f *fakeControllerPsm) RemoveReplicaSet(string) error                    { return nil }
 func (f *fakeControllerPsm) StoreDeployment(string, psm.DeploymentSpec) error { return nil }
 func (f *fakeControllerPsm) GetDeployment(string) (psm.DeploymentInfo, error) {
@@ -182,7 +288,20 @@ func (f *fakeControllerPsm) RemovePod(podId string) error {
 	delete(f.pods, podId)
 	return nil
 }
-func (f *fakeControllerPsm) UpdatePod(string, string) error            { return nil }
+func (f *fakeControllerPsm) UpdatePod(string, string) error { return nil }
+func (f *fakeControllerPsm) UpdatePodOwner(podId, ownerKind, ownerId string) error {
+	if f.owners == nil {
+		f.owners = make(map[string]struct {
+			kind string
+			id   string
+		})
+	}
+	f.owners[podId] = struct {
+		kind string
+		id   string
+	}{kind: ownerKind, id: ownerId}
+	return nil
+}
 func (f *fakeControllerPsm) UpdatePodStoppedByUser(string, bool) error { return nil }
 func (f *fakeControllerPsm) UpdatePodNamespaces(int, string, string, string, string, string) error {
 	return nil
@@ -218,6 +337,7 @@ type fakeControllerPodService struct {
 	recreatePodId       string
 	recreatedTemplateId string
 	startedPodId        string
+	startErr            error
 }
 
 func (f *fakeControllerPodService) Create(ServiceCreateModel) (string, error) { return "", nil }
@@ -231,6 +351,9 @@ func (f *fakeControllerPodService) CreateFromTemplate(templateId, name string) (
 	return f.createPodId, nil
 }
 func (f *fakeControllerPodService) Start(podId string) (string, error) {
+	if f.startErr != nil {
+		return "", f.startErr
+	}
 	f.startedPodId = podId
 	return podId, nil
 }

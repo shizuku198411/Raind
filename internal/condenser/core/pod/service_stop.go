@@ -1,6 +1,9 @@
 package pod
 
-import "raind/internal/condenser/core/container"
+import (
+	"raind/internal/condenser/core/container"
+	"raind/internal/condenser/store/psm"
+)
 
 // == service: stop pod sandbox ==
 func (s *PodService) Stop(podId string) (string, error) {
@@ -16,7 +19,7 @@ func (s *PodService) Stop(podId string) (string, error) {
 			return "", err
 		}
 	}
-	if err := s.psmHandler.UpdatePod(podId, "stopped"); err != nil {
+	if err := s.psmHandler.UpdatePod(podId, psm.PodStateStopped); err != nil {
 		return "", err
 	}
 	if err := s.psmHandler.UpdatePodStoppedByUser(podId, true); err != nil {

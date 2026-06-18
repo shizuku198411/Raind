@@ -1,5 +1,7 @@
 package psm
 
+import "time"
+
 type PsmStoreHandler interface {
 	SetPodState() error
 }
@@ -16,6 +18,8 @@ type PsmHandler interface {
 	GetReplicaSetList() ([]ReplicaSetInfo, error)
 	IsTemplateReferenced(templateId string) (bool, error)
 	UpdateReplicaSetReplicas(replicaSetId string, replicas int) error
+	UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error
+	ClearReplicaSetReconcileStatus(replicaSetId string) error
 	RemoveReplicaSet(replicaSetId string) error
 	StoreDeployment(deploymentId string, spec DeploymentSpec) error
 	GetDeployment(deploymentId string) (DeploymentInfo, error)
@@ -25,6 +29,7 @@ type PsmHandler interface {
 	RemoveDeployment(deploymentId string) error
 	RemovePod(podId string) error
 	UpdatePod(podId string, state string) error
+	UpdatePodOwner(podId, ownerKind, ownerId string) error
 	UpdatePodStoppedByUser(podId string, stopped bool) error
 	UpdatePodNamespaces(ownerPid int, podId, networkNS, ipcNS, utsNS, userNS string) error
 	ResetPodNamespaces(podId string) error

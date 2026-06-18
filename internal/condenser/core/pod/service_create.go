@@ -99,7 +99,7 @@ func (s *PodService) createWithTemplate(templateId string, createParameter Servi
 		Name:        createParameter.Name,
 		Namespace:   createParameter.Namespace,
 		UID:         createParameter.UID,
-		State:       "created",
+		State:       psm.PodStateCreated,
 		NetworkNS:   createParameter.NetworkNS,
 		IPCNS:       createParameter.IPCNS,
 		UTSNS:       createParameter.UTSNS,

@@ -2,9 +2,24 @@ package psm
 
 import "time"
 
+const (
+	PodStateCreated  = "created"
+	PodStateRunning  = "running"
+	PodStateStopped  = "stopped"
+	PodStateDegraded = "degraded"
+
+	ContainerStateCreated = "created"
+	ContainerStateRunning = "running"
+	ContainerStateStopped = "stopped"
+
+	OwnerKindReplicaSet = "ReplicaSet"
+)
+
 type PodInfo struct {
 	PodId         string            `json:"podId"`
 	TemplateId    string            `json:"templateId,omitempty"`
+	OwnerKind     string            `json:"ownerKind,omitempty"`
+	OwnerId       string            `json:"ownerId,omitempty"`
 	Name          string            `json:"name"`
 	Namespace     string            `json:"namespace"`
 	UID           string            `json:"uid"`
@@ -26,6 +41,8 @@ type PodInfo struct {
 type StorePodRequest struct {
 	PodId       string
 	TemplateId  string
+	OwnerKind   string
+	OwnerId     string
 	Name        string
 	Namespace   string
 	UID         string
@@ -81,9 +98,12 @@ type ReplicaSetSpec struct {
 }
 
 type ReplicaSetInfo struct {
-	ReplicaSetId string         `json:"replicaSetId"`
-	Spec         ReplicaSetSpec `json:"spec"`
-	CreatedAt    time.Time      `json:"createdAt"`
+	ReplicaSetId       string         `json:"replicaSetId"`
+	Spec               ReplicaSetSpec `json:"spec"`
+	CreatedAt          time.Time      `json:"createdAt"`
+	ReconcileAttempt   int            `json:"reconcileAttempt,omitempty"`
+	LastReconcileError string         `json:"lastReconcileError,omitempty"`
+	NextReconcileAt    time.Time      `json:"nextReconcileAt,omitempty"`
 }
 
 type DeploymentSpec struct {

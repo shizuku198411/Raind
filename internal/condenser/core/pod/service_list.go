@@ -1,5 +1,7 @@
 package pod
 
+import "raind/internal/condenser/store/psm"
+
 // == service: list pods ==
 func (s *PodService) GetPodList() ([]PodState, error) {
 	podList, err := s.psmHandler.GetPodList()
@@ -84,7 +86,7 @@ func (s *PodService) getContainerCounts(podId, templateId string) (int, int, err
 			continue
 		}
 		nonInfra++
-		if c.State == "running" {
+		if c.State == psm.ContainerStateRunning {
 			running++
 		}
 	}

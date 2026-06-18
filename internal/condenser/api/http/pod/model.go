@@ -173,29 +173,35 @@ type ScaleReplicaSetResponse struct {
 }
 
 type ReplicaSetSummary struct {
-	ReplicaSetId string            `json:"replicaSetId"`
-	Name         string            `json:"name"`
-	Namespace    string            `json:"namespace"`
-	Replicas     int               `json:"replicas"`
-	Desired      int               `json:"desired"`
-	Current      int               `json:"current"`
-	Ready        int               `json:"ready"`
-	TemplateId   string            `json:"templateId"`
-	Selector     map[string]string `json:"selector,omitempty"`
-	CreatedAt    string            `json:"createdAt"`
+	ReplicaSetId       string            `json:"replicaSetId"`
+	Name               string            `json:"name"`
+	Namespace          string            `json:"namespace"`
+	Replicas           int               `json:"replicas"`
+	Desired            int               `json:"desired"`
+	Current            int               `json:"current"`
+	Ready              int               `json:"ready"`
+	TemplateId         string            `json:"templateId"`
+	Selector           map[string]string `json:"selector,omitempty"`
+	ReconcileAttempt   int               `json:"reconcileAttempt,omitempty"`
+	LastReconcileError string            `json:"lastReconcileError,omitempty"`
+	NextReconcileAt    string            `json:"nextReconcileAt,omitempty"`
+	CreatedAt          string            `json:"createdAt"`
 }
 
 type ReplicaSetDetail struct {
-	ReplicaSetId string              `json:"replicaSetId"`
-	Name         string              `json:"name"`
-	Namespace    string              `json:"namespace"`
-	Replicas     int                 `json:"replicas"`
-	Desired      int                 `json:"desired"`
-	Current      int                 `json:"current"`
-	Ready        int                 `json:"ready"`
-	Selector     map[string]string   `json:"selector,omitempty"`
-	Template     psm.PodTemplateSpec `json:"template"`
-	CreatedAt    string              `json:"createdAt"`
+	ReplicaSetId       string              `json:"replicaSetId"`
+	Name               string              `json:"name"`
+	Namespace          string              `json:"namespace"`
+	Replicas           int                 `json:"replicas"`
+	Desired            int                 `json:"desired"`
+	Current            int                 `json:"current"`
+	Ready              int                 `json:"ready"`
+	Selector           map[string]string   `json:"selector,omitempty"`
+	Template           psm.PodTemplateSpec `json:"template"`
+	ReconcileAttempt   int                 `json:"reconcileAttempt,omitempty"`
+	LastReconcileError string              `json:"lastReconcileError,omitempty"`
+	NextReconcileAt    string              `json:"nextReconcileAt,omitempty"`
+	CreatedAt          string              `json:"createdAt"`
 }
 
 type StartPodResponse struct {
