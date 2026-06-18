@@ -70,6 +70,7 @@ func (c *PodController) reconcileOnce() error {
 		}
 		for _, rs := range replicaSets {
 			podList := podsByTemplate[rs.Spec.TemplateId]
+			podList = c.cleanupStoppedManagedPods(podList)
 			current := len(podList)
 			if current < rs.Spec.Replicas {
 				for i := 0; i < rs.Spec.Replicas-current; i++ {
@@ -216,6 +217,20 @@ func (c *PodController) reconcileOnce() error {
 	}
 
 	return nil
+}
+
+func (c *PodController) cleanupStoppedManagedPods(pods []psm.PodInfo) []psm.PodInfo {
+	active := make([]psm.PodInfo, 0, len(pods))
+	for _, p := range pods {
+		if !p.StoppedByUser {
+			active = append(active, p)
+			continue
+		}
+		if err := c.deletePod(p); err != nil {
+			log.Printf("pod controller delete stopped managed pod failed: podId=%s err=%v", p.PodId, err)
+		}
+	}
+	return active
 }
 
 func (c *PodController) reconcileDeployments() error {
