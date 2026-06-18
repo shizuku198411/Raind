@@ -1,11 +1,14 @@
 package service
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"raind/internal/condenser/core/container"
+	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/ssm"
 	"raind/internal/condenser/utils"
@@ -36,6 +39,87 @@ func (n *noopCommandExecutor) SetStdout(w io.Writer)          {}
 func (n *noopCommandExecutor) SetStderr(w io.Writer)          {}
 func (n *noopCommandExecutor) SetStdin(r io.Reader)           {}
 
+type fakeEndpointContainerService struct {
+	containersByPod map[string][]container.ContainerState
+}
+
+func (f *fakeEndpointContainerService) Create(container.ServiceCreateModel) (string, error) {
+	return "", nil
+}
+func (f *fakeEndpointContainerService) Start(container.ServiceStartModel) (string, error) {
+	return "", nil
+}
+func (f *fakeEndpointContainerService) Delete(container.ServiceDeleteModel) (string, error) {
+	return "", nil
+}
+func (f *fakeEndpointContainerService) Stop(container.ServiceStopModel) (string, error) {
+	return "", nil
+}
+func (f *fakeEndpointContainerService) Exec(container.ServiceExecModel) error { return nil }
+func (f *fakeEndpointContainerService) GetContainerList() ([]container.ContainerState, error) {
+	return nil, nil
+}
+func (f *fakeEndpointContainerService) GetContainerById(string) (container.ContainerState, error) {
+	return container.ContainerState{}, nil
+}
+func (f *fakeEndpointContainerService) GetContainerStats(string) (container.ContainerStats, error) {
+	return container.ContainerStats{}, nil
+}
+func (f *fakeEndpointContainerService) ListContainerStats() ([]container.ContainerStats, error) {
+	return nil, nil
+}
+func (f *fakeEndpointContainerService) GetContainersByPodId(podId string) ([]container.ContainerState, error) {
+	return f.containersByPod[podId], nil
+}
+func (f *fakeEndpointContainerService) GetContainerLogPath(string) (string, error) {
+	return "", nil
+}
+func (f *fakeEndpointContainerService) GetContainerSpec(string) (map[string]any, error) {
+	return nil, nil
+}
+func (f *fakeEndpointContainerService) InspectContainer(string) (container.ContainerInspect, error) {
+	return container.ContainerInspect{}, nil
+}
+func (f *fakeEndpointContainerService) GetLogWithTailLines(string, int) ([]byte, error) {
+	return nil, nil
+}
+
+type fakeEndpointIpam struct {
+	addresses map[string]struct {
+		host   string
+		bridge string
+		addr   string
+	}
+}
+
+func (f *fakeEndpointIpam) Allocate(string, string) (string, error)     { return "", nil }
+func (f *fakeEndpointIpam) Release(string) error                        { return nil }
+func (f *fakeEndpointIpam) GetNetworkList() ([]ipam.NetworkList, error) { return nil, nil }
+func (f *fakeEndpointIpam) StoreBridge(string) (string, string, error)  { return "", "", nil }
+func (f *fakeEndpointIpam) RemoveBridge(string) error                   { return nil }
+func (f *fakeEndpointIpam) GetRuntimeSubnet() (string, error)           { return "", nil }
+func (f *fakeEndpointIpam) GetDefaultInterface() (string, error)        { return "", nil }
+func (f *fakeEndpointIpam) GetDefaultInterfaceAddr() (string, error)    { return "", nil }
+func (f *fakeEndpointIpam) GetBridgeAddr(string) (string, error)        { return "", nil }
+func (f *fakeEndpointIpam) GetDnsProxyInfo() (string, string, []string, error) {
+	return "", "", nil, nil
+}
+func (f *fakeEndpointIpam) GetContainerAddress(containerId string) (string, string, string, error) {
+	info, ok := f.addresses[containerId]
+	if !ok {
+		return "", "", "", fmt.Errorf("container address not found: %s", containerId)
+	}
+	return info.host, info.bridge, info.addr, nil
+}
+func (f *fakeEndpointIpam) GetInfoByIp(string) (string, string, error)        { return "", "", nil }
+func (f *fakeEndpointIpam) SetForwardInfo(string, int, int, string) error     { return nil }
+func (f *fakeEndpointIpam) GetForwardInfo(string) ([]ipam.ForwardInfo, error) { return nil, nil }
+func (f *fakeEndpointIpam) GetPoolList() ([]ipam.Pool, error)                 { return nil, nil }
+func (f *fakeEndpointIpam) GetNetworkInfoById(string) (string, ipam.Allocation, error) {
+	return "", ipam.Allocation{}, nil
+}
+func (f *fakeEndpointIpam) GetVethById(string) (string, error) { return "", nil }
+
 func TestAddClusterIPJumpRuleUsesClusterIPDestination(t *testing.T) {
 	commands := &recordedCommandFactory{}
 	controller := &ServiceController{commandFactory: commands}
@@ -45,6 +129,74 @@ func TestAddClusterIPJumpRuleUsesClusterIPDestination(t *testing.T) {
 	require.Len(t, commands.commands, 2)
 	assert.Contains(t, commands.commands[0], "-A PREROUTING -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-abc-80")
 	assert.Contains(t, commands.commands[1], "-A OUTPUT -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-abc-80")
+}
+
+func TestBuildEndpointsOnlyIncludesReadyPods(t *testing.T) {
+	dir := t.TempDir()
+	psmHandler := psm.NewPsmManager(psm.NewPsmStore(filepath.Join(dir, "psm.json")))
+	require.NoError(t, psmHandler.StorePodTemplate("tpl-1", psm.PodTemplateSpec{
+		Containers: []psm.ContainerTemplateSpec{{Name: "web", Image: "nginx:latest"}},
+	}))
+
+	controller := &ServiceController{
+		psmHandler: psmHandler,
+		containerHandler: &fakeEndpointContainerService{
+			containersByPod: map[string][]container.ContainerState{
+				"pod-ready": {
+					{ContainerId: "infra-ready", Name: utils.PodInfraContainerNamePrefix + "pod-ready", State: "running"},
+					{ContainerId: "member-ready", Name: buildPodMemberName("web", "pod-ready"), State: "running"},
+				},
+				"pod-degraded": {
+					{ContainerId: "infra-degraded", Name: utils.PodInfraContainerNamePrefix + "pod-degraded", State: "running"},
+					{ContainerId: "member-degraded", Name: buildPodMemberName("web", "pod-degraded"), State: "running"},
+				},
+				"pod-stopped-by-user": {
+					{ContainerId: "infra-stopped-by-user", Name: utils.PodInfraContainerNamePrefix + "pod-stopped-by-user", State: "running"},
+					{ContainerId: "member-stopped-by-user", Name: buildPodMemberName("web", "pod-stopped-by-user"), State: "running"},
+				},
+				"pod-infra-stopped": {
+					{ContainerId: "infra-stopped", Name: utils.PodInfraContainerNamePrefix + "pod-infra-stopped", State: "stopped"},
+					{ContainerId: "member-infra-stopped", Name: buildPodMemberName("web", "pod-infra-stopped"), State: "running"},
+				},
+				"pod-member-stopped": {
+					{ContainerId: "infra-member-stopped", Name: utils.PodInfraContainerNamePrefix + "pod-member-stopped", State: "running"},
+					{ContainerId: "member-stopped", Name: buildPodMemberName("web", "pod-member-stopped"), State: "stopped"},
+				},
+				"pod-member-missing": {
+					{ContainerId: "infra-member-missing", Name: utils.PodInfraContainerNamePrefix + "pod-member-missing", State: "running"},
+				},
+			},
+		},
+		ipamHandler: &fakeEndpointIpam{
+			addresses: map[string]struct {
+				host   string
+				bridge string
+				addr   string
+			}{
+				"infra-ready": {host: "eth0", bridge: "rbr0", addr: "10.166.0.2"},
+			},
+		},
+	}
+	svc := ssm.ServiceInfo{
+		Namespace: "default",
+		Selector:  map[string]string{"app": "web"},
+	}
+	pods := []psm.PodInfo{
+		{PodId: "pod-ready", TemplateId: "tpl-1", Namespace: "default", State: "running", Labels: map[string]string{"app": "web"}},
+		{PodId: "pod-degraded", TemplateId: "tpl-1", Namespace: "default", State: "degraded", Labels: map[string]string{"app": "web"}},
+		{PodId: "pod-stopped-by-user", TemplateId: "tpl-1", Namespace: "default", State: "running", StoppedByUser: true, Labels: map[string]string{"app": "web"}},
+		{PodId: "pod-infra-stopped", TemplateId: "tpl-1", Namespace: "default", State: "running", Labels: map[string]string{"app": "web"}},
+		{PodId: "pod-member-stopped", TemplateId: "tpl-1", Namespace: "default", State: "running", Labels: map[string]string{"app": "web"}},
+		{PodId: "pod-member-missing", TemplateId: "tpl-1", Namespace: "default", State: "running", Labels: map[string]string{"app": "web"}},
+	}
+
+	endpoints, err := controller.buildEndpoints(svc, pods)
+
+	require.NoError(t, err)
+	require.Len(t, endpoints, 1)
+	assert.Equal(t, "10.166.0.2", endpoints[0].Addr)
+	assert.Equal(t, "eth0", endpoints[0].HostInterface)
+	assert.Equal(t, "rbr0", endpoints[0].Bridge)
 }
 
 func TestReconcileCleansPreviousServiceRulesByServiceID(t *testing.T) {

@@ -108,8 +108,8 @@ func (c *ServiceController) buildEndpoints(svc ssm.ServiceInfo, pods []psm.PodIn
 		if !labelsMatch(svc.Selector, p.Labels) {
 			continue
 		}
-		infraId, err := c.getInfraContainerId(p.PodId)
-		if err != nil {
+		infraId, ok := c.getReadyInfraContainerId(p)
+		if !ok {
 			continue
 		}
 		host, bridge, addr, err := c.ipamHandler.GetContainerAddress(infraId)
@@ -126,6 +126,79 @@ func (c *ServiceController) buildEndpoints(svc ssm.ServiceInfo, pods []psm.PodIn
 		return endpoints[i].Addr < endpoints[j].Addr
 	})
 	return endpoints, nil
+}
+
+func (c *ServiceController) getReadyInfraContainerId(p psm.PodInfo) (string, bool) {
+	if p.State != "running" || p.StoppedByUser {
+		return "", false
+	}
+
+	containers, err := c.containerHandler.GetContainersByPodId(p.PodId)
+	if err != nil {
+		return "", false
+	}
+	if len(containers) == 0 {
+		return "", false
+	}
+
+	var (
+		infraId       string
+		runningByName = map[string]struct{}{}
+		memberCount   int
+	)
+	for _, cinfo := range containers {
+		if strings.HasPrefix(cinfo.Name, utils.PodInfraContainerNamePrefix) {
+			if cinfo.State != "running" {
+				return "", false
+			}
+			infraId = cinfo.ContainerId
+			continue
+		}
+		memberCount++
+		if cinfo.State != "running" {
+			return "", false
+		}
+		runningByName[cinfo.Name] = struct{}{}
+	}
+	if infraId == "" || memberCount == 0 {
+		return "", false
+	}
+	if !c.expectedMembersRunning(p, runningByName) {
+		return "", false
+	}
+	return infraId, true
+}
+
+func (c *ServiceController) expectedMembersRunning(p psm.PodInfo, runningByName map[string]struct{}) bool {
+	if p.TemplateId == "" {
+		return true
+	}
+	tpl, err := c.psmHandler.GetPodTemplate(p.TemplateId)
+	if err != nil {
+		return false
+	}
+
+	for _, spec := range tpl.Spec.Containers {
+		if spec.Name == "" {
+			continue
+		}
+		expectedName := buildPodMemberName(spec.Name, p.PodId)
+		if _, ok := runningByName[expectedName]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func buildPodMemberName(baseName, podId string) string {
+	if baseName == "" {
+		return baseName
+	}
+	suffix := podId
+	if len(suffix) > 8 {
+		suffix = suffix[len(suffix)-8:]
+	}
+	return baseName + "-" + suffix
 }
 
 func (c *ServiceController) getInfraContainerId(podId string) (string, error) {
