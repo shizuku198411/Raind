@@ -175,6 +175,18 @@ func (c *ServiceController) buildStateKey(svc ssm.ServiceInfo, endpoints []svcEn
 }
 
 func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpoint) error {
+	forwardChain := c.serviceForwardChainName(svc.ServiceId)
+	if err := c.ensureForwardChain(forwardChain); err != nil {
+		return err
+	}
+	if err := c.flushForwardChain(forwardChain); err != nil {
+		return err
+	}
+	_ = c.deleteForwardJumpRule(forwardChain)
+	if err := c.addForwardJumpRule(forwardChain); err != nil {
+		return err
+	}
+
 	for _, port := range svc.Ports {
 		if port.Port == 0 || port.TargetPort == 0 {
 			continue
@@ -208,7 +220,7 @@ func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpo
 					return err
 				}
 			}
-			_ = c.addForwardRules(ep, port.TargetPort, proto)
+			_ = c.addForwardRules(forwardChain, ep, port.TargetPort, proto)
 		}
 	}
 	return nil
@@ -240,6 +252,14 @@ func (c *ServiceController) serviceChainName(serviceId string, port int) string 
 	return "RAIND-SVC-" + id + "-" + itoa(port)
 }
 
+func (c *ServiceController) serviceForwardChainName(serviceId string) string {
+	id := serviceId
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return "RAIND-FWD-" + id
+}
+
 func (c *ServiceController) serviceExists(serviceId string, list []ssm.ServiceInfo) bool {
 	for _, s := range list {
 		if s.ServiceId == serviceId {
@@ -258,6 +278,11 @@ func (c *ServiceController) cleanupService(serviceId string) {
 }
 
 func (c *ServiceController) cleanupServiceRules(svc ssm.ServiceInfo) {
+	forwardChain := c.serviceForwardChainName(svc.ServiceId)
+	_ = c.deleteForwardJumpRule(forwardChain)
+	_ = c.flushForwardChain(forwardChain)
+	_ = c.deleteForwardChain(forwardChain)
+
 	for _, p := range svc.Ports {
 		if p.Port == 0 {
 			continue
@@ -284,6 +309,33 @@ func (c *ServiceController) ensureChain(chain string) error {
 func (c *ServiceController) flushChain(chain string) error {
 	cmd := c.commandFactory.Command("iptables", "-t", "nat", "-F", chain)
 	return cmd.Run()
+}
+
+func (c *ServiceController) ensureForwardChain(chain string) error {
+	cmd := c.commandFactory.Command("iptables", "-N", chain)
+	_ = cmd.Run()
+	return nil
+}
+
+func (c *ServiceController) flushForwardChain(chain string) error {
+	cmd := c.commandFactory.Command("iptables", "-F", chain)
+	return cmd.Run()
+}
+
+func (c *ServiceController) deleteForwardChain(chain string) error {
+	cmd := c.commandFactory.Command("iptables", "-X", chain)
+	return cmd.Run()
+}
+
+func (c *ServiceController) addForwardJumpRule(chain string) error {
+	cmd := c.commandFactory.Command("iptables", "-I", "FORWARD", "1", "-j", chain)
+	return cmd.Run()
+}
+
+func (c *ServiceController) deleteForwardJumpRule(chain string) error {
+	cmd := c.commandFactory.Command("iptables", "-D", "FORWARD", "-j", chain)
+	_ = cmd.Run()
+	return nil
 }
 
 func (c *ServiceController) deleteNodePortJumpRule(chain, proto string, port int) error {
@@ -376,12 +428,12 @@ func (c *ServiceController) addEndpointRule(chain, addr string, targetPort int, 
 	return cmd.Run()
 }
 
-func (c *ServiceController) addForwardRules(ep svcEndpoint, targetPort int, proto string) error {
+func (c *ServiceController) addForwardRules(chain string, ep svcEndpoint, targetPort int, proto string) error {
 	if ep.HostInterface == "" || ep.Bridge == "" {
 		return nil
 	}
 	hairpinCmd := []string{
-		"-I", "FORWARD", "1",
+		"-A", chain,
 		"-i", ep.Bridge,
 		"-o", ep.Bridge,
 		"-p", proto,
@@ -394,7 +446,7 @@ func (c *ServiceController) addForwardRules(ep svcEndpoint, targetPort int, prot
 	_ = c.commandFactory.Command("iptables", hairpinCmd...).Run()
 
 	inCmd := []string{
-		"-A", "FORWARD",
+		"-A", chain,
 		"-i", ep.HostInterface,
 		"-o", ep.Bridge,
 		"-p", proto,
@@ -405,7 +457,7 @@ func (c *ServiceController) addForwardRules(ep svcEndpoint, targetPort int, prot
 	_ = c.commandFactory.Command("iptables", inCmd...).Run()
 
 	outCmd := []string{
-		"-A", "FORWARD",
+		"-A", chain,
 		"-o", ep.HostInterface,
 		"-i", ep.Bridge,
 		"-p", proto,
