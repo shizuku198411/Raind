@@ -3,6 +3,8 @@ package container
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
@@ -35,6 +37,43 @@ func rootlessConfigFromSpec(containerSpec spec.Spec) (spec.RootlessConfigObject,
 func isRootlessSpec(containerSpec spec.Spec) bool {
 	_, ok := rootlessConfigFromSpec(containerSpec)
 	return ok
+}
+
+func isNonInitialUserNamespace(uidMap string) bool {
+	for _, line := range strings.Split(uidMap, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		containerID, err := strconv.ParseUint(fields[0], 10, 64)
+		if err != nil || containerID != 0 {
+			continue
+		}
+		hostID, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return false
+		}
+		return hostID != 0
+	}
+	return false
+}
+
+func userNamespaceDiffersFromInit(selfUIDMap string, initUIDMap string) bool {
+	selfUIDMap = strings.TrimSpace(selfUIDMap)
+	initUIDMap = strings.TrimSpace(initUIDMap)
+	return selfUIDMap != "" && initUIDMap != "" && selfUIDMap != initUIDMap
+}
+
+func currentUserNamespaceDiffersFromInit() bool {
+	selfUIDMap, err := os.ReadFile("/proc/self/uid_map")
+	if err != nil {
+		return false
+	}
+	initUIDMap, err := os.ReadFile("/proc/1/uid_map")
+	if err != nil {
+		return false
+	}
+	return userNamespaceDiffersFromInit(string(selfUIDMap), string(initUIDMap))
 }
 
 func rootlessModeOrDefault(mode string) string {

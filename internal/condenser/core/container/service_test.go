@@ -69,6 +69,71 @@ func TestContainerServiceCreateRootlessPodInfraAddsUserNamespace(t *testing.T) {
 	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
 }
 
+func TestContainerServiceCreateRootlessPodMemberCreatesIsolatedRootlessNamespaces(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	nsDir := t.TempDir()
+	networkNS := nsDir + "/net"
+	ipcNS := nsDir + "/ipc"
+	utsNS := nsDir + "/uts"
+	userNS := nsDir + "/user"
+	for _, path := range []string{networkNS, ipcNS, utsNS, userNS} {
+		require.NoError(t, os.WriteFile(path, []byte{}, 0o644))
+	}
+	deps.psm.pods["pod-1"] = psm.PodInfo{
+		PodId:     "pod-1",
+		OwnerPid:  1234,
+		NetworkNS: networkNS,
+		IPCNS:     ipcNS,
+		UTSNS:     utsNS,
+		UserNS:    userNS,
+		Rootless:  true,
+	}
+
+	err := deps.service.createContainerSpec(
+		"cid-1",
+		ServiceCreateModel{Image: "alpine:3.20", Name: "app", PodId: "pod-1", Rootless: true},
+		"library/alpine",
+		"3.20",
+		image.ImageConfigFile{},
+		"raind0",
+		"10.166.0.2/24",
+		"10.166.0.254",
+		"pod-1",
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, deps.runtime.specModel.Namespace, "mount")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "network")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "uts")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "ipc")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "pid")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "cgroup")
+	assert.Contains(t, deps.runtime.specModel.Namespace, "user")
+	assert.NotContains(t, deps.runtime.specModel.NSPath, "network="+networkNS)
+	assert.NotContains(t, deps.runtime.specModel.NSPath, "ipc="+ipcNS)
+	assert.NotContains(t, deps.runtime.specModel.NSPath, "uts="+utsNS)
+	assert.NotContains(t, deps.runtime.specModel.NSPath, "user="+userNS)
+}
+
+func TestContainerServiceJoinContainerCreatesFromHostForRootlessPodMember(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	nsDir := t.TempDir()
+	userNS := nsDir + "/user"
+	require.NoError(t, os.WriteFile(userNS, []byte{}, 0o644))
+	deps.psm.pods["pod-1"] = psm.PodInfo{
+		PodId:    "pod-1",
+		OwnerPid: os.Getpid(),
+		UserNS:   userNS,
+		Rootless: true,
+	}
+
+	err := deps.service.joinContainer("cid-1", false, "pod-1")
+
+	require.NoError(t, err)
+	assert.True(t, deps.runtime.createCalled)
+	assert.Equal(t, 0, deps.runtime.createPodPid)
+}
+
 func TestContainerServiceCreateRejectsPerContainerRootlessForRootfulPod(t *testing.T) {
 	deps := newContainerServiceTestDeps(true)
 	deps.psm.pods["pod-1"] = psm.PodInfo{PodId: "pod-1", Rootless: false}
@@ -227,6 +292,7 @@ type fakeRuntimeHandler struct {
 	createCalled bool
 	deleteCalled bool
 	startedID    string
+	createPodPid int
 	execModel    runtime.ExecModel
 	specModel    runtime.SpecModel
 	specErr      error
@@ -239,8 +305,9 @@ func (f *fakeRuntimeHandler) Spec(m runtime.SpecModel) error {
 	f.specModel = m
 	return f.specErr
 }
-func (f *fakeRuntimeHandler) Create(runtime.CreateModel, int) error {
+func (f *fakeRuntimeHandler) Create(_ runtime.CreateModel, podPid int) error {
 	f.createCalled = true
+	f.createPodPid = podPid
 	return f.createErr
 }
 func (f *fakeRuntimeHandler) Start(m runtime.StartModel) error {

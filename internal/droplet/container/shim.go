@@ -88,7 +88,13 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	// 2. prepare init subcommand
 	stage = "prepare_init_command"
 	initArgs := append([]string{"init", containerId, opt.Fifo}, opt.Entrypoint...)
-	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
+	cmdName := utils.SelfBinPath()
+	cmdArgs := initArgs
+	if userNS := userNamespacePath(spec); userNS != "" {
+		cmdName = "nsenter"
+		cmdArgs = append([]string{"--user=" + userNS, "--", utils.SelfBinPath()}, initArgs...)
+	}
+	cmd := c.commandFactory.Command(cmdName, cmdArgs...)
 
 	// 3. configure stdio.
 	// TTY mode keeps the existing pty/socket attach path.

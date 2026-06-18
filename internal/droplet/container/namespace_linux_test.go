@@ -106,6 +106,18 @@ func TestBuildNamespaceJoinTargetsIncludesPathNamespacesInStableOrder(t *testing
 	}, targets)
 }
 
+func TestUserNamespacePathReturnsPathNamespace(t *testing.T) {
+	containerSpec := spec.Spec{
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{
+				{Type: "user", Path: "/proc/1/ns/user"},
+			},
+		},
+	}
+
+	assert.Equal(t, "/proc/1/ns/user", userNamespacePath(containerSpec))
+}
+
 func TestBuildRootUserNamespaceIDMapReturnsIdentityMapOnlyWhenUserNamespaceEnabled(t *testing.T) {
 	// == exercise ==
 	uidMap, gidMap := buildRootUserNamespaceIDMap(namespaceConfig{user: true})

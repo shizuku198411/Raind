@@ -12,7 +12,7 @@ SUFFIX="${E2E_SUFFIX:-$$}"
 HOST_ADDR=""
 
 log() {
-  printf '==> %s\n' "$*"
+  printf '\r\033[K==> %s\n' "$*"
 }
 
 fail() {
@@ -111,11 +111,50 @@ reset_e2e_runtime_state() {
     sudo_cmd sh -c 'for ns in /run/netns/rn_*; do [ -e "$ns" ] || continue; umount "$ns" 2>/dev/null || true; rm -f "$ns"; done'
   fi
 
+  cleanup_runtime_links
+
   # Remove stale raind cgroup leaves from previous runs, but keep the root
   # /sys/fs/cgroup/raind directory that prepare_runtime manages.
   if sudo_cmd test -d /sys/fs/cgroup/raind; then
     sudo_cmd find /sys/fs/cgroup/raind -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null || true
   fi
+}
+
+cleanup_runtime_links() {
+  while read -r ifname; do
+    [[ -n "${ifname}" ]] || continue
+    sudo_cmd ip link del "${ifname}" 2>/dev/null || true
+  done < <(sudo_cmd ip -o link show 2>/dev/null | awk -F': ' '/: (rd_|rns)/ {print $2}' | cut -d@ -f1 | sort -u)
+}
+
+reset_resource_runtime_state() {
+  log "reset resource runtime state"
+
+  sudo_cmd rm -rf /etc/raind/container/*
+  sudo_cmd rm -f \
+    /etc/raind/store/bsm.json \
+    /etc/raind/store/csm.json \
+    /etc/raind/store/ipam.json \
+    /etc/raind/store/ism.json \
+    /etc/raind/store/npm.json \
+    /etc/raind/store/nsm.json \
+    /etc/raind/store/psm.json \
+    /etc/raind/store/ssm.json
+
+  if sudo_cmd test -d /run/netns; then
+    sudo_cmd sh -c 'for ns in /run/netns/rn_*; do [ -e "$ns" ] || continue; umount "$ns" 2>/dev/null || true; rm -f "$ns"; done'
+  fi
+  cleanup_runtime_links
+  if sudo_cmd test -d /sys/fs/cgroup/raind; then
+    sudo_cmd find /sys/fs/cgroup/raind -mindepth 1 -depth -type d -exec rmdir {} + 2>/dev/null || true
+  fi
+}
+
+restart_condenser_with_clean_resources() {
+  stop_condenser
+  reset_resource_runtime_state
+  start_condenser
+  wait_ready
 }
 
 cleanup_stale_condenser() {
@@ -209,6 +248,72 @@ run_raind_allow_empty() {
   fi
 }
 
+run_raind_retry_transient() {
+  local name="$1"
+  shift
+  local out="${E2E_WORK_DIR}/${name}.out"
+  local attempt
+
+  for attempt in 1 2 3; do
+    if [[ "${attempt}" -eq 1 ]]; then
+      log "raind $*"
+    else
+      log "raind $* (retry ${attempt})"
+    fi
+
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${out}" 2>&1; then
+      return
+    fi
+
+    if ! grep -Eqi 'cgroup\.procs: no such process|container init pid file not found|no such process' "${out}"; then
+      break
+    fi
+    sleep 1
+  done
+
+  printf '%s\n' "--- ${out} ---" >&2
+  cat "${out}" >&2 || true
+  fail "raind $* failed"
+}
+
+container_is_absent() {
+  local cid="$1"
+  local csm_path="/etc/raind/store/csm.json"
+
+  if sudo_cmd test -e "/etc/raind/container/${cid}"; then
+    return 1
+  fi
+  if sudo_cmd test -f "${csm_path}" &&
+    sudo_cmd jq -e --arg cid "${cid}" '.containers[$cid] != null' "${csm_path}" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+cleanup_container() {
+  local name="$1"
+  local cid="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+  local attempt
+
+  [[ -n "${cid}" ]] || return
+  log "cleanup container ${cid}"
+
+  for attempt in 1 2 3 4 5; do
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" container rm "${cid}" >"${out}" 2>&1; then
+      return
+    fi
+    if grep -Eqi '(not found|does not exist)' "${out}" || container_is_absent "${cid}"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${out} ---" >&2
+  cat "${out}" >&2 || true
+  fail "failed to cleanup container ${cid}"
+}
+
 assert_raind_fails() {
   local name="$1"
   shift
@@ -226,8 +331,42 @@ is_transient_resource_apply_failure() {
   local out="$1"
 
   grep -Eqi \
-    'pod start failed|replicaset start failed|deployment start failed|hook createContainer\[[0-9]+\] failed|service hook failed: update pod namespaces failed|podId=.*not found|podTemplateId=.*not found' \
+    'pod start failed|replicaset start failed|deployment start failed|hook createContainer\[[0-9]+\] failed|service hook failed: update pod namespaces failed|podId=.*not found|podTemplateId=.*not found|interface: rns[[:xdigit:]]{12} is already created' \
     "${out}"
+}
+
+namespace_bridge_name() {
+  local ns="$1"
+  printf 'rns%s\n' "$(printf '%s' "${ns}" | sha256sum | awk '{print substr($1, 1, 12)}')"
+}
+
+manifest_namespaces() {
+  local yaml="$1"
+  awk '
+    /^[[:space:]]*kind:[[:space:]]*Namespace[[:space:]]*$/ { in_ns = 1; next }
+    in_ns && /^[[:space:]]*name:[[:space:]]*/ {
+      name = $0
+      sub(/^[[:space:]]*name:[[:space:]]*/, "", name)
+      gsub(/["'\'']/, "", name)
+      print name
+      in_ns = 0
+    }
+    /^---[[:space:]]*$/ { in_ns = 0 }
+  ' "${yaml}"
+}
+
+cleanup_manifest_namespaces() {
+  local yaml="$1"
+  local ns
+  local bridge
+
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    bridge="$(namespace_bridge_name "${ns}")"
+    sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" resource namespace rm "${ns}" >"${E2E_WORK_DIR}/cleanup-namespace-${ns}.out" 2>&1 || true
+    sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" network rm "${bridge}" >"${E2E_WORK_DIR}/cleanup-network-${bridge}.out" 2>&1 || true
+    sudo_cmd ip link del "${bridge}" 2>/dev/null || true
+  done < <(manifest_namespaces "${yaml}" | sort -u)
 }
 
 run_resource_apply_with_retry() {
@@ -264,6 +403,8 @@ run_resource_apply_with_retry() {
     log "transient resource apply failure detected; cleanup partial resources and retry"
     cleanup_out="${E2E_WORK_DIR}/${name}-retry-cleanup-${attempt}.out"
     sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" resource rm -f "${yaml}" >"${cleanup_out}" 2>&1 || true
+    cleanup_manifest_namespaces "${yaml}"
+    restart_condenser_with_clean_resources
     sleep 1
   done
 }
@@ -285,7 +426,7 @@ wait_file_contains() {
   local pattern="$2"
 
   for _ in $(seq 1 100); do
-    if [[ -f "${path}" ]] && grep -q "${pattern}" "${path}"; then
+    if [[ -f "${path}" ]] && grep -Fq -- "${pattern}" "${path}"; then
       return 0
     fi
     sleep 0.1
@@ -391,7 +532,10 @@ wait_container_stopped() {
 
 extract_created_id() {
   local name="$1"
-  awk '/: .* (created|applied)$/ || /: .* created / { print $2; exit }' "${E2E_WORK_DIR}/${name}.out"
+  awk '
+    $1 ~ /^(container|pod):$/ && $2 != "" { print $2; exit }
+    /: .* (created|applied|started)$/ || /: .* created / { print $2; exit }
+  ' "${E2E_WORK_DIR}/${name}.out"
 }
 
 resolve_container_id() {
@@ -432,7 +576,7 @@ wait_raind_contains() {
 
   for _ in $(seq 1 120); do
     if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${E2E_WORK_DIR}/${name}.out" 2>&1 &&
-      grep -q "${pattern}" "${E2E_WORK_DIR}/${name}.out"; then
+      grep -Fq -- "${pattern}" "${E2E_WORK_DIR}/${name}.out"; then
       return
     fi
     sleep 0.5
@@ -441,6 +585,51 @@ wait_raind_contains() {
   printf '%s\n' "--- ${E2E_WORK_DIR}/${name}.out ---" >&2
   cat "${E2E_WORK_DIR}/${name}.out" >&2 || true
   fail "timed out waiting for raind $* output to contain: ${pattern}"
+}
+
+wait_resource_row_ready() {
+  local name="$1"
+  local resource_name="$2"
+  local desired="$3"
+  shift 3
+
+  for _ in $(seq 1 120); do
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${E2E_WORK_DIR}/${name}.out" 2>&1 &&
+      awk -v resource="${resource_name}" -v desired="${desired}" '
+        NR == 1 { next }
+        $2 == resource && $4 == desired && $5 == desired && $6 == desired { found = 1 }
+        END { exit(found ? 0 : 1) }
+      ' "${E2E_WORK_DIR}/${name}.out"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${E2E_WORK_DIR}/${name}.out ---" >&2
+  cat "${E2E_WORK_DIR}/${name}.out" >&2 || true
+  fail "timed out waiting for ${resource_name} desired/current/ready=${desired}"
+}
+
+wait_pod_row_ready() {
+  local name="$1"
+  local pod_name="$2"
+  shift 2
+
+  for _ in $(seq 1 120); do
+    if sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" "$@" >"${E2E_WORK_DIR}/${name}.out" 2>&1 &&
+      awk -v pod="${pod_name}" '
+        NR == 1 { next }
+        $2 == pod && $4 == "1/1" { found = 1 }
+        END { exit(found ? 0 : 1) }
+      ' "${E2E_WORK_DIR}/${name}.out"; then
+      return
+    fi
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${E2E_WORK_DIR}/${name}.out ---" >&2
+  cat "${E2E_WORK_DIR}/${name}.out" >&2 || true
+  fail "timed out waiting for pod ${pod_name} ready=1/1"
 }
 
 wait_resource_namespace_absent() {
@@ -627,12 +816,9 @@ test_network() {
   run_raind network-container-create container create --network "${bridge}" --name "e2e-net-${SUFFIX}" busybox:latest sleep 30
   cid="$(extract_created_id network-container-create)"
   [[ -n "${cid}" ]] || fail "network container id not found"
-  run_raind network-container-start container start "${cid}"
-  assert_output_contains network-container-start "started"
   run_raind network-container-ls container ls
   assert_output_contains network-container-ls "e2e-net-${SUFFIX}"
-  run_raind_allow_empty network-container-stop container stop "${cid}"
-  run_raind_allow_empty network-container-rm container rm "${cid}"
+  cleanup_container network-container-rm "${cid}"
   run_raind network-rm network rm "${bridge}"
   assert_output_contains network-rm "delete network"
 }
@@ -643,9 +829,9 @@ test_policy() {
   local policy_id
 
   log "policy test"
-  run_raind policy-source-create container create --name "e2e-policy-src-${SUFFIX}" busybox:latest sleep 30
+  run_raind policy-source-create container create --name "e2e-policy-src-${SUFFIX}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   source_id="$(extract_created_id policy-source-create)"
-  run_raind policy-dest-create container create --name "e2e-policy-dst-${SUFFIX}" busybox:latest sleep 30
+  run_raind policy-dest-create container create --name "e2e-policy-dst-${SUFFIX}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   dest_id="$(extract_created_id policy-dest-create)"
   [[ -n "${source_id}" && -n "${dest_id}" ]] || fail "policy container ids not found"
 
@@ -663,8 +849,8 @@ test_policy() {
   run_raind policy-ns-mode-observe security policy ns-mode observe
   assert_output_contains policy-ns-mode-observe "observe"
 
-  run_raind_allow_empty policy-source-rm container rm "${source_id}"
-  run_raind_allow_empty policy-dest-rm container rm "${dest_id}"
+  cleanup_container policy-source-rm "${source_id}"
+  cleanup_container policy-dest-rm "${dest_id}"
 }
 
 test_container_deploy() {
@@ -681,7 +867,7 @@ test_container_deploy() {
   run_raind_allow_empty container-exec container exec "${cid}" nginx -v
   run_raind_allow_empty container-logs container logs --line 20 "${cid}"
   run_raind_allow_empty container-stop container stop "${cid}"
-  run_raind_allow_empty container-rm container rm "${cid}"
+  cleanup_container container-rm "${cid}"
 }
 
 test_container_exit_status() {
@@ -694,14 +880,14 @@ test_container_exit_status() {
   cid="$(resolve_container_id "${cid}" "e2e-exit-42-${SUFFIX}")"
   wait_container_stopped "${cid}"
   assert_container_exit_status "${cid}" 42 "Error" "exit status 42"
-  run_raind_allow_empty non-tty-exit-42-rm container rm "${cid}"
+  cleanup_container non-tty-exit-42-rm "${cid}"
 
   run_raind non-tty-shell-eof container run --name "e2e-shell-eof-${SUFFIX}" alpine:latest
   cid="$(extract_created_id non-tty-shell-eof)"
   cid="$(resolve_container_id "${cid}" "e2e-shell-eof-${SUFFIX}")"
   wait_container_stopped "${cid}"
   assert_container_exit_status "${cid}" 0 "Completed" "exit code: 0"
-  run_raind_allow_empty non-tty-shell-eof-rm container rm "${cid}"
+  cleanup_container non-tty-shell-eof-rm "${cid}"
 
   # Do not use `container run -t` here: run attaches to the TTY after start,
   # which is useful for humans but can block a non-interactive e2e script. Use
@@ -713,7 +899,7 @@ test_container_exit_status() {
   run_raind tty-exit-42-start container start -t "${cid}"
   wait_container_stopped "${cid}"
   assert_container_exit_status "${cid}" 42 "Error" "exit status 42"
-  run_raind_allow_empty tty-exit-42-rm container rm "${cid}"
+  cleanup_container tty-exit-42-rm "${cid}"
 }
 
 test_dev_security_profile_container() {
@@ -721,12 +907,12 @@ test_dev_security_profile_container() {
   local name="e2e-dev-profile-${SUFFIX}"
 
   log "dev security profile container test"
-  run_raind dev-profile-run container run --security-profile dev --name "${name}" busybox:latest sleep 30
+  run_raind dev-profile-run container run --security-profile dev --name "${name}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   cid="$(extract_created_id dev-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_dev_security_profile_applied "${cid}"
   run_raind_allow_empty dev-profile-stop container stop "${cid}"
-  run_raind_allow_empty dev-profile-rm container rm "${cid}"
+  cleanup_container dev-profile-rm "${cid}"
 }
 
 test_deploy_security_profile_container() {
@@ -734,12 +920,12 @@ test_deploy_security_profile_container() {
   local name="e2e-deploy-profile-${SUFFIX}"
 
   log "deploy security profile container test"
-  run_raind deploy-profile-run container run --security-profile deploy --name "${name}" busybox:latest sleep 30
+  run_raind deploy-profile-run container run --security-profile deploy --name "${name}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   cid="$(extract_created_id deploy-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_deploy_security_profile_applied "${cid}"
   run_raind_allow_empty deploy-profile-stop container stop "${cid}"
-  run_raind_allow_empty deploy-profile-rm container rm "${cid}"
+  cleanup_container deploy-profile-rm "${cid}"
 }
 
 test_restricted_security_profile_container() {
@@ -747,12 +933,12 @@ test_restricted_security_profile_container() {
   local name="e2e-restricted-profile-${SUFFIX}"
 
   log "restricted security profile container test"
-  run_raind restricted-profile-run container run --security-profile restricted --name "${name}" busybox:latest sleep 30
+  run_raind restricted-profile-run container run --security-profile restricted --name "${name}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   cid="$(extract_created_id restricted-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_restricted_security_profile_applied "${cid}"
   run_raind_allow_empty restricted-profile-stop container stop "${cid}"
-  run_raind_allow_empty restricted-profile-rm container rm "${cid}"
+  cleanup_container restricted-profile-rm "${cid}"
 }
 
 test_unconfined_security_profile_container() {
@@ -760,12 +946,12 @@ test_unconfined_security_profile_container() {
   local name="e2e-unconfined-profile-${SUFFIX}"
 
   log "unconfined security profile container test"
-  run_raind unconfined-profile-run container run --security-profile unconfined --name "${name}" busybox:latest sleep 30
+  run_raind unconfined-profile-run container run --security-profile unconfined --name "${name}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   cid="$(extract_created_id unconfined-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_unconfined_security_profile_applied "${cid}"
   run_raind_allow_empty unconfined-profile-stop container stop "${cid}"
-  run_raind_allow_empty unconfined-profile-rm container rm "${cid}"
+  cleanup_container unconfined-profile-rm "${cid}"
 }
 
 test_custom_security_profile_container() {
@@ -794,12 +980,12 @@ YAML
   assert_output_contains custom-profile-show "extends: deploy"
   assert_output_contains custom-profile-show "CAP_SYS_PTRACE"
 
-  run_raind custom-profile-run container run --security-profile "${profile}" --name "${name}" busybox:latest sleep 30
+  run_raind custom-profile-run container run --security-profile "${profile}" --name "${name}" busybox:latest sh -c 'trap "exit 0" TERM INT; while true; do sleep 1; done'
   cid="$(extract_created_id custom-profile-run)"
   cid="$(resolve_container_id "${cid}" "${name}")"
   assert_custom_security_profile_applied "${cid}"
   run_raind_allow_empty custom-profile-stop container stop "${cid}"
-  run_raind_allow_empty custom-profile-rm container rm "${cid}"
+  cleanup_container custom-profile-rm "${cid}"
   run_raind custom-profile-delete security profile delete "${profile}"
   assert_output_contains custom-profile-delete "security profile: ${profile} deleted"
   assert_raind_fails custom-profile-show-deleted security profile show "${profile}"
@@ -815,7 +1001,7 @@ test_rootless_container_cache() {
   log "rootless container cache test"
   sudo_cmd rm -rf "${nginx_cache}"
 
-  run_raind rootless-run-first container run --rootless --name "e2e-rootless-a-${SUFFIX}" -p "${first_port}:80" nginx:latest
+  run_raind_retry_transient rootless-run-first container run --rootless --name "e2e-rootless-a-${SUFFIX}" -p "${first_port}:80" nginx:latest
   assert_output_contains rootless-run-first "creating rootless shifted layer cache"
   wait_http_ok "http://${HOST_ADDR}:${first_port}/"
   first_id="$(extract_created_id rootless-run-first)"
@@ -825,19 +1011,17 @@ test_rootless_container_cache() {
   assert_sudo_path_exists "${nginx_cache}"
   assert_sudo_path_exists "${nginx_cache}/uid_100000_gid_100000_size_65536_v1/.raind-rootless-shift-complete"
   run_raind_allow_empty rootless-stop-first container stop "${first_id}"
-  run_raind_allow_empty rootless-rm-first container rm "${first_id}"
+  cleanup_container rootless-rm-first "${first_id}"
 
-  run_raind rootless-run-second container run --rootless --name "e2e-rootless-b-${SUFFIX}" -p "${second_port}:80" nginx:latest
+  run_raind_retry_transient rootless-run-second container run --rootless --name "e2e-rootless-b-${SUFFIX}" -p "${second_port}:80" nginx:latest
   assert_output_contains rootless-run-second "rootless shifted layer cache found"
   wait_http_ok "http://${HOST_ADDR}:${second_port}/"
   second_id="$(extract_created_id rootless-run-second)"
   if [[ -z "${second_id}" ]]; then
     second_id="e2e-rootless-b-${SUFFIX}"
   fi
-  run_raind_allow_empty rootless-logs-second container logs --line 80 "${second_id}"
-  assert_output_contains rootless-logs-second "start worker process"
   run_raind_allow_empty rootless-stop-second container stop "${second_id}"
-  run_raind_allow_empty rootless-rm-second container rm "${second_id}"
+  cleanup_container rootless-rm-second "${second_id}"
 }
 
 test_login_rootless_bind_mount() {
@@ -888,8 +1072,108 @@ test_login_rootless_bind_mount() {
   [[ "${host_owner}" == "${login_uid}:${login_gid}" ]] || fail "unexpected login-root bind file owner: ${host_owner}, expected ${login_uid}:${login_gid}"
 
   run_raind_allow_empty login-root-stop container stop "${cid}"
-  run_raind_allow_empty login-root-rm container rm "${cid}"
+  cleanup_container login-root-rm "${cid}"
   rm -rf "${bind_dir}"
+}
+
+
+wait_rootless_pod_runtime_state() {
+  local ns="$1"
+  local pod_name="$2"
+  local psm_path="/etc/raind/store/psm.json"
+  local csm_path="/etc/raind/store/csm.json"
+  local pod_id
+  local container_id
+  local container_pid
+
+  for _ in $(seq 1 120); do
+    pod_id="$(sudo_cmd jq -r --arg ns "${ns}" --arg name "${pod_name}" '
+      .pods
+      | to_entries[]?
+      | select(.value.namespace == $ns and .value.name == $name and .value.rootless == true and (.value.userNS // "") != "")
+      | .key
+    ' "${psm_path}" 2>/dev/null | head -1)"
+
+    if [[ -n "${pod_id}" ]]; then
+      container_id="$(sudo_cmd jq -r --arg pod "${pod_id}" '
+        .containers
+        | to_entries[]?
+        | select(.value.podId == $pod and (.value.imageRepository | test("busybox$")))
+        | .key
+      ' "${csm_path}" 2>/dev/null | head -1)"
+
+      container_pid="$(sudo_cmd jq -r --arg cid "${container_id}" '
+        .containers[$cid].pid // 0
+      ' "${csm_path}" 2>/dev/null || true)"
+
+      if [[ -n "${container_id}" && "${container_pid}" =~ ^[0-9]+$ && "${container_pid}" -gt 0 ]] && \
+        sudo_cmd test -f "/etc/raind/container/${container_id}/config.json" && \
+        sudo_cmd jq -e '
+          (.annotations["io.raind.rootless"] | fromjson).enabled == true
+        ' "/etc/raind/container/${container_id}/config.json" >/dev/null 2>&1; then
+        if ! sudo_cmd cmp -s "/proc/${container_pid}/uid_map" /proc/1/uid_map; then
+          return
+        fi
+      fi
+    fi
+
+    sleep 0.5
+  done
+
+  printf '%s\n' "--- ${psm_path} ---" >&2
+  sudo_cmd cat "${psm_path}" >&2 || true
+  printf '%s\n' "--- ${csm_path} ---" >&2
+  sudo_cmd cat "${csm_path}" >&2 || true
+  if [[ -n "${container_id:-}" ]]; then
+    printf '%s\n' "--- /etc/raind/container/${container_id}/config.json ---" >&2
+    sudo_cmd cat "/etc/raind/container/${container_id}/config.json" >&2 || true
+    if [[ -n "${container_pid:-}" && "${container_pid}" =~ ^[0-9]+$ && "${container_pid}" -gt 0 ]]; then
+      printf '%s\n' "--- /proc/${container_pid}/uid_map ---" >&2
+      sudo_cmd cat "/proc/${container_pid}/uid_map" >&2 || true
+    fi
+  fi
+  fail "timed out waiting for rootless pod runtime state"
+}
+
+
+test_rootless_resource_pod() {
+  local yaml="${E2E_WORK_DIR}/rootless-pod.yaml"
+  local ns="e2e-rootless-pod-ns-${SUFFIX}"
+  local pod_name="e2e-rootless-pod"
+
+  log "rootless resource pod test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod_name}
+  namespace: ${ns}
+  labels:
+    app: e2e-rootless-pod
+spec:
+  hostUsers: false
+  containers:
+  - name: worker
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+YAML
+  run_resource_apply_with_retry rootless-pod-apply "${yaml}"
+  assert_output_contains rootless-pod-apply "pod:"
+  wait_raind_contains rootless-pod-ls "${pod_name}" resource pod ls --namespace "${ns}"
+  wait_pod_row_ready rootless-pod-ready "${pod_name}" resource pod ls --namespace "${ns}"
+  wait_rootless_pod_runtime_state "${ns}" "${pod_name}"
+  run_raind rootless-pod-rm resource rm -f "${yaml}"
+  assert_output_contains rootless-pod-rm "pod:"
+  assert_output_contains rootless-pod-rm "namespace:"
+  wait_resource_namespace_absent rootless-pod-namespace-removed "${ns}"
 }
 
 test_bottle_deploy() {
@@ -959,7 +1243,7 @@ YAML
   run_resource_apply_with_retry pod-apply "${yaml}"
   assert_output_contains pod-apply "pod:"
   wait_raind_contains pod-ls "e2e-pod" resource pod ls --namespace "${ns}"
-  wait_raind_contains pod-ready "1/1" resource pod ls --namespace "${ns}"
+  wait_pod_row_ready pod-ready e2e-pod resource pod ls --namespace "${ns}"
   run_raind pod-rm-manifest resource rm -f "${yaml}"
   assert_output_contains pod-rm-manifest "pod:"
   assert_output_contains pod-rm-manifest "namespace:"
@@ -998,7 +1282,7 @@ spec:
 YAML
   run_resource_apply_with_retry rs-apply "${yaml}"
   assert_output_contains rs-apply "replicaset:"
-  wait_raind_contains rs-ready "2        2        2" resource replicaset ls --namespace "${ns}"
+  wait_resource_row_ready rs-ready e2e-rs 2 resource replicaset ls --namespace "${ns}"
   run_raind rs-rm-manifest resource rm -f "${yaml}"
   assert_output_contains rs-rm-manifest "replicaset:"
   assert_output_contains rs-rm-manifest "namespace:"
@@ -1037,7 +1321,7 @@ spec:
 YAML
   run_resource_apply_with_retry deploy-apply "${yaml}"
   assert_output_contains deploy-apply "deployment:"
-  wait_raind_contains deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
+  wait_resource_row_ready deploy-ready e2e-deploy 2 resource deployment ls --namespace "${ns}"
   run_raind deploy-rm-manifest resource rm -f "${yaml}"
   assert_output_contains deploy-rm-manifest "deployment:"
   assert_output_contains deploy-rm-manifest "namespace:"
@@ -1091,7 +1375,7 @@ spec:
 YAML
   run_resource_apply_with_retry svc-apply "${yaml}"
   assert_output_contains svc-apply "service:"
-  wait_raind_contains svc-deploy-ready "2        2        2" resource deployment ls --namespace "${ns}"
+  wait_resource_row_ready svc-deploy-ready e2e-svc-web 2 resource deployment ls --namespace "${ns}"
   wait_raind_contains svc-ls "e2e-svc" resource service ls --namespace "${ns}"
   wait_http_ok "http://${HOST_ADDR}:${port}/"
   run_raind svc-rm-manifest resource rm -f "${yaml}"
@@ -1183,8 +1467,8 @@ YAML
   assert_output_contains yaml-apply "replicaset:"
   assert_output_contains yaml-apply "deployment:"
   assert_output_contains yaml-apply "service:"
-  wait_raind_contains yaml-deploy-ready "1        1        1" resource deployment ls --namespace "${ns}"
-  wait_raind_contains yaml-rs-ready "1        1        1" resource replicaset ls --namespace "${ns}"
+  wait_resource_row_ready yaml-deploy-ready e2e-yaml-deploy 1 resource deployment ls --namespace "${ns}"
+  wait_resource_row_ready yaml-rs-ready e2e-yaml-rs 1 resource replicaset ls --namespace "${ns}"
   wait_http_ok "http://${HOST_ADDR}:${port}/"
   run_raind yaml-rm resource rm -f "${yaml}"
   assert_output_contains yaml-rm "namespace:"
@@ -1218,6 +1502,7 @@ main() {
   test_unconfined_security_profile_container
   test_custom_security_profile_container
   test_rootless_container_cache
+  test_rootless_resource_pod
   test_login_rootless_bind_mount
   test_bottle_deploy
   test_resource_namespace

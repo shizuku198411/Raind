@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 )
 
 func JsonToString(v any) (string, error) {
@@ -18,15 +19,37 @@ func StringToJson(s string, v any) error {
 }
 
 func WriteJsonToFile(path string, v any) error {
-	f, err := os.Create(path)
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpPath := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
 	encoder := json.NewEncoder(f)
 	encoder.SetIndent("", "    ")
-	return encoder.Encode(v)
+	if err := encoder.Encode(v); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func ReadJsonFile(path string, v any) error {

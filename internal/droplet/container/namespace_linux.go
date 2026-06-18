@@ -271,23 +271,22 @@ func buildNamespaceJoinTargets(spec spec.Spec) []namespaceJoinTarget {
 	return targets
 }
 
-// joinExistingNamespaces applies setns for any namespaces that specify Path in
-// the OCI spec. User namespaces are intentionally ignored here; they must be
-// handled by the higher-level runtime to avoid setns EINVAL in Go.
+func userNamespacePath(spec spec.Spec) string {
+	return buildNamespaceConfig(spec).userPath
+}
+
+// joinExistingNamespaces applies setns for non-user namespaces that specify
+// Path in the OCI spec. User namespace joining is handled before exec through
+// nsenter so the Go runtime does not call setns(CLONE_NEWUSER) after it has
+// started multiple threads.
 func joinExistingNamespaces(spec spec.Spec) error {
 	targets := buildNamespaceJoinTargets(spec)
 	for _, t := range targets {
-		if t.name == "user" {
-			continue
-		}
 		f, err := os.Open(t.path)
 		if err != nil {
 			return fmt.Errorf("open %s namespace: %w", t.name, err)
 		}
 		nstype := 0
-		if t.name == "user" {
-			nstype = unix.CLONE_NEWUSER
-		}
 		if err := unix.Setns(int(f.Fd()), nstype); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("setns %s: %w", t.name, err)
