@@ -44,6 +44,7 @@ func runRemove(ctx *cli.Context) error {
 }
 
 func printDeletedResources(result resource.DeleteResponseModel) {
+	printDeleteWarnings(result.Warnings)
 	for _, ns := range result.Namespaces {
 		fmt.Printf("namespace: %s removed\n", ns.Name)
 	}
@@ -84,5 +85,11 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 	}
 	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("no resources removed")
+	}
+}
+
+func printDeleteWarnings(warnings []resource.WarningModel) {
+	for _, warning := range warnings {
+		fmt.Printf("warning: %s\n", formatWarning(warning.Kind, warning.Namespace, warning.Name, warning.Field, warning.Message))
 	}
 }

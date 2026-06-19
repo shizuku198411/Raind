@@ -58,7 +58,7 @@ It is intentionally smaller than Kubernetes. It focuses on the runtime mechanics
 Pod-related state lives in PSM:
 
 ```text
-/etc/raind/store/psm.json
+/etc/raind/store/resource/pod/psm.json
 ```
 
 Main objects:
@@ -73,7 +73,7 @@ Main objects:
 Container state remains in CSM:
 
 ```text
-/etc/raind/store/csm.json
+/etc/raind/store/container/csm.json
 ```
 
 The relationship is:
@@ -543,8 +543,8 @@ raind container spec <container>
 sudo iptables -t nat -nvL
 ip addr show
 sudo ls -l /proc/<infra-pid>/ns
-sudo cat /etc/raind/store/psm.json
-sudo cat /etc/raind/store/csm.json
+sudo cat /etc/raind/store/resource/pod/psm.json
+sudo cat /etc/raind/store/container/csm.json
 ```
 
 
