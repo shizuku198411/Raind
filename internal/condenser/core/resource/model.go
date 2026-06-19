@@ -8,6 +8,7 @@ type ApplyResult struct {
 	Ingresses   []ApplyIngressResult    `json:"ingresses"`
 	Namespaces  []ApplyNamespaceResult  `json:"namespaces"`
 	ConfigMaps  []ApplyConfigMapResult  `json:"configMaps"`
+	Secrets     []ApplySecretResult     `json:"secrets"`
 	Warnings    []Warning               `json:"warnings,omitempty"`
 }
 
@@ -43,6 +44,12 @@ type ApplyConfigMapResult struct {
 	Namespace   string `json:"namespace"`
 }
 
+type ApplySecretResult struct {
+	SecretId  string `json:"secretId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
 type ApplyReplicaSetResult struct {
 	ReplicaSetId string `json:"replicaSetId"`
 	Name         string `json:"name"`
@@ -64,6 +71,7 @@ type DeleteResult struct {
 	Ingresses   []DeleteIngressResult    `json:"ingresses"`
 	Namespaces  []DeleteNamespaceResult  `json:"namespaces"`
 	ConfigMaps  []DeleteConfigMapResult  `json:"configMaps"`
+	Secrets     []DeleteSecretResult     `json:"secrets"`
 	Warnings    []Warning                `json:"warnings,omitempty"`
 }
 
@@ -105,6 +113,12 @@ type DeleteConfigMapResult struct {
 	ConfigMapId string `json:"configMapId"`
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
+}
+
+type DeleteSecretResult struct {
+	SecretId  string `json:"secretId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type Warning struct {

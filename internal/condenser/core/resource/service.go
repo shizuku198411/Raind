@@ -13,10 +13,12 @@ import (
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
+	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
 	"raind/internal/condenser/store/cfm"
 	"raind/internal/condenser/store/ism"
 	"raind/internal/condenser/store/psm"
+	"raind/internal/condenser/store/sec"
 	"raind/internal/condenser/store/ssm"
 	"raind/internal/condenser/utils"
 
@@ -32,6 +34,7 @@ func NewResourceService() *ResourceService {
 		ssmHandler:       ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
 		ismHandler:       ism.NewIsmManager(ism.NewIsmStore(utils.IsmStorePath)),
 		cfmHandler:       cfm.NewCfmManager(cfm.NewCfmStore(utils.CfmStorePath)),
+		secHandler:       sec.NewSecManager(sec.NewSecStore(utils.SecStorePath)),
 	}
 }
 
@@ -43,6 +46,7 @@ type ResourceService struct {
 	ssmHandler       ssm.SsmHandler
 	ismHandler       ism.IsmHandler
 	cfmHandler       cfm.CfmHandler
+	secHandler       sec.SecHandler
 }
 
 func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
@@ -128,6 +132,15 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			result.ConfigMaps = append(result.ConfigMaps, configMapResult)
 			result.Warnings = append(result.Warnings, warnings...)
 
+		case "Secret":
+			secretResult, undo, err := s.applySecret(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				return ApplyResult{}, err
+			}
+			rollback = append(rollback, undo)
+			result.Secrets = append(result.Secrets, secretResult)
+
 		case "Pod", "ReplicaSet", "Deployment":
 			if err := s.applyPodResource(rawBytes, &result, &rollback); err != nil {
 				rollbackApplied()
@@ -141,6 +154,32 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 	}
 
 	return result, nil
+}
+
+func (s *ResourceService) applySecret(rawBytes []byte) (ApplySecretResult, func(), error) {
+	manifest, err := coreSecret.DecodeK8sSecretManifest(rawBytes)
+	if err != nil {
+		return ApplySecretResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	if s.secHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
+		return ApplySecretResult{}, nil, statusError(http.StatusBadRequest, "name already used by other secret")
+	}
+	secretId := utils.NewUlid()
+	if err := s.secHandler.StoreSecret(secretId, sec.SecretInfo{
+		Name:      manifest.Name,
+		Namespace: manifest.Namespace,
+		Type:      manifest.Type,
+		Data:      manifest.Data,
+	}); err != nil {
+		return ApplySecretResult{}, nil, statusError(http.StatusInternalServerError, "secret store failed: %v", err)
+	}
+	return ApplySecretResult{
+			SecretId:  secretId,
+			Name:      manifest.Name,
+			Namespace: manifest.Namespace,
+		}, func() {
+			_ = s.secHandler.RemoveSecret(secretId)
+		}, nil
 }
 
 func (s *ResourceService) applyConfigMap(rawBytes []byte) (ApplyConfigMapResult, func(), []Warning, error) {
@@ -250,6 +289,9 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 	if err := s.resolveConfigMapEnv(&m); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
 	}
+	if err := s.resolveSecretEnv(&m); err != nil {
+		return statusMessage(http.StatusBadRequest, err.Error())
+	}
 	if m.Kind == "Deployment" {
 		return s.applyDeploymentManifest(m, result, rollback)
 	}
@@ -257,6 +299,51 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 		return s.applyReplicaSetManifest(m, result, rollback)
 	}
 	return s.applyPodManifest(m, result, rollback)
+}
+
+func (s *ResourceService) resolveSecretEnv(m *pod.PodManifest) error {
+	if len(m.SecretEnvFrom) == 0 && len(m.SecretEnvKeys) == 0 {
+		return nil
+	}
+	envByContainer := make([]map[string]string, len(m.Containers))
+	for i := range m.Containers {
+		envByContainer[i] = envListToMap(m.Containers[i].Env)
+	}
+	for _, ref := range m.SecretEnvFrom {
+		if ref.ContainerIndex < 0 || ref.ContainerIndex >= len(m.Containers) {
+			return fmt.Errorf("secret envFrom reference has invalid container index")
+		}
+		secret, err := s.secHandler.GetSecretByName(ref.Name, m.Namespace)
+		if err != nil {
+			return fmt.Errorf("secret %s/%s not found: %w", m.Namespace, ref.Name, err)
+		}
+		for k, v := range secret.Data {
+			if _, exists := envByContainer[ref.ContainerIndex][k]; !exists {
+				envByContainer[ref.ContainerIndex][k] = v
+			}
+		}
+	}
+	for _, ref := range m.SecretEnvKeys {
+		if ref.ContainerIndex < 0 || ref.ContainerIndex >= len(m.Containers) {
+			return fmt.Errorf("secret key reference has invalid container index")
+		}
+		if ref.Name == "" || ref.Key == "" {
+			return fmt.Errorf("secretKeyRef requires name and key")
+		}
+		secret, err := s.secHandler.GetSecretByName(ref.Name, m.Namespace)
+		if err != nil {
+			return fmt.Errorf("secret %s/%s not found: %w", m.Namespace, ref.Name, err)
+		}
+		value, ok := secret.Data[ref.Key]
+		if !ok {
+			return fmt.Errorf("secret %s/%s key %q not found", m.Namespace, ref.Name, ref.Key)
+		}
+		envByContainer[ref.ContainerIndex][ref.EnvName] = value
+	}
+	for i := range m.Containers {
+		m.Containers[i].Env = envMapToList(envByContainer[i])
+	}
+	return nil
 }
 
 func (s *ResourceService) resolveConfigMapEnv(m *pod.PodManifest) error {

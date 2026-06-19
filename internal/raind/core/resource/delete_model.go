@@ -34,6 +34,12 @@ type DeletedConfigMapModel struct {
 	Namespace   string `json:"namespace,omitempty"`
 }
 
+type DeletedSecretModel struct {
+	SecretId  string `json:"secretId,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
 type DeletedIngressModel struct {
 	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
@@ -48,6 +54,7 @@ type DeleteResponseModel struct {
 	Ingresses   []DeletedIngressModel    `json:"ingresses,omitempty"`
 	Namespaces  []DeletedNamespaceModel  `json:"namespaces,omitempty"`
 	ConfigMaps  []DeletedConfigMapModel  `json:"configMaps,omitempty"`
+	Secrets     []DeletedSecretModel     `json:"secrets,omitempty"`
 	Warnings    []WarningModel           `json:"warnings,omitempty"`
 }
 

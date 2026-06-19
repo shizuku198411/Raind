@@ -10,6 +10,7 @@ import (
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
+	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
 
 	"gopkg.in/yaml.v3"
@@ -70,6 +71,13 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 			}
 			result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
 
+		case "Secret":
+			secretResults, err := s.deleteSecret(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.Secrets = append(result.Secrets, secretResults...)
+
 		case "Deployment":
 			deployResults, err := s.deleteDeployment(rawBytes)
 			if err != nil {
@@ -103,6 +111,35 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: name})
 	}
 
+	return result, nil
+}
+
+func (s *ResourceService) deleteSecret(rawBytes []byte) ([]DeleteSecretResult, error) {
+	manifest, err := coreSecret.DecodeK8sSecretManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	list, err := s.secHandler.GetSecretList()
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "list failed: %v", err)
+	}
+	var result []DeleteSecretResult
+	for _, secret := range list {
+		if secret.Name != manifest.Name || secret.Namespace != manifest.Namespace {
+			continue
+		}
+		if err := s.secHandler.RemoveSecret(secret.SecretId); err != nil {
+			return nil, statusError(http.StatusInternalServerError, "remove failed: %v", err)
+		}
+		result = append(result, DeleteSecretResult{
+			SecretId:  secret.SecretId,
+			Name:      secret.Name,
+			Namespace: secret.Namespace,
+		})
+	}
+	if len(result) == 0 {
+		return nil, statusError(http.StatusNotFound, "secret not found")
+	}
 	return result, nil
 }
 

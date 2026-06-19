@@ -157,6 +157,17 @@ The short alias `cm` can be used for `configmap`:
 raind resource cm ls
 ```
 
+Secret commands:
+
+```sh
+raind resource secret ls
+raind resource secret ls --namespace <namespace>
+raind resource secret show <secret-id|name> [--namespace <namespace>]
+raind resource secret rm <secret-id|name> [--namespace <namespace>]
+```
+
+Secret values are not shown by default.
+
 Namespace commands:
 
 ```sh

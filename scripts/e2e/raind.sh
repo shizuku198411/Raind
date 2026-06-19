@@ -15,6 +15,7 @@ CSM_STORE="/etc/raind/store/container/csm.json"
 IPAM_STORE="/etc/raind/store/network/ipam.json"
 ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
 CFM_STORE="/etc/raind/store/resource/configmap/cfm.json"
+SEC_STORE="/etc/raind/store/resource/secret/sec.json"
 NPM_STORE="/etc/raind/store/network/npm.json"
 NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
 PSM_STORE="/etc/raind/store/resource/pod/psm.json"
@@ -85,6 +86,7 @@ prepare_runtime() {
     /etc/raind/store/network \
     /etc/raind/store/resource/ingress \
     /etc/raind/store/resource/configmap \
+    /etc/raind/store/resource/secret \
     /etc/raind/store/resource/namespace \
     /etc/raind/store/resource/pod \
     /etc/raind/store/resource/service \
@@ -154,6 +156,7 @@ reset_resource_runtime_state() {
     "${IPAM_STORE}" \
     "${ISM_STORE}" \
     "${CFM_STORE}" \
+    "${SEC_STORE}" \
     "${NPM_STORE}" \
     "${NSM_STORE}" \
     "${PSM_STORE}" \
@@ -436,6 +439,18 @@ assert_output_contains() {
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
+  fi
+}
+
+assert_output_not_contains() {
+  local name="$1"
+  local pattern="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+
+  if grep -Fq -- "${pattern}" "${out}"; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2
+    fail "expected output not to contain: ${pattern}"
   fi
 }
 
@@ -1521,6 +1536,89 @@ YAML
   wait_resource_namespace_absent configmap-namespace-removed "${ns}"
 }
 
+test_resource_secret() {
+  local yaml="${E2E_WORK_DIR}/secret.yaml"
+  local ns="e2e-secret-ns-${SUFFIX}"
+  local secret_value="super-secret-${SUFFIX}"
+  local secret_b64
+  secret_b64="$(printf '%s' "${secret_value}" | base64 | tr -d '\n')"
+
+  log "resource secret test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: ${ns}
+type: Opaque
+data:
+  DB_PASSWORD: ${secret_b64}
+stringData:
+  API_TOKEN: token-${SUFFIX}
+  OVERRIDE_ME: from-secret
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-secret-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-secret-pod
+spec:
+  containers:
+  - name: app
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    envFrom:
+    - secretRef:
+        name: db-secret
+    env:
+    - name: SINGLE_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: db-secret
+          key: DB_PASSWORD
+    - name: OVERRIDE_ME
+      value: explicit
+YAML
+  run_resource_apply_with_retry secret-apply "${yaml}"
+  assert_output_contains secret-apply "secret:"
+  assert_output_contains secret-apply "pod:"
+  assert_output_not_contains secret-apply "${secret_value}"
+  wait_pod_row_ready secret-pod-ready e2e-secret-pod resource pod ls --namespace "${ns}"
+
+  local pod_id container_name container_id
+  pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/secret-apply.out")"
+  [[ -n "${pod_id}" ]] || fail "could not extract secret pod id"
+  container_name="app-${pod_id: -8}"
+  container_id="$(resolve_container_id "${container_name}" "secret-app")"
+  run_raind_allow_empty secret-env-password container exec "${container_id}" sh -c "test \"\$DB_PASSWORD\" = '${secret_value}'"
+  run_raind_allow_empty secret-env-single container exec "${container_id}" sh -c "test \"\$SINGLE_SECRET\" = '${secret_value}'"
+  run_raind_allow_empty secret-env-token container exec "${container_id}" sh -c "test \"\$API_TOKEN\" = 'token-${SUFFIX}'"
+  run_raind_allow_empty secret-env-override container exec "${container_id}" sh -c 'test "$OVERRIDE_ME" = explicit'
+  run_raind secret-ls resource secret ls --namespace "${ns}"
+  assert_output_contains secret-ls "db-secret"
+  assert_output_not_contains secret-ls "${secret_value}"
+  run_raind secret-show resource secret show db-secret --namespace "${ns}"
+  assert_output_contains secret-show "DB_PASSWORD"
+  assert_output_contains secret-show "API_TOKEN"
+  assert_output_not_contains secret-show "${secret_value}"
+
+  run_raind secret-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains secret-rm-manifest "secret:"
+  assert_output_contains secret-rm-manifest "pod:"
+  assert_output_contains secret-rm-manifest "namespace:"
+  wait_resource_namespace_absent secret-namespace-removed "${ns}"
+}
+
 test_resource_replicaset() {
   local yaml="${E2E_WORK_DIR}/replicaset.yaml"
   local ns="e2e-rs-ns-${SUFFIX}"
@@ -1677,6 +1775,15 @@ data:
   APP_ENV: all-kinds
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: e2e-yaml-secret
+  namespace: ${ns}
+type: Opaque
+stringData:
+  DB_PASSWORD: all-kinds-secret
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: e2e-yaml-pod
@@ -1690,6 +1797,8 @@ spec:
     envFrom:
     - configMapRef:
         name: e2e-yaml-config
+    - secretRef:
+        name: e2e-yaml-secret
 ---
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -1746,6 +1855,7 @@ YAML
   run_resource_apply_with_retry yaml-apply "${yaml}"
   assert_output_contains yaml-apply "namespace:"
   assert_output_contains yaml-apply "configmap:"
+  assert_output_contains yaml-apply "secret:"
   assert_output_contains yaml-apply "pod:"
   assert_output_contains yaml-apply "replicaset:"
   assert_output_contains yaml-apply "deployment:"
@@ -1756,6 +1866,7 @@ YAML
   run_raind yaml-rm resource rm -f "${yaml}"
   assert_output_contains yaml-rm "namespace:"
   assert_output_contains yaml-rm "configmap:"
+  assert_output_contains yaml-rm "secret:"
   assert_output_contains yaml-rm "pod:"
   assert_output_contains yaml-rm "replicaset:"
   assert_output_contains yaml-rm "deployment:"
@@ -1794,6 +1905,7 @@ main() {
   test_resource_namespace
   test_resource_pod
   test_resource_configmap
+  test_resource_secret
   test_resource_replicaset
   test_resource_deployment
   test_resource_service

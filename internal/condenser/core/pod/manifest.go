@@ -21,6 +21,8 @@ type PodManifest struct {
 	Containers       []psm.ContainerTemplateSpec
 	ConfigMapEnvFrom []ContainerConfigMapRef
 	ConfigMapEnvKeys []ContainerConfigMapKeyRef
+	SecretEnvFrom    []ContainerSecretRef
+	SecretEnvKeys    []ContainerSecretKeyRef
 	Rootless         bool
 	Replicas         int
 	Selector         map[string]string
@@ -32,6 +34,18 @@ type ContainerConfigMapRef struct {
 }
 
 type ContainerConfigMapKeyRef struct {
+	ContainerIndex int
+	EnvName        string
+	Name           string
+	Key            string
+}
+
+type ContainerSecretRef struct {
+	ContainerIndex int
+	Name           string
+}
+
+type ContainerSecretKeyRef struct {
 	ContainerIndex int
 	EnvName        string
 	Name           string
@@ -120,10 +134,12 @@ type manifestEnvVar struct {
 
 type manifestEnvFrom struct {
 	ConfigMapRef manifestConfigMapRef `yaml:"configMapRef"`
+	SecretRef    manifestSecretRef    `yaml:"secretRef"`
 }
 
 type manifestEnvValueFrom struct {
 	ConfigMapKeyRef manifestConfigMapKeyRef `yaml:"configMapKeyRef"`
+	SecretKeyRef    manifestSecretKeyRef    `yaml:"secretKeyRef"`
 }
 
 type manifestConfigMapRef struct {
@@ -131,6 +147,15 @@ type manifestConfigMapRef struct {
 }
 
 type manifestConfigMapKeyRef struct {
+	Name string `yaml:"name"`
+	Key  string `yaml:"key"`
+}
+
+type manifestSecretRef struct {
+	Name string `yaml:"name"`
+}
+
+type manifestSecretKeyRef struct {
 	Name string `yaml:"name"`
 	Key  string `yaml:"key"`
 }
@@ -354,6 +379,8 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 	specs := make([]psm.ContainerTemplateSpec, 0, len(podSpec.Containers))
 	var configMapEnvFrom []ContainerConfigMapRef
 	var configMapEnvKeys []ContainerConfigMapKeyRef
+	var secretEnvFrom []ContainerSecretRef
+	var secretEnvKeys []ContainerSecretKeyRef
 	for i, c := range podSpec.Containers {
 		cmd := c.Command
 		if len(c.Args) > 0 {
@@ -363,6 +390,9 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 		for _, ref := range c.EnvFrom {
 			if ref.ConfigMapRef.Name != "" {
 				configMapEnvFrom = append(configMapEnvFrom, ContainerConfigMapRef{ContainerIndex: i, Name: ref.ConfigMapRef.Name})
+			}
+			if ref.SecretRef.Name != "" {
+				secretEnvFrom = append(secretEnvFrom, ContainerSecretRef{ContainerIndex: i, Name: ref.SecretRef.Name})
 			}
 		}
 		for _, e := range c.Env {
@@ -375,6 +405,15 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 					EnvName:        e.Name,
 					Name:           e.ValueFrom.ConfigMapKeyRef.Name,
 					Key:            e.ValueFrom.ConfigMapKeyRef.Key,
+				})
+				continue
+			}
+			if e.ValueFrom.SecretKeyRef.Name != "" || e.ValueFrom.SecretKeyRef.Key != "" {
+				secretEnvKeys = append(secretEnvKeys, ContainerSecretKeyRef{
+					ContainerIndex: i,
+					EnvName:        e.Name,
+					Name:           e.ValueFrom.SecretKeyRef.Name,
+					Key:            e.ValueFrom.SecretKeyRef.Key,
 				})
 				continue
 			}
@@ -427,6 +466,8 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 		Containers:       specs,
 		ConfigMapEnvFrom: configMapEnvFrom,
 		ConfigMapEnvKeys: configMapEnvKeys,
+		SecretEnvFrom:    secretEnvFrom,
+		SecretEnvKeys:    secretEnvKeys,
 		Rootless:         rootlessFromHostUsers(podSpec.HostUsers),
 	}, nil
 }

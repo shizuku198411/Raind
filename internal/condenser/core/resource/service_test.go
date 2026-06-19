@@ -2,6 +2,7 @@ package resource
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"raind/internal/condenser/core/pod"
 	"raind/internal/condenser/store/cfm"
 	"raind/internal/condenser/store/psm"
+	"raind/internal/condenser/store/sec"
 	"raind/internal/condenser/store/ssm"
 
 	"github.com/stretchr/testify/assert"
@@ -91,14 +93,14 @@ func TestApplyRejectsUnsupportedKind(t *testing.T) {
 
 	_, err := service.Apply([]byte(`
 apiVersion: v1
-kind: Secret
+kind: Widget
 metadata:
-  name: app-secret
+  name: app-widget
 `))
 
 	require.Error(t, err)
 	assert.Equal(t, http.StatusBadRequest, ErrorStatus(err, http.StatusOK))
-	assert.Contains(t, err.Error(), "unsupported kind: Secret")
+	assert.Contains(t, err.Error(), "unsupported kind: Widget")
 }
 
 func TestApplyReturnsManifestWarnings(t *testing.T) {
@@ -170,6 +172,55 @@ func TestResolveConfigMapEnv(t *testing.T) {
 	}, manifest.Containers[0].Env)
 }
 
+func TestApplyStoresSecretWithoutReturningValues(t *testing.T) {
+	secHandler := newFakeSecHandler()
+	service := &ResourceService{secHandler: secHandler}
+
+	result, err := service.Apply([]byte(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: demo
+type: Opaque
+stringData:
+  DB_PASSWORD: super-secret
+`))
+
+	require.NoError(t, err)
+	require.Len(t, result.Secrets, 1)
+	assert.Equal(t, "db-secret", result.Secrets[0].Name)
+	assert.NotContains(t, fmt.Sprintf("%+v", result), "super-secret")
+	stored, err := secHandler.GetSecretByName("db-secret", "demo")
+	require.NoError(t, err)
+	assert.Equal(t, "super-secret", stored.Data["DB_PASSWORD"])
+}
+
+func TestResolveSecretEnv(t *testing.T) {
+	secHandler := newFakeSecHandler()
+	require.NoError(t, secHandler.StoreSecret("secret-1", sec.SecretInfo{
+		Name:      "db-secret",
+		Namespace: "demo",
+		Type:      sec.SecretTypeOpaque,
+		Data: map[string]string{
+			"DB_PASSWORD": "super-secret",
+			"API_TOKEN":   "token-value",
+			"OVERRIDE_ME": "from-secret",
+		},
+	}))
+	service := &ResourceService{secHandler: secHandler}
+	manifest := podManifestForSecretEnv()
+
+	require.NoError(t, service.resolveSecretEnv(&manifest))
+	require.Len(t, manifest.Containers, 1)
+	assert.ElementsMatch(t, []string{
+		"API_TOKEN=token-value",
+		"DB_PASSWORD=super-secret",
+		"OVERRIDE_ME=explicit",
+		"SINGLE_SECRET=super-secret",
+	}, manifest.Containers[0].Env)
+}
+
 func TestDeleteReturnsManifestWarnings(t *testing.T) {
 	service := &ResourceService{
 		namespaceHandler: &fakeNamespaceHandler{},
@@ -231,6 +282,77 @@ type fakeSsmHandler struct {
 
 type fakeCfmHandler struct {
 	items map[string]cfm.ConfigMapInfo
+}
+
+type fakeSecHandler struct {
+	items map[string]sec.SecretInfo
+}
+
+func newFakeSecHandler() *fakeSecHandler {
+	return &fakeSecHandler{items: map[string]sec.SecretInfo{}}
+}
+
+func (h *fakeSecHandler) StoreSecret(secretId string, spec sec.SecretInfo) error {
+	spec.SecretId = secretId
+	if spec.Namespace == "" {
+		spec.Namespace = "default"
+	}
+	if spec.Type == "" {
+		spec.Type = sec.SecretTypeOpaque
+	}
+	if spec.Data == nil {
+		spec.Data = map[string]string{}
+	}
+	h.items[secretId] = spec
+	return nil
+}
+
+func (h *fakeSecHandler) GetSecretList() ([]sec.SecretInfo, error) {
+	out := make([]sec.SecretInfo, 0, len(h.items))
+	for _, item := range h.items {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (h *fakeSecHandler) GetSecretById(secretId string) (sec.SecretInfo, error) {
+	item, ok := h.items[secretId]
+	if !ok {
+		return sec.SecretInfo{}, errors.New("secret not found")
+	}
+	return item, nil
+}
+
+func (h *fakeSecHandler) GetSecretByName(name, namespace string) (sec.SecretInfo, error) {
+	if namespace == "" {
+		namespace = "default"
+	}
+	for _, item := range h.items {
+		if item.Name == name && item.Namespace == namespace {
+			return item, nil
+		}
+	}
+	return sec.SecretInfo{}, errors.New("secret not found")
+}
+
+func (h *fakeSecHandler) RemoveSecret(secretId string) error {
+	if _, ok := h.items[secretId]; !ok {
+		return errors.New("secret not found")
+	}
+	delete(h.items, secretId)
+	return nil
+}
+
+func (h *fakeSecHandler) IsNameAlreadyUsed(name, namespace string) bool {
+	if namespace == "" {
+		namespace = "default"
+	}
+	for _, item := range h.items {
+		if item.Name == name && item.Namespace == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeCfmHandler() *fakeCfmHandler {
@@ -312,6 +434,25 @@ func podManifestForConfigMapEnv() pod.PodManifest {
 		},
 		ConfigMapEnvKeys: []pod.ContainerConfigMapKeyRef{
 			{ContainerIndex: 0, EnvName: "SINGLE_KEY", Name: "app-config", Key: "APP_ENV"},
+		},
+	}
+}
+
+func podManifestForSecretEnv() pod.PodManifest {
+	return pod.PodManifest{
+		Name:      "app",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{
+			{
+				Name: "app",
+				Env:  []string{"OVERRIDE_ME=explicit"},
+			},
+		},
+		SecretEnvFrom: []pod.ContainerSecretRef{
+			{ContainerIndex: 0, Name: "db-secret"},
+		},
+		SecretEnvKeys: []pod.ContainerSecretKeyRef{
+			{ContainerIndex: 0, EnvName: "SINGLE_SECRET", Name: "db-secret", Key: "DB_PASSWORD"},
 		},
 	}
 }

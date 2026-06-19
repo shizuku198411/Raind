@@ -38,8 +38,8 @@ kind: Pod
 | `image` | yes | Container image. |
 | `command` | no | Command array. |
 | `args` | no | Arguments appended to `command`. |
-| `env` | no | Environment variables as `name` / `value` entries, or `valueFrom.configMapKeyRef`. |
-| `envFrom` | no | Import all keys from a ConfigMap with `configMapRef`. |
+| `env` | no | Environment variables as `name` / `value` entries, `valueFrom.configMapKeyRef`, or `valueFrom.secretKeyRef`. |
+| `envFrom` | no | Import all keys from a ConfigMap with `configMapRef`, or a Secret with `secretRef`. |
 | `ports` | no | Container ports. `hostPort` creates a host port mapping. |
 | `mount` | no | Raind low-level mount strings such as `/host:/container[:options]`. |
 | `volumeMounts` | no | Kubernetes-style volume mounts referencing `spec.volumes`. |
@@ -124,9 +124,16 @@ spec:
             configMapKeyRef:
               name: app-config
               key: LOG_LEVEL
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: DB_PASSWORD
       envFrom:
         - configMapRef:
             name: app-config
+        - secretRef:
+            name: db-secret
       tty: true
 ```
 

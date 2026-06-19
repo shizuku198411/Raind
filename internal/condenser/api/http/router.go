@@ -22,6 +22,7 @@ import (
 	networkHandler "raind/internal/condenser/api/http/network"
 	podHandler "raind/internal/condenser/api/http/pod"
 	policyHandler "raind/internal/condenser/api/http/policy"
+	secretHandler "raind/internal/condenser/api/http/secret"
 	securityProfileHandler "raind/internal/condenser/api/http/securityprofile"
 	serviceHandler "raind/internal/condenser/api/http/service"
 	websocketHandler "raind/internal/condenser/api/http/websocket"
@@ -69,6 +70,7 @@ func NewApiRouter() *chi.Mux {
 	ingressHandler := ingressHandler.NewRequestHandler()
 	securityProfileHandler := securityProfileHandler.NewRequestHandler()
 	configMapHandler := configMapHandler.NewRequestHandler()
+	secretHandler := secretHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
@@ -157,6 +159,11 @@ func NewApiRouter() *chi.Mux {
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/configmaps", configMapHandler.GetConfigMapList)
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/configmaps/{idOrName}", configMapHandler.GetConfigMap)
 	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/configmaps/{idOrName}", configMapHandler.RemoveConfigMap)
+
+	// == secrets ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/secrets", secretHandler.GetSecretList)
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/secrets/{idOrName}", secretHandler.GetSecret)
+	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/secrets/{idOrName}", secretHandler.RemoveSecret)
 
 	// == namespaces ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces", namespaceHandler.GetNamespaceList)
