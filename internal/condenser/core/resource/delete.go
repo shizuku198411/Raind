@@ -38,6 +38,7 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		if err != nil {
 			return DeleteResult{}, statusMessage(http.StatusBadRequest, err.Error())
 		}
+		result.Warnings = append(result.Warnings, collectHeaderWarnings(header, raw)...)
 
 		switch header.Kind {
 		case "Namespace":

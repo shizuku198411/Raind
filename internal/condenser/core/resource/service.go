@@ -72,6 +72,7 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			rollbackApplied()
 			return ApplyResult{}, statusMessage(http.StatusBadRequest, err.Error())
 		}
+		result.Warnings = append(result.Warnings, collectHeaderWarnings(header, raw)...)
 
 		switch header.Kind {
 		case "Namespace":
