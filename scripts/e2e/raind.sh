@@ -17,6 +17,7 @@ ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
 CFM_STORE="/etc/raind/store/resource/configmap/cfm.json"
 SEC_STORE="/etc/raind/store/resource/secret/sec.json"
 NETPOL_STORE="/etc/raind/store/resource/networkpolicy/netpol.json"
+VSM_STORE="/etc/raind/store/resource/volume/vsm.json"
 NPM_STORE="/etc/raind/store/network/npm.json"
 NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
 PSM_STORE="/etc/raind/store/resource/pod/psm.json"
@@ -89,11 +90,13 @@ prepare_runtime() {
     /etc/raind/store/resource/configmap \
     /etc/raind/store/resource/secret \
     /etc/raind/store/resource/networkpolicy \
+    /etc/raind/store/resource/volume \
     /etc/raind/store/resource/namespace \
     /etc/raind/store/resource/pod \
     /etc/raind/store/resource/service \
     /etc/raind/container \
     /etc/raind/image/layers \
+    /etc/raind/volume/pvc \
     /var/log/raind \
     /sys/fs/cgroup/raind
 
@@ -124,6 +127,7 @@ reset_e2e_runtime_state() {
   # "podTemplateId=... not found" during a new resource apply.
   sudo_cmd rm -rf /etc/raind/store/*
   sudo_cmd rm -rf /etc/raind/container/*
+  sudo_cmd rm -rf /etc/raind/volume/pvc/*
   sudo_cmd rm -f /etc/raind/log/droplet_audit.log
 
   # Rootless networking creates short-lived named netns bind mounts. Clean up
@@ -152,6 +156,7 @@ reset_resource_runtime_state() {
   log "reset resource runtime state"
 
   sudo_cmd rm -rf /etc/raind/container/*
+  sudo_cmd rm -rf /etc/raind/volume/pvc/*
   sudo_cmd rm -f \
     "${BSM_STORE}" \
     "${CSM_STORE}" \
@@ -160,6 +165,7 @@ reset_resource_runtime_state() {
     "${CFM_STORE}" \
     "${SEC_STORE}" \
     "${NETPOL_STORE}" \
+    "${VSM_STORE}" \
     "${NPM_STORE}" \
     "${NSM_STORE}" \
     "${PSM_STORE}" \
@@ -183,8 +189,10 @@ restart_condenser_with_clean_resources() {
 
 cleanup_stale_condenser() {
   sudo_cmd pkill -TERM -f "^${CONDENSER_BIN}$" 2>/dev/null || true
+  sudo_cmd pkill -TERM -f "^/usr/local/bin/condenser$" 2>/dev/null || true
   sleep 0.2
   sudo_cmd pkill -KILL -f "^${CONDENSER_BIN}$" 2>/dev/null || true
+  sudo_cmd pkill -KILL -f "^/usr/local/bin/condenser$" 2>/dev/null || true
 }
 
 assert_port_free() {
@@ -355,7 +363,7 @@ is_transient_resource_apply_failure() {
   local out="$1"
 
   grep -Eqi \
-    'pod start failed|replicaset start failed|deployment start failed|hook createContainer\[[0-9]+\] failed|service hook failed: update pod namespaces failed|podId=.*not found|podTemplateId=.*not found|interface: rns[[:xdigit:]]{12} is already created' \
+    'pod start failed|replicaset start failed|deployment start failed|hook createContainer\[[0-9]+\] failed|service hook failed: update pod namespaces failed|podId=.*not found|podTemplateId=.*not found|interface: rns[[:xdigit:]]{12} is already created|unmanaged namespace bridge exists: rns[[:xdigit:]]{12}' \
     "${out}"
 }
 
@@ -1622,6 +1630,155 @@ YAML
   wait_resource_namespace_absent secret-namespace-removed "${ns}"
 }
 
+test_resource_pvc() {
+  local pvc_yaml="${E2E_WORK_DIR}/pvc.yaml"
+  local writer_yaml="${E2E_WORK_DIR}/pvc-writer.yaml"
+  local reader_yaml="${E2E_WORK_DIR}/pvc-reader.yaml"
+  local delete_yaml="${E2E_WORK_DIR}/pvc-delete.yaml"
+  local ns="e2e-pvc-ns-${SUFFIX}"
+  local delete_ns="e2e-pvc-delete-ns-${SUFFIX}"
+  local retain_data_path delete_data_path
+
+  log "resource pvc test"
+  cat >"${pvc_yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+  namespace: ${ns}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+YAML
+
+  cat >"${writer_yaml}" <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-writer
+  namespace: ${ns}
+  labels:
+    app: pvc-writer
+spec:
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+  containers:
+  - name: writer
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    volumeMounts:
+    - name: data
+      mountPath: /data
+YAML
+
+  cat >"${reader_yaml}" <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-reader
+  namespace: ${ns}
+  labels:
+    app: pvc-reader
+spec:
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+  containers:
+  - name: reader
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    volumeMounts:
+    - name: data
+      mountPath: /data
+YAML
+
+  run_resource_apply_with_retry pvc-apply "${pvc_yaml}"
+  assert_output_contains pvc-apply "persistentvolumeclaim:"
+  assert_output_contains pvc-apply "requested: 1Mi"
+  retain_data_path="$(sudo_cmd jq -r --arg ns "${ns}" '.persistentVolumeClaims[] | select(.name == "db-data" and .namespace == $ns) | .dataPath' "${VSM_STORE}")"
+  [[ -n "${retain_data_path}" && "${retain_data_path}" != "null" ]] || fail "could not resolve retained pvc data path"
+
+  run_resource_apply_with_retry pvc-writer-apply "${writer_yaml}"
+  wait_pod_row_ready pvc-writer-ready pvc-writer resource pod ls --namespace "${ns}"
+  local writer_pod_id writer_container_name writer_container_id
+  writer_pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/pvc-writer-apply.out")"
+  writer_container_name="writer-${writer_pod_id: -8}"
+  writer_container_id="$(resolve_container_id "${writer_container_name}" "pvc-writer")"
+  run_raind_allow_empty pvc-write container exec "${writer_container_id}" sh -c "echo persisted-${SUFFIX} > /data/hello.txt"
+  run_raind pvc-writer-rm resource rm -f "${writer_yaml}"
+  assert_output_contains pvc-writer-rm "pod:"
+
+  run_resource_apply_with_retry pvc-reader-apply "${reader_yaml}"
+  wait_pod_row_ready pvc-reader-ready pvc-reader resource pod ls --namespace "${ns}"
+  local reader_pod_id reader_container_name reader_container_id
+  reader_pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/pvc-reader-apply.out")"
+  reader_container_name="reader-${reader_pod_id: -8}"
+  reader_container_id="$(resolve_container_id "${reader_container_name}" "pvc-reader")"
+  run_raind_allow_empty pvc-read container exec "${reader_container_id}" sh -c "test \"\$(cat /data/hello.txt)\" = 'persisted-${SUFFIX}'"
+  run_raind pvc-reader-rm resource rm -f "${reader_yaml}"
+  assert_output_contains pvc-reader-rm "pod:"
+
+  run_raind pvc-ls resource pvc ls --namespace "${ns}"
+  assert_output_contains pvc-ls "db-data"
+  run_raind pvc-show resource pvc show db-data --namespace "${ns}"
+  assert_output_contains pvc-show "REQUESTED BYTES"
+  assert_output_contains pvc-show "1048576"
+  run_raind pvc-retain-rm resource rm -f "${pvc_yaml}"
+  assert_output_contains pvc-retain-rm "persistentvolumeclaim:"
+  assert_output_contains pvc-retain-rm "namespace:"
+  sudo_cmd test -d "${retain_data_path}" || fail "retained pvc data path was removed: ${retain_data_path}"
+  wait_resource_namespace_absent pvc-namespace-removed "${ns}"
+
+  cat >"${delete_yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${delete_ns}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tmp-data
+  namespace: ${delete_ns}
+  annotations:
+    raind.dev/reclaimPolicy: Delete
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+YAML
+  run_resource_apply_with_retry pvc-delete-apply "${delete_yaml}"
+  delete_data_path="$(sudo_cmd jq -r --arg ns "${delete_ns}" '.persistentVolumeClaims[] | select(.name == "tmp-data" and .namespace == $ns) | .dataPath' "${VSM_STORE}")"
+  [[ -n "${delete_data_path}" && "${delete_data_path}" != "null" ]] || fail "could not resolve delete pvc data path"
+  sudo_cmd test -d "${delete_data_path}" || fail "delete pvc data path missing before removal: ${delete_data_path}"
+  run_raind pvc-delete-rm resource rm -f "${delete_yaml}"
+  assert_output_contains pvc-delete-rm "persistentvolumeclaim:"
+  assert_output_contains pvc-delete-rm "namespace:"
+  if sudo_cmd test -e "${delete_data_path}"; then
+    fail "delete reclaim pvc data path still exists: ${delete_data_path}"
+  fi
+  wait_resource_namespace_absent pvc-delete-namespace-removed "${delete_ns}"
+}
+
 test_resource_networkpolicy() {
   local base_yaml="${E2E_WORK_DIR}/networkpolicy-base.yaml"
   local policy_yaml="${E2E_WORK_DIR}/networkpolicy.yaml"
@@ -2001,6 +2158,7 @@ main() {
   test_resource_pod
   test_resource_configmap
   test_resource_secret
+  test_resource_pvc
   test_resource_networkpolicy
   test_resource_replicaset
   test_resource_deployment

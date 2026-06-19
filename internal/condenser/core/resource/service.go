@@ -14,6 +14,7 @@ import (
 	corenamespace "raind/internal/condenser/core/namespace"
 	coreNetworkPolicy "raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
+	corePVC "raind/internal/condenser/core/pvc"
 	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
 	"raind/internal/condenser/store/cfm"
@@ -21,6 +22,7 @@ import (
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/sec"
 	"raind/internal/condenser/store/ssm"
+	"raind/internal/condenser/store/vsm"
 	"raind/internal/condenser/utils"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +38,7 @@ func NewResourceService() *ResourceService {
 		ismHandler:       ism.NewIsmManager(ism.NewIsmStore(utils.IsmStorePath)),
 		cfmHandler:       cfm.NewCfmManager(cfm.NewCfmStore(utils.CfmStorePath)),
 		secHandler:       sec.NewSecManager(sec.NewSecStore(utils.SecStorePath)),
+		vsmHandler:       vsm.NewManager(vsm.NewStore(utils.VsmStorePath)),
 	}
 }
 
@@ -48,6 +51,7 @@ type ResourceService struct {
 	ismHandler       ism.IsmHandler
 	cfmHandler       cfm.CfmHandler
 	secHandler       sec.SecHandler
+	vsmHandler       vsm.Handler
 }
 
 func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
@@ -151,6 +155,15 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			rollback = append(rollback, undo)
 			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResult)
 
+		case "PersistentVolumeClaim":
+			pvcResult, undo, err := s.applyPVC(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				return ApplyResult{}, err
+			}
+			rollback = append(rollback, undo)
+			result.PersistentVolumeClaims = append(result.PersistentVolumeClaims, pvcResult)
+
 		case "Pod", "ReplicaSet", "Deployment":
 			if err := s.applyPodResource(rawBytes, &result, &rollback); err != nil {
 				rollbackApplied()
@@ -208,6 +221,27 @@ func (s *ResourceService) applyNetworkPolicy(rawBytes []byte) (ApplyNetworkPolic
 			GeneratedRules:  len(info.GeneratedRuleIds),
 		}, func() {
 			_, _ = coreNetworkPolicy.NewService().Remove(info.NetworkPolicyId, "")
+		}, nil
+}
+
+func (s *ResourceService) applyPVC(rawBytes []byte) (ApplyPVCResult, func(), error) {
+	manifest, err := corePVC.DecodeK8sPVCManifest(rawBytes)
+	if err != nil {
+		return ApplyPVCResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	info, err := corePVC.NewService().Create(manifest)
+	if err != nil {
+		return ApplyPVCResult{}, nil, statusError(http.StatusInternalServerError, "persistentvolumeclaim apply failed: %v", err)
+	}
+	return ApplyPVCResult{
+			PVCId:            info.PVCId,
+			Name:             info.Name,
+			Namespace:        info.Namespace,
+			RequestedStorage: info.RequestedStorage,
+			RequestedBytes:   info.RequestedBytes,
+			ReclaimPolicy:    info.ReclaimPolicy,
+		}, func() {
+			_, _ = corePVC.NewService().Remove(info.PVCId, "")
 		}, nil
 }
 
@@ -321,6 +355,9 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 	if err := s.resolveSecretEnv(&m); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
 	}
+	if err := s.resolvePVCMounts(&m); err != nil {
+		return statusMessage(http.StatusBadRequest, err.Error())
+	}
 	if m.Kind == "Deployment" {
 		return s.applyDeploymentManifest(m, result, rollback)
 	}
@@ -328,6 +365,33 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 		return s.applyReplicaSetManifest(m, result, rollback)
 	}
 	return s.applyPodManifest(m, result, rollback)
+}
+
+func (s *ResourceService) resolvePVCMounts(m *pod.PodManifest) error {
+	if len(m.PVCMounts) == 0 {
+		return nil
+	}
+	for _, ref := range m.PVCMounts {
+		if ref.ContainerIndex < 0 || ref.ContainerIndex >= len(m.Containers) {
+			return fmt.Errorf("persistentVolumeClaim reference has invalid container index")
+		}
+		if ref.Name == "" {
+			return fmt.Errorf("persistentVolumeClaim claimName is required")
+		}
+		pvcInfo, err := s.vsmHandler.GetPVCByName(ref.Name, m.Namespace)
+		if err != nil {
+			return fmt.Errorf("persistentvolumeclaim %s/%s not found: %w", m.Namespace, ref.Name, err)
+		}
+		if pvcInfo.Phase != vsm.PVCPhaseBound {
+			return fmt.Errorf("persistentvolumeclaim %s/%s is not bound", m.Namespace, ref.Name)
+		}
+		mount := pvcInfo.DataPath + ":" + ref.MountPath
+		if ref.ReadOnly {
+			mount += ":ro"
+		}
+		m.Containers[ref.ContainerIndex].Mount = append(m.Containers[ref.ContainerIndex].Mount, mount)
+	}
+	return nil
 }
 
 func (s *ResourceService) resolveSecretEnv(m *pod.PodManifest) error {

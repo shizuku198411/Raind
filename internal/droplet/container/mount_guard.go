@@ -118,13 +118,17 @@ func validateUserMount(m spec.MountObject) error {
 	}
 
 	allowDevice := hasMountOption(m.Options, "dev")
-	if hasDeniedSource(m.Source) && !(allowDevice && isUnderPath(m.Source, "/dev")) {
+	if hasDeniedSource(m.Source) && !(allowDevice && isUnderPath(m.Source, "/dev")) && !isAllowedRuntimeVolumeSource(m.Source) {
 		return fmt.Errorf("invalid mount source: %s", m.Source)
 	}
 	if hasDeniedDestination(m.Destination) && !(allowDevice && isUnderPath(m.Destination, "/dev")) {
 		return fmt.Errorf("invalid mount destination: %s", m.Destination)
 	}
 	return nil
+}
+
+func isAllowedRuntimeVolumeSource(source string) bool {
+	return isUnderPath(source, "/etc/raind/volume/pvc")
 }
 
 func hasMountOption(options []string, want string) bool {

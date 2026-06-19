@@ -316,6 +316,22 @@ func TestValidateUserMount_DeniedSource(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
+func TestValidateUserMount_AllowsManagedPVCVolumeSource(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "/etc/raind/volume/pvc/default/01kvtest/data",
+		Destination: "/data",
+		Type:        "bind",
+		Options:     []string{"rbind", "rprivate"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.Nil(t, err)
+}
+
 func TestValidateUserMount_DeniedDestination(t *testing.T) {
 	// == arrange ==
 	mount := spec.MountObject{

@@ -11,6 +11,7 @@ import (
 	corenamespace "raind/internal/condenser/core/namespace"
 	coreNetworkPolicy "raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
+	corePVC "raind/internal/condenser/core/pvc"
 	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
 
@@ -54,6 +55,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "Service":
 			serviceResults, err := s.deleteService(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.Services = append(result.Services, serviceResults...)
@@ -61,6 +65,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "Ingress":
 			ingressResults, err := s.deleteIngress(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.Ingresses = append(result.Ingresses, ingressResults...)
@@ -68,6 +75,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "ConfigMap":
 			configMapResults, err := s.deleteConfigMap(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
@@ -75,6 +85,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "Secret":
 			secretResults, err := s.deleteSecret(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.Secrets = append(result.Secrets, secretResults...)
@@ -82,13 +95,29 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "NetworkPolicy":
 			networkPolicyResults, err := s.deleteNetworkPolicy(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResults...)
 
+		case "PersistentVolumeClaim":
+			pvcResults, err := s.deletePVC(rawBytes)
+			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
+				return DeleteResult{}, err
+			}
+			result.PersistentVolumeClaims = append(result.PersistentVolumeClaims, pvcResults...)
+
 		case "Deployment":
 			deployResults, err := s.deleteDeployment(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.Deployments = append(result.Deployments, deployResults...)
@@ -96,6 +125,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "ReplicaSet":
 			rsResults, err := s.deleteReplicaSet(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.ReplicaSets = append(result.ReplicaSets, rsResults...)
@@ -103,6 +135,9 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		case "Pod":
 			podResults, err := s.deletePod(rawBytes)
 			if err != nil {
+				if appendDeleteNotFoundWarning(&result, header, err) {
+					continue
+				}
 				return DeleteResult{}, err
 			}
 			result.Pods = append(result.Pods, podResults...)
@@ -114,12 +149,30 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 
 	for _, name := range pendingNamespaceDeletes {
 		if _, err := s.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: name}); err != nil {
+			header := Header{Kind: "Namespace"}
+			header.Metadata.Name = name
+			if appendDeleteNotFoundWarning(&result, header, err) {
+				continue
+			}
 			return DeleteResult{}, statusError(http.StatusInternalServerError, "namespace remove failed: %v", err)
 		}
 		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: name})
 	}
 
 	return result, nil
+}
+
+func appendDeleteNotFoundWarning(result *DeleteResult, header Header, err error) bool {
+	if ErrorStatus(err, http.StatusInternalServerError) != http.StatusNotFound && !strings.Contains(err.Error(), "not found") {
+		return false
+	}
+	result.Warnings = append(result.Warnings, Warning{
+		Kind:      header.Kind,
+		Name:      header.Metadata.Name,
+		Namespace: header.Metadata.Namespace,
+		Message:   "resource not found; skipped delete",
+	})
+	return true
 }
 
 func (s *ResourceService) deleteSecret(rawBytes []byte) ([]DeleteSecretResult, error) {
@@ -158,12 +211,35 @@ func (s *ResourceService) deleteNetworkPolicy(rawBytes []byte) ([]DeleteNetworkP
 	}
 	info, err := coreNetworkPolicy.NewService().Remove(manifest.Name, manifest.Namespace)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, statusError(http.StatusNotFound, "networkpolicy not found")
+		}
 		return nil, statusError(http.StatusInternalServerError, "networkpolicy remove failed: %v", err)
 	}
 	return []DeleteNetworkPolicyResult{{
 		NetworkPolicyId: info.NetworkPolicyId,
 		Name:            info.Name,
 		Namespace:       info.Namespace,
+	}}, nil
+}
+
+func (s *ResourceService) deletePVC(rawBytes []byte) ([]DeletePVCResult, error) {
+	manifest, err := corePVC.DecodeK8sPVCManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	info, err := corePVC.NewService().Remove(manifest.Name, manifest.Namespace)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, statusError(http.StatusNotFound, "persistentvolumeclaim not found")
+		}
+		return nil, statusError(http.StatusInternalServerError, "persistentvolumeclaim remove failed: %v", err)
+	}
+	return []DeletePVCResult{{
+		PVCId:         info.PVCId,
+		Name:          info.Name,
+		Namespace:     info.Namespace,
+		ReclaimPolicy: info.ReclaimPolicy,
 	}}, nil
 }
 

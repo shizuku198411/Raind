@@ -62,6 +62,9 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 	for _, np := range result.NetworkPolicies {
 		fmt.Printf("networkpolicy: %s applied (generated rules: %d)\n", np.NetworkPolicyId, np.GeneratedRules)
 	}
+	for _, pvc := range result.PersistentVolumeClaims {
+		fmt.Printf("persistentvolumeclaim: %s applied (requested: %s, reclaim: %s)\n", pvc.PVCId, pvc.RequestedStorage, pvc.ReclaimPolicy)
+	}
 	for _, p := range result.Pods {
 		if p.ReplicaSetId != "" {
 			fmt.Printf("replicaset: %s applied\n", p.ReplicaSetId)
@@ -85,7 +88,7 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 		}
 		fmt.Printf("ingress: %s applied\n", in.IngressId)
 	}
-	if len(result.Namespaces) == 0 && len(result.ConfigMaps) == 0 && len(result.Secrets) == 0 && len(result.NetworkPolicies) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
+	if len(result.Namespaces) == 0 && len(result.ConfigMaps) == 0 && len(result.Secrets) == 0 && len(result.NetworkPolicies) == 0 && len(result.PersistentVolumeClaims) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("resource applied")
 	}
 }

@@ -27,7 +27,7 @@ kind: Pod
 | Field | Required | Description |
 |---|---:|---|
 | `spec.containers` | yes | List of container specs. |
-| `spec.volumes` | no | Host directory volumes. Only `hostPath` is currently supported. |
+| `spec.volumes` | no | Host directory volumes and PVC-backed local volumes. |
 | `spec.hostUsers` | no | Set to `false` to run Pod-managed containers in rootless mode. Defaults to `true`. |
 
 ### Container Spec
@@ -65,6 +65,25 @@ Supported `hostPath.type` values:
 | `DirectoryOrCreate` | Raind creates the directory if it does not exist. |
 
 Unsupported hostPath types include `File`, `FileOrCreate`, `Socket`, `CharDevice`, and `BlockDevice`.
+
+### PersistentVolumeClaim Volumes
+
+Pods can mount a Raind-managed local PVC.
+
+```yaml
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+containers:
+  - name: app
+    image: busybox:latest
+    volumeMounts:
+      - name: data
+        mountPath: /data
+```
+
+PVC references are namespace-local. The PVC must already exist and be `Bound` when the Pod, ReplicaSet, or Deployment is applied.
 
 ### Volume Mounts
 

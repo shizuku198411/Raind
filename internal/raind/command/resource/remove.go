@@ -69,6 +69,13 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 		}
 		fmt.Printf("networkpolicy: %s removed\n", id)
 	}
+	for _, pvc := range result.PersistentVolumeClaims {
+		id := pvc.PVCId
+		if id == "" {
+			id = fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name)
+		}
+		fmt.Printf("persistentvolumeclaim: %s removed (reclaim: %s)\n", id, pvc.ReclaimPolicy)
+	}
 	for _, pod := range result.Pods {
 		id := pod.PodId
 		if id == "" {
@@ -104,7 +111,7 @@ func printDeletedResources(result resource.DeleteResponseModel) {
 		}
 		fmt.Printf("ingress: %s removed\n", id)
 	}
-	if len(result.Namespaces) == 0 && len(result.ConfigMaps) == 0 && len(result.Secrets) == 0 && len(result.NetworkPolicies) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
+	if len(result.Namespaces) == 0 && len(result.ConfigMaps) == 0 && len(result.Secrets) == 0 && len(result.NetworkPolicies) == 0 && len(result.PersistentVolumeClaims) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("no resources removed")
 	}
 }
