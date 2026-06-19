@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	coreConfigMap "raind/internal/condenser/core/configmap"
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
@@ -62,6 +63,13 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 			}
 			result.Ingresses = append(result.Ingresses, ingressResults...)
 
+		case "ConfigMap":
+			configMapResults, err := s.deleteConfigMap(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
+
 		case "Deployment":
 			deployResults, err := s.deleteDeployment(rawBytes)
 			if err != nil {
@@ -95,6 +103,35 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: name})
 	}
 
+	return result, nil
+}
+
+func (s *ResourceService) deleteConfigMap(rawBytes []byte) ([]DeleteConfigMapResult, error) {
+	manifest, err := coreConfigMap.DecodeK8sConfigMapManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	list, err := s.cfmHandler.GetConfigMapList()
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "list failed: %v", err)
+	}
+	var result []DeleteConfigMapResult
+	for _, cm := range list {
+		if cm.Name != manifest.Name || cm.Namespace != manifest.Namespace {
+			continue
+		}
+		if err := s.cfmHandler.RemoveConfigMap(cm.ConfigMapId); err != nil {
+			return nil, statusError(http.StatusInternalServerError, "remove failed: %v", err)
+		}
+		result = append(result, DeleteConfigMapResult{
+			ConfigMapId: cm.ConfigMapId,
+			Name:        cm.Name,
+			Namespace:   cm.Namespace,
+		})
+	}
+	if len(result) == 0 {
+		return nil, statusError(http.StatusNotFound, "configmap not found")
+	}
 	return result, nil
 }
 

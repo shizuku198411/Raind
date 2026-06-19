@@ -13,15 +13,29 @@ import (
 )
 
 type PodManifest struct {
-	Kind        string
-	Name        string
-	Namespace   string
-	Labels      map[string]string
-	Annotations map[string]string
-	Containers  []psm.ContainerTemplateSpec
-	Rootless    bool
-	Replicas    int
-	Selector    map[string]string
+	Kind             string
+	Name             string
+	Namespace        string
+	Labels           map[string]string
+	Annotations      map[string]string
+	Containers       []psm.ContainerTemplateSpec
+	ConfigMapEnvFrom []ContainerConfigMapRef
+	ConfigMapEnvKeys []ContainerConfigMapKeyRef
+	Rootless         bool
+	Replicas         int
+	Selector         map[string]string
+}
+
+type ContainerConfigMapRef struct {
+	ContainerIndex int
+	Name           string
+}
+
+type ContainerConfigMapKeyRef struct {
+	ContainerIndex int
+	EnvName        string
+	Name           string
+	Key            string
 }
 
 type manifestMeta struct {
@@ -81,6 +95,7 @@ type containerManifest struct {
 	Command      []string              `yaml:"command"`
 	Args         []string              `yaml:"args"`
 	Env          []manifestEnvVar      `yaml:"env"`
+	EnvFrom      []manifestEnvFrom     `yaml:"envFrom"`
 	Ports        []manifestPort        `yaml:"ports"`
 	Mount        []string              `yaml:"mount"`
 	SecurityCtx  manifestSecurityCtx   `yaml:"securityContext"`
@@ -98,8 +113,26 @@ type manifestCapabilities struct {
 }
 
 type manifestEnvVar struct {
-	Name  string `yaml:"name"`
-	Value string `yaml:"value"`
+	Name      string               `yaml:"name"`
+	Value     string               `yaml:"value"`
+	ValueFrom manifestEnvValueFrom `yaml:"valueFrom"`
+}
+
+type manifestEnvFrom struct {
+	ConfigMapRef manifestConfigMapRef `yaml:"configMapRef"`
+}
+
+type manifestEnvValueFrom struct {
+	ConfigMapKeyRef manifestConfigMapKeyRef `yaml:"configMapKeyRef"`
+}
+
+type manifestConfigMapRef struct {
+	Name string `yaml:"name"`
+}
+
+type manifestConfigMapKeyRef struct {
+	Name string `yaml:"name"`
+	Key  string `yaml:"key"`
 }
 
 type manifestPort struct {
@@ -319,14 +352,30 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 	}
 
 	specs := make([]psm.ContainerTemplateSpec, 0, len(podSpec.Containers))
-	for _, c := range podSpec.Containers {
+	var configMapEnvFrom []ContainerConfigMapRef
+	var configMapEnvKeys []ContainerConfigMapKeyRef
+	for i, c := range podSpec.Containers {
 		cmd := c.Command
 		if len(c.Args) > 0 {
 			cmd = append(append([]string{}, c.Command...), c.Args...)
 		}
 		envs := make([]string, 0, len(c.Env))
+		for _, ref := range c.EnvFrom {
+			if ref.ConfigMapRef.Name != "" {
+				configMapEnvFrom = append(configMapEnvFrom, ContainerConfigMapRef{ContainerIndex: i, Name: ref.ConfigMapRef.Name})
+			}
+		}
 		for _, e := range c.Env {
 			if e.Name == "" {
+				continue
+			}
+			if e.ValueFrom.ConfigMapKeyRef.Name != "" || e.ValueFrom.ConfigMapKeyRef.Key != "" {
+				configMapEnvKeys = append(configMapEnvKeys, ContainerConfigMapKeyRef{
+					ContainerIndex: i,
+					EnvName:        e.Name,
+					Name:           e.ValueFrom.ConfigMapKeyRef.Name,
+					Key:            e.ValueFrom.ConfigMapKeyRef.Key,
+				})
 				continue
 			}
 			envs = append(envs, e.Name+"="+e.Value)
@@ -371,12 +420,14 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 		})
 	}
 	return PodManifest{
-		Name:        meta.Name,
-		Namespace:   meta.Namespace,
-		Labels:      meta.Labels,
-		Annotations: meta.Annotations,
-		Containers:  specs,
-		Rootless:    rootlessFromHostUsers(podSpec.HostUsers),
+		Name:             meta.Name,
+		Namespace:        meta.Namespace,
+		Labels:           meta.Labels,
+		Annotations:      meta.Annotations,
+		Containers:       specs,
+		ConfigMapEnvFrom: configMapEnvFrom,
+		ConfigMapEnvKeys: configMapEnvKeys,
+		Rootless:         rootlessFromHostUsers(podSpec.HostUsers),
 	}, nil
 }
 

@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	corenamespace "raind/internal/condenser/core/namespace"
+	"raind/internal/condenser/core/pod"
+	"raind/internal/condenser/store/cfm"
+	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/ssm"
 
 	"github.com/stretchr/testify/assert"
@@ -88,14 +91,14 @@ func TestApplyRejectsUnsupportedKind(t *testing.T) {
 
 	_, err := service.Apply([]byte(`
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
-  name: app-config
+  name: app-secret
 `))
 
 	require.Error(t, err)
 	assert.Equal(t, http.StatusBadRequest, ErrorStatus(err, http.StatusOK))
-	assert.Contains(t, err.Error(), "unsupported kind: ConfigMap")
+	assert.Contains(t, err.Error(), "unsupported kind: Secret")
 }
 
 func TestApplyReturnsManifestWarnings(t *testing.T) {
@@ -119,6 +122,52 @@ metadata:
 		Field:   "metadata.generateName",
 		Message: "metadata.generateName is ignored; set metadata.name explicitly",
 	}, result.Warnings[0])
+}
+
+func TestApplyStoresConfigMap(t *testing.T) {
+	cfmHandler := newFakeCfmHandler()
+	service := &ResourceService{cfmHandler: cfmHandler}
+
+	result, err := service.Apply([]byte(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: demo
+data:
+  APP_ENV: test
+`))
+
+	require.NoError(t, err)
+	require.Len(t, result.ConfigMaps, 1)
+	assert.Equal(t, "app-config", result.ConfigMaps[0].Name)
+	stored, err := cfmHandler.GetConfigMapByName("app-config", "demo")
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Data["APP_ENV"])
+}
+
+func TestResolveConfigMapEnv(t *testing.T) {
+	cfmHandler := newFakeCfmHandler()
+	require.NoError(t, cfmHandler.StoreConfigMap("cm-1", cfm.ConfigMapInfo{
+		Name:      "app-config",
+		Namespace: "demo",
+		Data: map[string]string{
+			"APP_ENV":     "test",
+			"LOG_LEVEL":   "info",
+			"OVERRIDE_ME": "from-envfrom",
+		},
+	}))
+	service := &ResourceService{cfmHandler: cfmHandler}
+	manifest := podManifestForConfigMapEnv()
+
+	require.NoError(t, service.resolveConfigMapEnv(&manifest))
+	require.Len(t, manifest.Containers, 1)
+	assert.ElementsMatch(t, []string{
+		"APP_ENV=test",
+		"LOG_LEVEL=info",
+		"OVERRIDE_ME=explicit",
+		"SINGLE_KEY=test",
+	}, manifest.Containers[0].Env)
 }
 
 func TestDeleteReturnsManifestWarnings(t *testing.T) {
@@ -178,6 +227,93 @@ type fakeSsmHandler struct {
 	events   *[]string
 	storeErr error
 	services []ssm.ServiceInfo
+}
+
+type fakeCfmHandler struct {
+	items map[string]cfm.ConfigMapInfo
+}
+
+func newFakeCfmHandler() *fakeCfmHandler {
+	return &fakeCfmHandler{items: map[string]cfm.ConfigMapInfo{}}
+}
+
+func (h *fakeCfmHandler) StoreConfigMap(configMapId string, spec cfm.ConfigMapInfo) error {
+	spec.ConfigMapId = configMapId
+	if spec.Namespace == "" {
+		spec.Namespace = "default"
+	}
+	if spec.Data == nil {
+		spec.Data = map[string]string{}
+	}
+	h.items[configMapId] = spec
+	return nil
+}
+
+func (h *fakeCfmHandler) GetConfigMapList() ([]cfm.ConfigMapInfo, error) {
+	out := make([]cfm.ConfigMapInfo, 0, len(h.items))
+	for _, item := range h.items {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (h *fakeCfmHandler) GetConfigMapById(configMapId string) (cfm.ConfigMapInfo, error) {
+	item, ok := h.items[configMapId]
+	if !ok {
+		return cfm.ConfigMapInfo{}, errors.New("configmap not found")
+	}
+	return item, nil
+}
+
+func (h *fakeCfmHandler) GetConfigMapByName(name, namespace string) (cfm.ConfigMapInfo, error) {
+	if namespace == "" {
+		namespace = "default"
+	}
+	for _, item := range h.items {
+		if item.Name == name && item.Namespace == namespace {
+			return item, nil
+		}
+	}
+	return cfm.ConfigMapInfo{}, errors.New("configmap not found")
+}
+
+func (h *fakeCfmHandler) RemoveConfigMap(configMapId string) error {
+	if _, ok := h.items[configMapId]; !ok {
+		return errors.New("configmap not found")
+	}
+	delete(h.items, configMapId)
+	return nil
+}
+
+func (h *fakeCfmHandler) IsNameAlreadyUsed(name, namespace string) bool {
+	if namespace == "" {
+		namespace = "default"
+	}
+	for _, item := range h.items {
+		if item.Name == name && item.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func podManifestForConfigMapEnv() pod.PodManifest {
+	return pod.PodManifest{
+		Name:      "app",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{
+			{
+				Name: "app",
+				Env:  []string{"OVERRIDE_ME=explicit"},
+			},
+		},
+		ConfigMapEnvFrom: []pod.ContainerConfigMapRef{
+			{ContainerIndex: 0, Name: "app-config"},
+		},
+		ConfigMapEnvKeys: []pod.ContainerConfigMapKeyRef{
+			{ContainerIndex: 0, EnvName: "SINGLE_KEY", Name: "app-config", Key: "APP_ENV"},
+		},
+	}
 }
 
 func (h *fakeSsmHandler) StoreService(serviceId string, spec ssm.ServiceInfo) error {

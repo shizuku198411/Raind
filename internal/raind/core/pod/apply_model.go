@@ -11,6 +11,7 @@ type ApplyResponseDataModel struct {
 	Services    []ServiceInfo    `json:"services"`
 	Ingresses   []IngressInfo    `json:"ingresses"`
 	Namespaces  []NamespaceInfo  `json:"namespaces"`
+	ConfigMaps  []ConfigMapInfo  `json:"configMaps"`
 	Warnings    []WarningInfo    `json:"warnings,omitempty"`
 }
 
@@ -51,6 +52,12 @@ type IngressInfo struct {
 type NamespaceInfo struct {
 	Name    string `json:"name"`
 	Network string `json:"network"`
+}
+
+type ConfigMapInfo struct {
+	ConfigMapId string `json:"configMapId"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 }
 
 type WarningInfo struct {

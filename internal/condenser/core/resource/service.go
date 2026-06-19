@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
+	coreConfigMap "raind/internal/condenser/core/configmap"
 	"raind/internal/condenser/core/container"
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
 	"raind/internal/condenser/core/pod"
 	coreService "raind/internal/condenser/core/service"
+	"raind/internal/condenser/store/cfm"
 	"raind/internal/condenser/store/ism"
 	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/store/ssm"
@@ -28,6 +31,7 @@ func NewResourceService() *ResourceService {
 		psmHandler:       psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 		ssmHandler:       ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
 		ismHandler:       ism.NewIsmManager(ism.NewIsmStore(utils.IsmStorePath)),
+		cfmHandler:       cfm.NewCfmManager(cfm.NewCfmStore(utils.CfmStorePath)),
 	}
 }
 
@@ -38,6 +42,7 @@ type ResourceService struct {
 	psmHandler       psm.PsmHandler
 	ssmHandler       ssm.SsmHandler
 	ismHandler       ism.IsmHandler
+	cfmHandler       cfm.CfmHandler
 }
 
 func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
@@ -113,6 +118,16 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			rollback = append(rollback, undo)
 			result.Ingresses = append(result.Ingresses, ingressResult)
 
+		case "ConfigMap":
+			configMapResult, undo, warnings, err := s.applyConfigMap(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				return ApplyResult{}, err
+			}
+			rollback = append(rollback, undo)
+			result.ConfigMaps = append(result.ConfigMaps, configMapResult)
+			result.Warnings = append(result.Warnings, warnings...)
+
 		case "Pod", "ReplicaSet", "Deployment":
 			if err := s.applyPodResource(rawBytes, &result, &rollback); err != nil {
 				rollbackApplied()
@@ -126,6 +141,41 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 	}
 
 	return result, nil
+}
+
+func (s *ResourceService) applyConfigMap(rawBytes []byte) (ApplyConfigMapResult, func(), []Warning, error) {
+	manifest, err := coreConfigMap.DecodeK8sConfigMapManifest(rawBytes)
+	if err != nil {
+		return ApplyConfigMapResult{}, nil, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	if s.cfmHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
+		return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusBadRequest, "name already used by other configmap")
+	}
+	configMapId := utils.NewUlid()
+	if err := s.cfmHandler.StoreConfigMap(configMapId, cfm.ConfigMapInfo{
+		Name:      manifest.Name,
+		Namespace: manifest.Namespace,
+		Data:      manifest.Data,
+	}); err != nil {
+		return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusInternalServerError, "configmap store failed: %v", err)
+	}
+	warnings := make([]Warning, 0, len(manifest.Warnings))
+	for _, warning := range manifest.Warnings {
+		warnings = append(warnings, Warning{
+			Kind:      "ConfigMap",
+			Name:      manifest.Name,
+			Namespace: manifest.Namespace,
+			Field:     warning.Field,
+			Message:   warning.Message,
+		})
+	}
+	return ApplyConfigMapResult{
+			ConfigMapId: configMapId,
+			Name:        manifest.Name,
+			Namespace:   manifest.Namespace,
+		}, func() {
+			_ = s.cfmHandler.RemoveConfigMap(configMapId)
+		}, warnings, nil
 }
 
 func (s *ResourceService) applyService(rawBytes []byte) (ApplyServiceResult, func(), error) {
@@ -197,6 +247,9 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 		return statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 	}
 	m := manifests[0]
+	if err := s.resolveConfigMapEnv(&m); err != nil {
+		return statusMessage(http.StatusBadRequest, err.Error())
+	}
 	if m.Kind == "Deployment" {
 		return s.applyDeploymentManifest(m, result, rollback)
 	}
@@ -204,6 +257,77 @@ func (s *ResourceService) applyPodResource(rawBytes []byte, result *ApplyResult,
 		return s.applyReplicaSetManifest(m, result, rollback)
 	}
 	return s.applyPodManifest(m, result, rollback)
+}
+
+func (s *ResourceService) resolveConfigMapEnv(m *pod.PodManifest) error {
+	if len(m.ConfigMapEnvFrom) == 0 && len(m.ConfigMapEnvKeys) == 0 {
+		return nil
+	}
+	envByContainer := make([]map[string]string, len(m.Containers))
+	for i := range m.Containers {
+		envByContainer[i] = envListToMap(m.Containers[i].Env)
+	}
+	for _, ref := range m.ConfigMapEnvFrom {
+		if ref.ContainerIndex < 0 || ref.ContainerIndex >= len(m.Containers) {
+			return fmt.Errorf("configmap envFrom reference has invalid container index")
+		}
+		cm, err := s.cfmHandler.GetConfigMapByName(ref.Name, m.Namespace)
+		if err != nil {
+			return fmt.Errorf("configmap %s/%s not found: %w", m.Namespace, ref.Name, err)
+		}
+		for k, v := range cm.Data {
+			if _, exists := envByContainer[ref.ContainerIndex][k]; !exists {
+				envByContainer[ref.ContainerIndex][k] = v
+			}
+		}
+	}
+	for _, ref := range m.ConfigMapEnvKeys {
+		if ref.ContainerIndex < 0 || ref.ContainerIndex >= len(m.Containers) {
+			return fmt.Errorf("configmap key reference has invalid container index")
+		}
+		if ref.Name == "" || ref.Key == "" {
+			return fmt.Errorf("configmapKeyRef requires name and key")
+		}
+		cm, err := s.cfmHandler.GetConfigMapByName(ref.Name, m.Namespace)
+		if err != nil {
+			return fmt.Errorf("configmap %s/%s not found: %w", m.Namespace, ref.Name, err)
+		}
+		value, ok := cm.Data[ref.Key]
+		if !ok {
+			return fmt.Errorf("configmap %s/%s key %q not found", m.Namespace, ref.Name, ref.Key)
+		}
+		envByContainer[ref.ContainerIndex][ref.EnvName] = value
+	}
+	for i := range m.Containers {
+		m.Containers[i].Env = envMapToList(envByContainer[i])
+	}
+	return nil
+}
+
+func envListToMap(env []string) map[string]string {
+	out := map[string]string{}
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			continue
+		}
+		out[parts[0]] = parts[1]
+	}
+	return out
+}
+
+func envMapToList(env map[string]string) []string {
+	out := make([]string, 0, len(env))
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := env[k]
+		out = append(out, k+"="+v)
+	}
+	return out
 }
 
 func (s *ResourceService) applyDeploymentManifest(m pod.PodManifest, result *ApplyResult, rollback *[]func()) error {

@@ -11,6 +11,7 @@ import (
 
 	bottleHandler "raind/internal/condenser/api/http/bottle"
 	certHandler "raind/internal/condenser/api/http/cert"
+	configMapHandler "raind/internal/condenser/api/http/configmap"
 	containerHandler "raind/internal/condenser/api/http/container"
 	hookHandler "raind/internal/condenser/api/http/hook"
 	imageHandler "raind/internal/condenser/api/http/image"
@@ -67,6 +68,7 @@ func NewApiRouter() *chi.Mux {
 	namespaceHandler := namespaceHandler.NewRequestHandler()
 	ingressHandler := ingressHandler.NewRequestHandler()
 	securityProfileHandler := securityProfileHandler.NewRequestHandler()
+	configMapHandler := configMapHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
@@ -150,6 +152,11 @@ func NewApiRouter() *chi.Mux {
 
 	// == ingresses ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/ingresses", ingressHandler.GetIngressList) // list ingress
+
+	// == configmaps ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/configmaps", configMapHandler.GetConfigMapList)
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/configmaps/{idOrName}", configMapHandler.GetConfigMap)
+	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/configmaps/{idOrName}", configMapHandler.RemoveConfigMap)
 
 	// == namespaces ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces", namespaceHandler.GetNamespaceList)

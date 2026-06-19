@@ -14,6 +14,7 @@ BSM_STORE="/etc/raind/store/container/bsm.json"
 CSM_STORE="/etc/raind/store/container/csm.json"
 IPAM_STORE="/etc/raind/store/network/ipam.json"
 ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
+CFM_STORE="/etc/raind/store/resource/configmap/cfm.json"
 NPM_STORE="/etc/raind/store/network/npm.json"
 NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
 PSM_STORE="/etc/raind/store/resource/pod/psm.json"
@@ -83,6 +84,7 @@ prepare_runtime() {
     /etc/raind/store/image \
     /etc/raind/store/network \
     /etc/raind/store/resource/ingress \
+    /etc/raind/store/resource/configmap \
     /etc/raind/store/resource/namespace \
     /etc/raind/store/resource/pod \
     /etc/raind/store/resource/service \
@@ -151,6 +153,7 @@ reset_resource_runtime_state() {
     "${CSM_STORE}" \
     "${IPAM_STORE}" \
     "${ISM_STORE}" \
+    "${CFM_STORE}" \
     "${NPM_STORE}" \
     "${NSM_STORE}" \
     "${PSM_STORE}" \
@@ -1447,6 +1450,77 @@ YAML
   wait_resource_namespace_absent pod-namespace-removed "${ns}"
 }
 
+test_resource_configmap() {
+  local yaml="${E2E_WORK_DIR}/configmap.yaml"
+  local ns="e2e-cm-ns-${SUFFIX}"
+
+  log "resource configmap test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ${ns}
+data:
+  APP_ENV: e2e
+  LOG_LEVEL: info
+  OVERRIDE_ME: from-envfrom
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-cm-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-cm-pod
+spec:
+  containers:
+  - name: app
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    envFrom:
+    - configMapRef:
+        name: app-config
+    env:
+    - name: SINGLE_KEY
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: APP_ENV
+    - name: OVERRIDE_ME
+      value: explicit
+YAML
+  run_resource_apply_with_retry configmap-apply "${yaml}"
+  assert_output_contains configmap-apply "configmap:"
+  assert_output_contains configmap-apply "pod:"
+  wait_pod_row_ready configmap-pod-ready e2e-cm-pod resource pod ls --namespace "${ns}"
+
+  local pod_id container_name container_id
+  pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/configmap-apply.out")"
+  [[ -n "${pod_id}" ]] || fail "could not extract configmap pod id"
+  container_name="app-${pod_id: -8}"
+  container_id="$(resolve_container_id "${container_name}" "configmap-app")"
+  run_raind_allow_empty configmap-env-app container exec "${container_id}" sh -c 'test "$APP_ENV" = e2e'
+  run_raind_allow_empty configmap-env-single container exec "${container_id}" sh -c 'test "$SINGLE_KEY" = e2e'
+  run_raind_allow_empty configmap-env-override container exec "${container_id}" sh -c 'test "$OVERRIDE_ME" = explicit'
+  run_raind configmap-ls resource configmap ls --namespace "${ns}"
+  assert_output_contains configmap-ls "app-config"
+
+  run_raind configmap-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains configmap-rm-manifest "configmap:"
+  assert_output_contains configmap-rm-manifest "pod:"
+  assert_output_contains configmap-rm-manifest "namespace:"
+  wait_resource_namespace_absent configmap-namespace-removed "${ns}"
+}
+
 test_resource_replicaset() {
   local yaml="${E2E_WORK_DIR}/replicaset.yaml"
   local ns="e2e-rs-ns-${SUFFIX}"
@@ -1595,6 +1669,14 @@ metadata:
   name: ${ns}
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-yaml-config
+  namespace: ${ns}
+data:
+  APP_ENV: all-kinds
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: e2e-yaml-pod
@@ -1605,6 +1687,9 @@ spec:
   containers:
   - name: nginx
     image: nginx:latest
+    envFrom:
+    - configMapRef:
+        name: e2e-yaml-config
 ---
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -1660,6 +1745,7 @@ spec:
 YAML
   run_resource_apply_with_retry yaml-apply "${yaml}"
   assert_output_contains yaml-apply "namespace:"
+  assert_output_contains yaml-apply "configmap:"
   assert_output_contains yaml-apply "pod:"
   assert_output_contains yaml-apply "replicaset:"
   assert_output_contains yaml-apply "deployment:"
@@ -1669,6 +1755,7 @@ YAML
   wait_http_ok "http://${HOST_ADDR}:${port}/"
   run_raind yaml-rm resource rm -f "${yaml}"
   assert_output_contains yaml-rm "namespace:"
+  assert_output_contains yaml-rm "configmap:"
   assert_output_contains yaml-rm "pod:"
   assert_output_contains yaml-rm "replicaset:"
   assert_output_contains yaml-rm "deployment:"
@@ -1706,6 +1793,7 @@ main() {
   test_bottle_deploy
   test_resource_namespace
   test_resource_pod
+  test_resource_configmap
   test_resource_replicaset
   test_resource_deployment
   test_resource_service

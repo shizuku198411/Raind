@@ -53,6 +53,9 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 		}
 		fmt.Printf("namespace: %s applied (network: %s)\n", ns.Name, ns.Network)
 	}
+	for _, cm := range result.ConfigMaps {
+		fmt.Printf("configmap: %s applied\n", cm.ConfigMapId)
+	}
 	for _, p := range result.Pods {
 		if p.ReplicaSetId != "" {
 			fmt.Printf("replicaset: %s applied\n", p.ReplicaSetId)
@@ -76,7 +79,7 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 		}
 		fmt.Printf("ingress: %s applied\n", in.IngressId)
 	}
-	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
+	if len(result.Namespaces) == 0 && len(result.ConfigMaps) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("resource applied")
 	}
 }

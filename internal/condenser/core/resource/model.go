@@ -7,6 +7,7 @@ type ApplyResult struct {
 	Services    []ApplyServiceResult    `json:"services"`
 	Ingresses   []ApplyIngressResult    `json:"ingresses"`
 	Namespaces  []ApplyNamespaceResult  `json:"namespaces"`
+	ConfigMaps  []ApplyConfigMapResult  `json:"configMaps"`
 	Warnings    []Warning               `json:"warnings,omitempty"`
 }
 
@@ -36,6 +37,12 @@ type ApplyNamespaceResult struct {
 	Network string `json:"network"`
 }
 
+type ApplyConfigMapResult struct {
+	ConfigMapId string `json:"configMapId"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+}
+
 type ApplyReplicaSetResult struct {
 	ReplicaSetId string `json:"replicaSetId"`
 	Name         string `json:"name"`
@@ -56,6 +63,7 @@ type DeleteResult struct {
 	Services    []DeleteServiceResult    `json:"services"`
 	Ingresses   []DeleteIngressResult    `json:"ingresses"`
 	Namespaces  []DeleteNamespaceResult  `json:"namespaces"`
+	ConfigMaps  []DeleteConfigMapResult  `json:"configMaps"`
 	Warnings    []Warning                `json:"warnings,omitempty"`
 }
 
@@ -91,6 +99,12 @@ type DeleteDeploymentResult struct {
 
 type DeleteNamespaceResult struct {
 	Name string `json:"name"`
+}
+
+type DeleteConfigMapResult struct {
+	ConfigMapId string `json:"configMapId"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 }
 
 type Warning struct {

@@ -142,6 +142,21 @@ raind resource service show <service-id>
 raind resource service rm <service-id>
 ```
 
+ConfigMap commands:
+
+```sh
+raind resource configmap ls
+raind resource configmap ls --namespace <namespace>
+raind resource configmap show <configmap-id|name> [--namespace <namespace>]
+raind resource configmap rm <configmap-id|name> [--namespace <namespace>]
+```
+
+The short alias `cm` can be used for `configmap`:
+
+```sh
+raind resource cm ls
+```
+
 Namespace commands:
 
 ```sh
