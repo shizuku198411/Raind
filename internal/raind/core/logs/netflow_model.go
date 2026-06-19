@@ -42,4 +42,5 @@ type Endpoint struct {
 	Port          int    `json:"port,omitempty"`
 	ContainerId   string `json:"container_id,omitempty"`
 	ContainerName string `json:"container_name,omitempty"`
+	DisplayName   string `json:"display_name,omitempty"`
 }

@@ -179,6 +179,9 @@ func (s *ServiceNetflowLog) formatNetflowLogLine(l *NetflowLog) string {
 
 func (s *ServiceNetflowLog) endpointLabel(e Endpoint) string {
 	if e.Kind == "container" {
+		if e.DisplayName != "" && e.DisplayName != "container_unresolved" {
+			return e.DisplayName
+		}
 		if e.ContainerName != "" && e.ContainerName != "container_unresolved" {
 			return e.ContainerName
 		}

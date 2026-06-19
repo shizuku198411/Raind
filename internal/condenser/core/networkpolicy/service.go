@@ -225,8 +225,8 @@ func (s *Service) addBackendPolicy(policySet map[string]npm.Policy, networkPolic
 	policySet[key] = npm.Policy{
 		Id:          utils.NewUlid(),
 		Status:      "before_commit",
-		Source:      npm.HostInfo{ContainerName: src.container.ContainerName},
-		Destination: npm.HostInfo{ContainerName: dst.container.ContainerName},
+		Source:      npm.HostInfo{ContainerName: src.container.ContainerName, DisplayName: src.pod.Name},
+		Destination: npm.HostInfo{ContainerName: dst.container.ContainerName, DisplayName: dst.pod.Name},
 		Protocol:    rule.Protocol,
 		DestPort:    rule.Port,
 		Comment:     fmt.Sprintf("NetworkPolicy %s/%s %s %s->%s", manifest.Namespace, manifest.Name, rule.Direction, src.pod.Name, dst.pod.Name),

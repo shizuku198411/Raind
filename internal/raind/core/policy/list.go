@@ -149,14 +149,21 @@ func (s *ServicePolicyList) printPolicyList(chainName string, mode string, Polic
 		return strconv.Itoa(port)
 	}
 
+	displayHost := func(host HostInfoModel) string {
+		if host.DisplayName != "" {
+			return host.DisplayName
+		}
+		return host.ContainerName
+	}
+
 	// data
 	for _, p := range PolicyList {
 		flag := flagMap[p.Status]
 		id := p.Id
-		src := p.Source.ContainerName
+		src := displayHost(p.Source)
 		var dst string
 		if chainName == "RAIND-EW" {
-			dst = p.Destination.ContainerName
+			dst = displayHost(p.Destination)
 		} else {
 			dst = p.Destination.Address
 		}
