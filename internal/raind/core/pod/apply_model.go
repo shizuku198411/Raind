@@ -11,6 +11,7 @@ type ApplyResponseDataModel struct {
 	Services    []ServiceInfo    `json:"services"`
 	Ingresses   []IngressInfo    `json:"ingresses"`
 	Namespaces  []NamespaceInfo  `json:"namespaces"`
+	Warnings    []WarningInfo    `json:"warnings,omitempty"`
 }
 
 type PodInfo struct {
@@ -50,6 +51,14 @@ type IngressInfo struct {
 type NamespaceInfo struct {
 	Name    string `json:"name"`
 	Network string `json:"network"`
+}
+
+type WarningInfo struct {
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Field     string `json:"field,omitempty"`
+	Message   string `json:"message"`
 }
 
 type ApplyResponseModel struct {

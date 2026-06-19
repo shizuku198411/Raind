@@ -41,6 +41,15 @@ type DeleteResponseModel struct {
 	Services    []DeletedServiceModel    `json:"services,omitempty"`
 	Ingresses   []DeletedIngressModel    `json:"ingresses,omitempty"`
 	Namespaces  []DeletedNamespaceModel  `json:"namespaces,omitempty"`
+	Warnings    []WarningModel           `json:"warnings,omitempty"`
+}
+
+type WarningModel struct {
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Field     string `json:"field,omitempty"`
+	Message   string `json:"message"`
 }
 
 type DeleteApiResponseModel struct {

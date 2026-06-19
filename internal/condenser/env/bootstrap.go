@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	osuser "os/user"
@@ -60,6 +61,10 @@ type BootstrapManager struct {
 func (m *BootstrapManager) SetupRuntime() error {
 	// 1. create runtime directory
 	if err := m.setupRuntimeDirectory(); err != nil {
+		return err
+	}
+
+	if err := m.migrateStoreLayout(); err != nil {
 		return err
 	}
 
@@ -125,6 +130,14 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.ImageRootDir,
 		utils.LayerRootDir,
 		utils.StoreDir,
+		utils.StoreContainerDir,
+		utils.StoreImageDir,
+		utils.StoreNetworkDir,
+		utils.StoreResourceDir,
+		filepath.Dir(utils.PsmStorePath),
+		filepath.Dir(utils.SsmStorePath),
+		filepath.Dir(utils.IsmStorePath),
+		filepath.Dir(utils.NsmStorePath),
 		utils.AuditLogDir,
 		utils.VarLogDir,
 		utils.CertDir,
@@ -137,6 +150,75 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		}
 	}
 	return nil
+}
+
+type storeMigration struct {
+	Name string
+	Old  string
+	New  string
+}
+
+func (m *BootstrapManager) migrateStoreLayout() error {
+	migrations := []storeMigration{
+		{Name: "ipam", Old: utils.OldIpamStorePath, New: utils.IpamStorePath},
+		{Name: "csm", Old: utils.OldCsmStorePath, New: utils.CsmStorePath},
+		{Name: "psm", Old: utils.OldPsmStorePath, New: utils.PsmStorePath},
+		{Name: "ilm", Old: utils.OldIlmStorePath, New: utils.IlmStorePath},
+		{Name: "ssm", Old: utils.OldSsmStorePath, New: utils.SsmStorePath},
+		{Name: "ism", Old: utils.OldIsmStorePath, New: utils.IsmStorePath},
+		{Name: "npm", Old: utils.OldNpmStorePath, New: utils.NpmStorePath},
+		{Name: "bsm", Old: utils.OldBsmStorePath, New: utils.BsmStorePath},
+		{Name: "nsm", Old: utils.OldNsmStorePath, New: utils.NsmStorePath},
+	}
+	for _, migration := range migrations {
+		if err := m.migrateStoreFile(migration); err != nil {
+			return err
+		}
+		if migration.Name == "npm" {
+			if err := m.migrateStoreFile(storeMigration{Name: "npm running backup", Old: migration.Old + ".running", New: migration.New + ".running"}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *BootstrapManager) migrateStoreFile(migration storeMigration) error {
+	oldExists, err := m.pathExists(migration.Old)
+	if err != nil {
+		return err
+	}
+	if !oldExists {
+		return nil
+	}
+	newExists, err := m.pathExists(migration.New)
+	if err != nil {
+		return err
+	}
+	if newExists {
+		log.Printf("store migration skipped: %s old=%s new=%s reason=new store already exists", migration.Name, migration.Old, migration.New)
+		return nil
+	}
+	if err := m.filesystemHandler.MkdirAll(filepath.Dir(migration.New), 0o755); err != nil {
+		return err
+	}
+	if err := m.filesystemHandler.Rename(migration.Old, migration.New); err != nil {
+		return fmt.Errorf("migrate %s store from %s to %s: %w", migration.Name, migration.Old, migration.New, err)
+	}
+	log.Printf("store migration completed: %s old=%s new=%s", migration.Name, migration.Old, migration.New)
+	return nil
+}
+
+func (m *BootstrapManager) pathExists(path string) (bool, error) {
+	f, err := m.filesystemHandler.Open(path)
+	if err == nil {
+		_ = f.Close()
+		return true, nil
+	}
+	if m.filesystemHandler.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (m *BootstrapManager) setupNsm() error {

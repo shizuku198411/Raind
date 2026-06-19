@@ -68,12 +68,21 @@ The default host-side layout is:
   image/
     layers/
   store/
-    csm.json
-    ipam.json
-    ilm.json
-    psm.json
-    ssm.json
-    ism.json
+    container/
+      csm.json
+      bsm.json
+    image/
+      ilm.json
+    network/
+      ipam.json
+      npm.json
+    resource/
+      pod/
+        psm.json
+      service/
+        ssm.json
+      ingress/
+        ism.json
 
 /var/log/raind/
   raind_audit.jsonl

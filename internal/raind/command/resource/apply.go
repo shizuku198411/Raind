@@ -45,6 +45,7 @@ func runApply(ctx *cli.Context) error {
 }
 
 func printAppliedResources(result pod.ApplyResponseDataModel) {
+	printApplyWarnings(result.Warnings)
 	for _, ns := range result.Namespaces {
 		if ns.Network == "" {
 			fmt.Printf("namespace: %s applied\n", ns.Name)
@@ -78,4 +79,36 @@ func printAppliedResources(result pod.ApplyResponseDataModel) {
 	if len(result.Namespaces) == 0 && len(result.Pods) == 0 && len(result.ReplicaSets) == 0 && len(result.Deployments) == 0 && len(result.Services) == 0 && len(result.Ingresses) == 0 {
 		fmt.Println("resource applied")
 	}
+}
+
+func printApplyWarnings(warnings []pod.WarningInfo) {
+	for _, warning := range warnings {
+		fmt.Printf("warning: %s\n", formatWarning(warning.Kind, warning.Namespace, warning.Name, warning.Field, warning.Message))
+	}
+}
+
+func formatWarning(kind, namespace, name, field, message string) string {
+	var target string
+	if kind != "" {
+		target = kind
+	}
+	if namespace != "" || name != "" {
+		if target != "" {
+			target += " "
+		}
+		if namespace != "" {
+			target += namespace + "/"
+		}
+		target += name
+	}
+	if field != "" {
+		if target != "" {
+			target += " "
+		}
+		target += field
+	}
+	if target == "" {
+		return message
+	}
+	return target + ": " + message
 }

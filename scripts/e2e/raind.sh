@@ -10,6 +10,14 @@ LOG_PATH="${E2E_WORK_DIR}/condenser.log"
 PID=""
 SUFFIX="${E2E_SUFFIX:-$$}"
 HOST_ADDR=""
+BSM_STORE="/etc/raind/store/container/bsm.json"
+CSM_STORE="/etc/raind/store/container/csm.json"
+IPAM_STORE="/etc/raind/store/network/ipam.json"
+ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
+NPM_STORE="/etc/raind/store/network/npm.json"
+NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
+PSM_STORE="/etc/raind/store/resource/pod/psm.json"
+SSM_STORE="/etc/raind/store/resource/service/ssm.json"
 
 log() {
   printf '\r\033[K==> %s\n' "$*"
@@ -71,6 +79,13 @@ prepare_runtime() {
     /etc/raind/log \
     /etc/raind/cert \
     /etc/raind/store \
+    /etc/raind/store/container \
+    /etc/raind/store/image \
+    /etc/raind/store/network \
+    /etc/raind/store/resource/ingress \
+    /etc/raind/store/resource/namespace \
+    /etc/raind/store/resource/pod \
+    /etc/raind/store/resource/service \
     /etc/raind/container \
     /etc/raind/image/layers \
     /var/log/raind \
@@ -132,14 +147,14 @@ reset_resource_runtime_state() {
 
   sudo_cmd rm -rf /etc/raind/container/*
   sudo_cmd rm -f \
-    /etc/raind/store/bsm.json \
-    /etc/raind/store/csm.json \
-    /etc/raind/store/ipam.json \
-    /etc/raind/store/ism.json \
-    /etc/raind/store/npm.json \
-    /etc/raind/store/nsm.json \
-    /etc/raind/store/psm.json \
-    /etc/raind/store/ssm.json
+    "${BSM_STORE}" \
+    "${CSM_STORE}" \
+    "${IPAM_STORE}" \
+    "${ISM_STORE}" \
+    "${NPM_STORE}" \
+    "${NSM_STORE}" \
+    "${PSM_STORE}" \
+    "${SSM_STORE}"
 
   if sudo_cmd test -d /run/netns; then
     sudo_cmd sh -c 'for ns in /run/netns/rn_*; do [ -e "$ns" ] || continue; umount "$ns" 2>/dev/null || true; rm -f "$ns"; done'
@@ -278,7 +293,7 @@ run_raind_retry_transient() {
 
 container_is_absent() {
   local cid="$1"
-  local csm_path="/etc/raind/store/csm.json"
+  local csm_path="${CSM_STORE}"
 
   if sudo_cmd test -e "/etc/raind/container/${cid}"; then
     return 1
@@ -467,7 +482,7 @@ csm_exit_status_matches() {
   local expected_exit_code="$2"
   local expected_reason="$3"
   local expected_message="$4"
-  local csm_path="/etc/raind/store/csm.json"
+  local csm_path="${CSM_STORE}"
 
   sudo_cmd test -f "${csm_path}" && sudo_cmd jq -e \
     --arg cid "${cid}" \
@@ -484,7 +499,7 @@ assert_container_exit_status() {
   local expected_reason="$3"
   local expected_message="$4"
   local state_path="/etc/raind/container/${cid}/state.json"
-  local csm_path="/etc/raind/store/csm.json"
+  local csm_path="${CSM_STORE}"
 
   # The runtime shim writes the final status to state.json first. Condenser's
   # monitor then observes process-down and reconciles CSM from that runtime
@@ -513,7 +528,7 @@ assert_container_exit_status() {
 wait_container_stopped() {
   local cid="$1"
   local state_path="/etc/raind/container/${cid}/state.json"
-  local csm_path="/etc/raind/store/csm.json"
+  local csm_path="${CSM_STORE}"
 
   for _ in $(seq 1 120); do
     if sudo_cmd test -f "${state_path}" && sudo_cmd jq -e '.status == "stopped"' "${state_path}" >/dev/null 2>&1 && \
@@ -1110,8 +1125,8 @@ test_login_rootless_bind_mount() {
 wait_rootless_pod_runtime_state() {
   local ns="$1"
   local pod_name="$2"
-  local psm_path="/etc/raind/store/psm.json"
-  local csm_path="/etc/raind/store/csm.json"
+  local psm_path="${PSM_STORE}"
+  local csm_path="${CSM_STORE}"
   local pod_id
   local container_id
   local container_pid

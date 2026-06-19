@@ -8,6 +8,8 @@ CONDENSER_BIN="${ROOT_DIR}/bin/condenser"
 E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/raind-cli-e2e}"
 LOG_PATH="${E2E_WORK_DIR}/condenser.log"
 PID=""
+CSM_STORE="/etc/raind/store/container/csm.json"
+PSM_STORE="/etc/raind/store/resource/pod/psm.json"
 
 log() {
   printf '==> %s\n' "$*"
@@ -19,13 +21,13 @@ fail() {
     printf '%s\n' '--- condenser log ---' >&2
     tail -120 "${LOG_PATH}" >&2 || true
   fi
-  if sudo_cmd test -f /etc/raind/store/csm.json 2>/dev/null; then
+  if sudo_cmd test -f "${CSM_STORE}" 2>/dev/null; then
     printf '%s\n' '--- csm.json ---' >&2
-    sudo_cmd cat /etc/raind/store/csm.json >&2 || true
+    sudo_cmd cat "${CSM_STORE}" >&2 || true
   fi
-  if sudo_cmd test -f /etc/raind/store/psm.json 2>/dev/null; then
+  if sudo_cmd test -f "${PSM_STORE}" 2>/dev/null; then
     printf '%s\n' '--- psm.json ---' >&2
-    sudo_cmd cat /etc/raind/store/psm.json >&2 || true
+    sudo_cmd cat "${PSM_STORE}" >&2 || true
   fi
   if sudo_cmd test -d /etc/raind/container 2>/dev/null; then
     printf '%s\n' '--- recent container logs ---' >&2
@@ -462,7 +464,7 @@ JSON
   }
   rootless_pod_id="$(jq -r '.data.podId // .data.id' "${rootless_pod_out}")"
   local rootless_psm_dump="${E2E_WORK_DIR}/rootless-pod-psm.json"
-  sudo_cmd cat /etc/raind/store/psm.json >"${rootless_psm_dump}"
+  sudo_cmd cat "${PSM_STORE}" >"${rootless_psm_dump}"
   jq -e --arg pod "${rootless_pod_id}" --arg name "${rootless_pod_name}" '
     (.pods[$pod] // (.pods | to_entries | map(select(.value.name == $name)) | first | .value)) as $p |
     $p != null and
