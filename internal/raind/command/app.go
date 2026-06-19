@@ -80,6 +80,9 @@ func NewApp() *cli.App {
 					resourcecommand.CommandService(),
 					resourcecommand.CommandIngress(),
 					resourcecommand.CommandNamespace(),
+					resourcecommand.CommandConfigMap(),
+					resourcecommand.CommandSecret(),
+					resourcecommand.CommandNetworkPolicy(),
 				},
 			},
 			{

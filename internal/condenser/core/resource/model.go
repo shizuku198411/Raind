@@ -1,13 +1,16 @@
 package resource
 
 type ApplyResult struct {
-	Pods        []ApplyPodResult        `json:"pods"`
-	ReplicaSets []ApplyReplicaSetResult `json:"replicasets"`
-	Deployments []ApplyDeploymentResult `json:"deployments"`
-	Services    []ApplyServiceResult    `json:"services"`
-	Ingresses   []ApplyIngressResult    `json:"ingresses"`
-	Namespaces  []ApplyNamespaceResult  `json:"namespaces"`
-	Warnings    []Warning               `json:"warnings,omitempty"`
+	Pods            []ApplyPodResult           `json:"pods"`
+	ReplicaSets     []ApplyReplicaSetResult    `json:"replicasets"`
+	Deployments     []ApplyDeploymentResult    `json:"deployments"`
+	Services        []ApplyServiceResult       `json:"services"`
+	Ingresses       []ApplyIngressResult       `json:"ingresses"`
+	Namespaces      []ApplyNamespaceResult     `json:"namespaces"`
+	ConfigMaps      []ApplyConfigMapResult     `json:"configMaps"`
+	Secrets         []ApplySecretResult        `json:"secrets"`
+	NetworkPolicies []ApplyNetworkPolicyResult `json:"networkPolicies"`
+	Warnings        []Warning                  `json:"warnings,omitempty"`
 }
 
 type ApplyPodResult struct {
@@ -36,6 +39,25 @@ type ApplyNamespaceResult struct {
 	Network string `json:"network"`
 }
 
+type ApplyConfigMapResult struct {
+	ConfigMapId string `json:"configMapId"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+}
+
+type ApplySecretResult struct {
+	SecretId  string `json:"secretId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type ApplyNetworkPolicyResult struct {
+	NetworkPolicyId string `json:"networkPolicyId"`
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
+	GeneratedRules  int    `json:"generatedRules"`
+}
+
 type ApplyReplicaSetResult struct {
 	ReplicaSetId string `json:"replicaSetId"`
 	Name         string `json:"name"`
@@ -50,13 +72,16 @@ type ApplyDeploymentResult struct {
 }
 
 type DeleteResult struct {
-	Pods        []DeletePodResult        `json:"pods"`
-	ReplicaSets []DeleteReplicaSetResult `json:"replicasets"`
-	Deployments []DeleteDeploymentResult `json:"deployments"`
-	Services    []DeleteServiceResult    `json:"services"`
-	Ingresses   []DeleteIngressResult    `json:"ingresses"`
-	Namespaces  []DeleteNamespaceResult  `json:"namespaces"`
-	Warnings    []Warning                `json:"warnings,omitempty"`
+	Pods            []DeletePodResult           `json:"pods"`
+	ReplicaSets     []DeleteReplicaSetResult    `json:"replicasets"`
+	Deployments     []DeleteDeploymentResult    `json:"deployments"`
+	Services        []DeleteServiceResult       `json:"services"`
+	Ingresses       []DeleteIngressResult       `json:"ingresses"`
+	Namespaces      []DeleteNamespaceResult     `json:"namespaces"`
+	ConfigMaps      []DeleteConfigMapResult     `json:"configMaps"`
+	Secrets         []DeleteSecretResult        `json:"secrets"`
+	NetworkPolicies []DeleteNetworkPolicyResult `json:"networkPolicies"`
+	Warnings        []Warning                   `json:"warnings,omitempty"`
 }
 
 type DeletePodResult struct {
@@ -91,6 +116,24 @@ type DeleteDeploymentResult struct {
 
 type DeleteNamespaceResult struct {
 	Name string `json:"name"`
+}
+
+type DeleteConfigMapResult struct {
+	ConfigMapId string `json:"configMapId"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+}
+
+type DeleteSecretResult struct {
+	SecretId  string `json:"secretId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type DeleteNetworkPolicyResult struct {
+	NetworkPolicyId string `json:"networkPolicyId"`
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
 }
 
 type Warning struct {

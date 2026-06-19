@@ -14,6 +14,9 @@ BSM_STORE="/etc/raind/store/container/bsm.json"
 CSM_STORE="/etc/raind/store/container/csm.json"
 IPAM_STORE="/etc/raind/store/network/ipam.json"
 ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
+CFM_STORE="/etc/raind/store/resource/configmap/cfm.json"
+SEC_STORE="/etc/raind/store/resource/secret/sec.json"
+NETPOL_STORE="/etc/raind/store/resource/networkpolicy/netpol.json"
 NPM_STORE="/etc/raind/store/network/npm.json"
 NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
 PSM_STORE="/etc/raind/store/resource/pod/psm.json"
@@ -83,6 +86,9 @@ prepare_runtime() {
     /etc/raind/store/image \
     /etc/raind/store/network \
     /etc/raind/store/resource/ingress \
+    /etc/raind/store/resource/configmap \
+    /etc/raind/store/resource/secret \
+    /etc/raind/store/resource/networkpolicy \
     /etc/raind/store/resource/namespace \
     /etc/raind/store/resource/pod \
     /etc/raind/store/resource/service \
@@ -151,6 +157,9 @@ reset_resource_runtime_state() {
     "${CSM_STORE}" \
     "${IPAM_STORE}" \
     "${ISM_STORE}" \
+    "${CFM_STORE}" \
+    "${SEC_STORE}" \
+    "${NETPOL_STORE}" \
     "${NPM_STORE}" \
     "${NSM_STORE}" \
     "${PSM_STORE}" \
@@ -433,6 +442,18 @@ assert_output_contains() {
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2
     fail "expected output to contain: ${pattern}"
+  fi
+}
+
+assert_output_not_contains() {
+  local name="$1"
+  local pattern="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+
+  if grep -Fq -- "${pattern}" "${out}"; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2
+    fail "expected output not to contain: ${pattern}"
   fi
 }
 
@@ -1447,6 +1468,252 @@ YAML
   wait_resource_namespace_absent pod-namespace-removed "${ns}"
 }
 
+test_resource_configmap() {
+  local yaml="${E2E_WORK_DIR}/configmap.yaml"
+  local ns="e2e-cm-ns-${SUFFIX}"
+
+  log "resource configmap test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ${ns}
+data:
+  APP_ENV: e2e
+  LOG_LEVEL: info
+  OVERRIDE_ME: from-envfrom
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-cm-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-cm-pod
+spec:
+  containers:
+  - name: app
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    envFrom:
+    - configMapRef:
+        name: app-config
+    env:
+    - name: SINGLE_KEY
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: APP_ENV
+    - name: OVERRIDE_ME
+      value: explicit
+YAML
+  run_resource_apply_with_retry configmap-apply "${yaml}"
+  assert_output_contains configmap-apply "configmap:"
+  assert_output_contains configmap-apply "pod:"
+  wait_pod_row_ready configmap-pod-ready e2e-cm-pod resource pod ls --namespace "${ns}"
+
+  local pod_id container_name container_id
+  pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/configmap-apply.out")"
+  [[ -n "${pod_id}" ]] || fail "could not extract configmap pod id"
+  container_name="app-${pod_id: -8}"
+  container_id="$(resolve_container_id "${container_name}" "configmap-app")"
+  run_raind_allow_empty configmap-env-app container exec "${container_id}" sh -c 'test "$APP_ENV" = e2e'
+  run_raind_allow_empty configmap-env-single container exec "${container_id}" sh -c 'test "$SINGLE_KEY" = e2e'
+  run_raind_allow_empty configmap-env-override container exec "${container_id}" sh -c 'test "$OVERRIDE_ME" = explicit'
+  run_raind configmap-ls resource configmap ls --namespace "${ns}"
+  assert_output_contains configmap-ls "app-config"
+
+  run_raind configmap-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains configmap-rm-manifest "configmap:"
+  assert_output_contains configmap-rm-manifest "pod:"
+  assert_output_contains configmap-rm-manifest "namespace:"
+  wait_resource_namespace_absent configmap-namespace-removed "${ns}"
+}
+
+test_resource_secret() {
+  local yaml="${E2E_WORK_DIR}/secret.yaml"
+  local ns="e2e-secret-ns-${SUFFIX}"
+  local secret_value="super-secret-${SUFFIX}"
+  local secret_b64
+  secret_b64="$(printf '%s' "${secret_value}" | base64 | tr -d '\n')"
+
+  log "resource secret test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: ${ns}
+type: Opaque
+data:
+  DB_PASSWORD: ${secret_b64}
+stringData:
+  API_TOKEN: token-${SUFFIX}
+  OVERRIDE_ME: from-secret
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-secret-pod
+  namespace: ${ns}
+  labels:
+    app: e2e-secret-pod
+spec:
+  containers:
+  - name: app
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+    envFrom:
+    - secretRef:
+        name: db-secret
+    env:
+    - name: SINGLE_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: db-secret
+          key: DB_PASSWORD
+    - name: OVERRIDE_ME
+      value: explicit
+YAML
+  run_resource_apply_with_retry secret-apply "${yaml}"
+  assert_output_contains secret-apply "secret:"
+  assert_output_contains secret-apply "pod:"
+  assert_output_not_contains secret-apply "${secret_value}"
+  wait_pod_row_ready secret-pod-ready e2e-secret-pod resource pod ls --namespace "${ns}"
+
+  local pod_id container_name container_id
+  pod_id="$(awk '/^pod: / { print $2; exit }' "${E2E_WORK_DIR}/secret-apply.out")"
+  [[ -n "${pod_id}" ]] || fail "could not extract secret pod id"
+  container_name="app-${pod_id: -8}"
+  container_id="$(resolve_container_id "${container_name}" "secret-app")"
+  run_raind_allow_empty secret-env-password container exec "${container_id}" sh -c "test \"\$DB_PASSWORD\" = '${secret_value}'"
+  run_raind_allow_empty secret-env-single container exec "${container_id}" sh -c "test \"\$SINGLE_SECRET\" = '${secret_value}'"
+  run_raind_allow_empty secret-env-token container exec "${container_id}" sh -c "test \"\$API_TOKEN\" = 'token-${SUFFIX}'"
+  run_raind_allow_empty secret-env-override container exec "${container_id}" sh -c 'test "$OVERRIDE_ME" = explicit'
+  run_raind secret-ls resource secret ls --namespace "${ns}"
+  assert_output_contains secret-ls "db-secret"
+  assert_output_not_contains secret-ls "${secret_value}"
+  run_raind secret-show resource secret show db-secret --namespace "${ns}"
+  assert_output_contains secret-show "DB_PASSWORD"
+  assert_output_contains secret-show "API_TOKEN"
+  assert_output_not_contains secret-show "${secret_value}"
+
+  run_raind secret-rm-manifest resource rm -f "${yaml}"
+  assert_output_contains secret-rm-manifest "secret:"
+  assert_output_contains secret-rm-manifest "pod:"
+  assert_output_contains secret-rm-manifest "namespace:"
+  wait_resource_namespace_absent secret-namespace-removed "${ns}"
+}
+
+test_resource_networkpolicy() {
+  local base_yaml="${E2E_WORK_DIR}/networkpolicy-base.yaml"
+  local policy_yaml="${E2E_WORK_DIR}/networkpolicy.yaml"
+  local ns="e2e-netpol-ns-${SUFFIX}"
+
+  log "resource networkpolicy test"
+  cat >"${base_yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-netpol-client
+  namespace: ${ns}
+  labels:
+    app: e2e-netpol
+    role: client
+spec:
+  containers:
+  - name: client
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-netpol-server
+  namespace: ${ns}
+  labels:
+    app: e2e-netpol
+    role: server
+spec:
+  containers:
+  - name: server
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+YAML
+
+  cat >"${policy_yaml}" <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-client
+  namespace: ${ns}
+spec:
+  podSelector:
+    matchLabels:
+      role: server
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: client
+    ports:
+    - protocol: TCP
+      port: 8080
+YAML
+
+  run_resource_apply_with_retry netpol-base-apply "${base_yaml}"
+  assert_output_contains netpol-base-apply "pod:"
+  wait_pod_row_ready netpol-client-ready e2e-netpol-client resource pod ls --namespace "${ns}"
+  wait_pod_row_ready netpol-server-ready e2e-netpol-server resource pod ls --namespace "${ns}"
+
+  run_resource_apply_with_retry netpol-apply "${policy_yaml}"
+  assert_output_contains netpol-apply "networkpolicy:"
+  assert_output_contains netpol-apply "generated rules: 1"
+  run_raind netpol-ls resource netpol ls --namespace "${ns}"
+  assert_output_contains netpol-ls "allow-client"
+  run_raind netpol-show resource netpol show allow-client --namespace "${ns}"
+  assert_output_contains netpol-show "GENERATED RULES"
+  assert_output_contains netpol-show "1"
+  sudo_cmd jq -e --arg ns "${ns}" '.networkPolicies[] | select(.name == "allow-client" and .namespace == $ns and (.generatedRuleIds | length) == 1)' "${NETPOL_STORE}" >/dev/null
+
+  run_raind netpol-rm resource rm -f "${policy_yaml}"
+  assert_output_contains netpol-rm "networkpolicy:"
+  sudo_cmd jq -e --arg ns "${ns}" '[.networkPolicies[] | select(.name == "allow-client" and .namespace == $ns)] | length == 0' "${NETPOL_STORE}" >/dev/null
+
+  run_raind netpol-base-rm resource rm -f "${base_yaml}"
+  assert_output_contains netpol-base-rm "pod:"
+  assert_output_contains netpol-base-rm "namespace:"
+  wait_resource_namespace_absent netpol-namespace-removed "${ns}"
+}
+
 test_resource_replicaset() {
   local yaml="${E2E_WORK_DIR}/replicaset.yaml"
   local ns="e2e-rs-ns-${SUFFIX}"
@@ -1595,6 +1862,23 @@ metadata:
   name: ${ns}
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-yaml-config
+  namespace: ${ns}
+data:
+  APP_ENV: all-kinds
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: e2e-yaml-secret
+  namespace: ${ns}
+type: Opaque
+stringData:
+  DB_PASSWORD: all-kinds-secret
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: e2e-yaml-pod
@@ -1605,6 +1889,11 @@ spec:
   containers:
   - name: nginx
     image: nginx:latest
+    envFrom:
+    - configMapRef:
+        name: e2e-yaml-config
+    - secretRef:
+        name: e2e-yaml-secret
 ---
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -1660,6 +1949,8 @@ spec:
 YAML
   run_resource_apply_with_retry yaml-apply "${yaml}"
   assert_output_contains yaml-apply "namespace:"
+  assert_output_contains yaml-apply "configmap:"
+  assert_output_contains yaml-apply "secret:"
   assert_output_contains yaml-apply "pod:"
   assert_output_contains yaml-apply "replicaset:"
   assert_output_contains yaml-apply "deployment:"
@@ -1669,6 +1960,8 @@ YAML
   wait_http_ok "http://${HOST_ADDR}:${port}/"
   run_raind yaml-rm resource rm -f "${yaml}"
   assert_output_contains yaml-rm "namespace:"
+  assert_output_contains yaml-rm "configmap:"
+  assert_output_contains yaml-rm "secret:"
   assert_output_contains yaml-rm "pod:"
   assert_output_contains yaml-rm "replicaset:"
   assert_output_contains yaml-rm "deployment:"
@@ -1706,6 +1999,9 @@ main() {
   test_bottle_deploy
   test_resource_namespace
   test_resource_pod
+  test_resource_configmap
+  test_resource_secret
+  test_resource_networkpolicy
   test_resource_replicaset
   test_resource_deployment
   test_resource_service

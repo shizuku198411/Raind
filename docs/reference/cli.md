@@ -142,6 +142,48 @@ raind resource service show <service-id>
 raind resource service rm <service-id>
 ```
 
+ConfigMap commands:
+
+```sh
+raind resource configmap ls
+raind resource configmap ls --namespace <namespace>
+raind resource configmap show <configmap-id|name> [--namespace <namespace>]
+raind resource configmap rm <configmap-id|name> [--namespace <namespace>]
+```
+
+The short alias `cm` can be used for `configmap`:
+
+```sh
+raind resource cm ls
+```
+
+Secret commands:
+
+```sh
+raind resource secret ls
+raind resource secret ls --namespace <namespace>
+raind resource secret show <secret-id|name> [--namespace <namespace>]
+raind resource secret rm <secret-id|name> [--namespace <namespace>]
+```
+
+Secret values are not shown by default.
+
+NetworkPolicy commands:
+
+```sh
+raind resource networkpolicy ls
+raind resource networkpolicy ls --namespace <namespace>
+raind resource networkpolicy show <networkpolicy-id|name> [--namespace <namespace>]
+raind resource networkpolicy rm <networkpolicy-id|name> [--namespace <namespace>]
+```
+
+The short aliases `netpol` and `np` can be used for `networkpolicy`:
+
+```sh
+raind resource netpol ls
+raind resource np show <name> --namespace <namespace>
+```
+
 Namespace commands:
 
 ```sh

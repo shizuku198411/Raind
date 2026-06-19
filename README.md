@@ -148,12 +148,17 @@ Raind supports applying Kubernetes-compatible manifests for resources such as:
 - `Deployment`
 - `Service`
 - `Namespace`
+- `ConfigMap`
+- `Secret`
+- `NetworkPolicy`
 
 A Pod groups one or more containers into a shared runtime unit. In Raind, Pod containers can share namespaces through an infra container model, allowing Pod-like behavior to be tested through the local runtime.
 
 ReplicaSet and Deployment resources provide reconciliation-oriented workload management. They allow the runtime to maintain a desired number of Pod replicas and update workload state based on resource definitions.
 
 Service resources provide L4 traffic handling for matching Pods, allowing Pod-level workloads to be reached through a stable service abstraction.
+
+NetworkPolicy resources generate Raind security policy rules for namespace-local Pod-to-Pod traffic selected by labels.
 
 Typical resource operations include:
 

@@ -13,11 +13,14 @@ import (
 	"raind/internal/condenser/core/network"
 	"raind/internal/condenser/core/policy"
 	"raind/internal/condenser/lsm"
+	"raind/internal/condenser/store/cfm"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ilm"
 	"raind/internal/condenser/store/ipam"
+	"raind/internal/condenser/store/netpol"
 	"raind/internal/condenser/store/npm"
 	"raind/internal/condenser/store/nsm"
+	"raind/internal/condenser/store/sec"
 	"raind/internal/condenser/utils"
 	"strconv"
 	"strings"
@@ -26,36 +29,42 @@ import (
 
 func NewBootstrapManager() *BootstrapManager {
 	return &BootstrapManager{
-		filesystemHandler: utils.NewFilesystemExecutor(),
-		commandFactory:    utils.NewCommandFactory(),
-		certHandler:       cert.NewCertManager(),
-		networkHandler:    network.NewNetworkService(),
-		policyHandler:     policy.NewwServicePolicy(),
-		ipamStoreHandler:  ipam.NewIpamStore(utils.IpamStorePath),
-		ipamHandler:       ipam.NewIpamManager(ipam.NewIpamStore(utils.IpamStorePath)),
-		csmStoreHandler:   csm.NewCsmStore(utils.CsmStorePath),
-		csmHandler:        csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
-		ilmStoreHandler:   ilm.NewIlmStore(utils.IlmStorePath),
-		nsmStoreHandler:   nsm.NewNsmStore(utils.NsmStorePath),
-		npmStoreHandler:   npm.NewNpmStore(utils.NpmStorePath),
-		appArmorHandler:   lsm.NewAppArmorManager(),
+		filesystemHandler:  utils.NewFilesystemExecutor(),
+		commandFactory:     utils.NewCommandFactory(),
+		certHandler:        cert.NewCertManager(),
+		networkHandler:     network.NewNetworkService(),
+		policyHandler:      policy.NewwServicePolicy(),
+		ipamStoreHandler:   ipam.NewIpamStore(utils.IpamStorePath),
+		ipamHandler:        ipam.NewIpamManager(ipam.NewIpamStore(utils.IpamStorePath)),
+		csmStoreHandler:    csm.NewCsmStore(utils.CsmStorePath),
+		csmHandler:         csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
+		cfmStoreHandler:    cfm.NewCfmStore(utils.CfmStorePath),
+		ilmStoreHandler:    ilm.NewIlmStore(utils.IlmStorePath),
+		nsmStoreHandler:    nsm.NewNsmStore(utils.NsmStorePath),
+		secStoreHandler:    sec.NewSecStore(utils.SecStorePath),
+		netpolStoreHandler: netpol.NewStore(utils.NetpolStorePath),
+		npmStoreHandler:    npm.NewNpmStore(utils.NpmStorePath),
+		appArmorHandler:    lsm.NewAppArmorManager(),
 	}
 }
 
 type BootstrapManager struct {
-	filesystemHandler utils.FilesystemHandler
-	commandFactory    utils.CommandFactory
-	certHandler       cert.CertHandler
-	networkHandler    network.NetworkServiceHandler
-	policyHandler     policy.PolicyServiceHandler
-	ipamStoreHandler  ipam.IpamStoreHandler
-	ipamHandler       ipam.IpamHandler
-	csmStoreHandler   csm.CsmStoreHandler
-	csmHandler        csm.CsmHandler
-	ilmStoreHandler   ilm.IlmStoreHandler
-	nsmStoreHandler   nsm.NsmStoreHandler
-	npmStoreHandler   npm.NpmStoreHandler
-	appArmorHandler   lsm.AppArmorHandler
+	filesystemHandler  utils.FilesystemHandler
+	commandFactory     utils.CommandFactory
+	certHandler        cert.CertHandler
+	networkHandler     network.NetworkServiceHandler
+	policyHandler      policy.PolicyServiceHandler
+	ipamStoreHandler   ipam.IpamStoreHandler
+	ipamHandler        ipam.IpamHandler
+	csmStoreHandler    csm.CsmStoreHandler
+	csmHandler         csm.CsmHandler
+	cfmStoreHandler    *cfm.CfmStore
+	ilmStoreHandler    ilm.IlmStoreHandler
+	nsmStoreHandler    nsm.NsmStoreHandler
+	secStoreHandler    *sec.SecStore
+	netpolStoreHandler netpol.StoreHandler
+	npmStoreHandler    npm.NpmStoreHandler
+	appArmorHandler    lsm.AppArmorHandler
 }
 
 func (m *BootstrapManager) SetupRuntime() error {
@@ -90,6 +99,15 @@ func (m *BootstrapManager) SetupRuntime() error {
 
 	// 6. setup NSM (Namespace State Manager)
 	if err := m.setupNsm(); err != nil {
+		return err
+	}
+	if err := m.setupCfm(); err != nil {
+		return err
+	}
+	if err := m.setupSec(); err != nil {
+		return err
+	}
+	if err := m.setupNetpol(); err != nil {
 		return err
 	}
 
@@ -137,7 +155,9 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		filepath.Dir(utils.PsmStorePath),
 		filepath.Dir(utils.SsmStorePath),
 		filepath.Dir(utils.IsmStorePath),
+		filepath.Dir(utils.CfmStorePath),
 		filepath.Dir(utils.NsmStorePath),
+		filepath.Dir(utils.NetpolStorePath),
 		utils.AuditLogDir,
 		utils.VarLogDir,
 		utils.CertDir,
@@ -148,6 +168,12 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		if err := m.filesystemHandler.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
+	}
+	if err := m.filesystemHandler.MkdirAll(filepath.Dir(utils.SecStorePath), 0o700); err != nil {
+		return err
+	}
+	if err := m.filesystemHandler.Chmod(filepath.Dir(utils.SecStorePath), 0o700); err != nil {
+		return err
 	}
 	return nil
 }
@@ -166,6 +192,9 @@ func (m *BootstrapManager) migrateStoreLayout() error {
 		{Name: "ilm", Old: utils.OldIlmStorePath, New: utils.IlmStorePath},
 		{Name: "ssm", Old: utils.OldSsmStorePath, New: utils.SsmStorePath},
 		{Name: "ism", Old: utils.OldIsmStorePath, New: utils.IsmStorePath},
+		{Name: "cfm", Old: utils.OldCfmStorePath, New: utils.CfmStorePath},
+		{Name: "sec", Old: utils.OldSecStorePath, New: utils.SecStorePath},
+		{Name: "netpol", Old: utils.OldNetpolStorePath, New: utils.NetpolStorePath},
 		{Name: "npm", Old: utils.OldNpmStorePath, New: utils.NpmStorePath},
 		{Name: "bsm", Old: utils.OldBsmStorePath, New: utils.BsmStorePath},
 		{Name: "nsm", Old: utils.OldNsmStorePath, New: utils.NsmStorePath},
@@ -205,6 +234,14 @@ func (m *BootstrapManager) migrateStoreFile(migration storeMigration) error {
 	if err := m.filesystemHandler.Rename(migration.Old, migration.New); err != nil {
 		return fmt.Errorf("migrate %s store from %s to %s: %w", migration.Name, migration.Old, migration.New, err)
 	}
+	if migration.Name == "sec" {
+		if err := m.filesystemHandler.Chmod(filepath.Dir(migration.New), 0o700); err != nil {
+			return err
+		}
+		if err := m.filesystemHandler.Chmod(migration.New, 0o600); err != nil {
+			return err
+		}
+	}
 	log.Printf("store migration completed: %s old=%s new=%s", migration.Name, migration.Old, migration.New)
 	return nil
 }
@@ -223,6 +260,18 @@ func (m *BootstrapManager) pathExists(path string) (bool, error) {
 
 func (m *BootstrapManager) setupNsm() error {
 	return m.nsmStoreHandler.SetNamespaceState()
+}
+
+func (m *BootstrapManager) setupCfm() error {
+	return m.cfmStoreHandler.SetConfigMapState()
+}
+
+func (m *BootstrapManager) setupSec() error {
+	return m.secStoreHandler.SetSecretState()
+}
+
+func (m *BootstrapManager) setupNetpol() error {
+	return m.netpolStoreHandler.SetNetworkPolicyState()
 }
 
 func (m *BootstrapManager) setupCgroup() error {

@@ -16,7 +16,7 @@ import (
 func TestApplyPodYamlUnsupportedKindReturnsFailEnvelope(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	NewRequestHandler().ApplyPodYaml(rec, httptest.NewRequest(http.MethodPost, "/v1/resource/apply", strings.NewReader("kind: ConfigMap\nmetadata:\n  name: x\n")))
+	NewRequestHandler().ApplyPodYaml(rec, httptest.NewRequest(http.MethodPost, "/v1/resource/apply", strings.NewReader("kind: Widget\nmetadata:\n  name: x\n")))
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	var got struct {

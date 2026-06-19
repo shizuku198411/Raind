@@ -26,6 +26,25 @@ func decodeHeader(rawBytes []byte) (Header, error) {
 	return header, nil
 }
 
+func collectHeaderWarnings(header Header, raw map[string]any) []Warning {
+	metadata, ok := raw["metadata"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	var warnings []Warning
+	if _, ok := metadata["generateName"]; ok {
+		warnings = append(warnings, Warning{
+			Kind:      header.Kind,
+			Name:      header.Metadata.Name,
+			Namespace: header.Metadata.Namespace,
+			Field:     "metadata.generateName",
+			Message:   "metadata.generateName is ignored; set metadata.name explicitly",
+		})
+	}
+	return warnings
+}
+
 type namespaceManifest struct {
 	APIVersion string        `yaml:"apiVersion"`
 	Kind       string        `yaml:"kind"`

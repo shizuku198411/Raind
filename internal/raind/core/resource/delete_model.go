@@ -28,6 +28,24 @@ type DeletedNamespaceModel struct {
 	Name string `json:"name,omitempty"`
 }
 
+type DeletedConfigMapModel struct {
+	ConfigMapId string `json:"configMapId,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
+}
+
+type DeletedSecretModel struct {
+	SecretId  string `json:"secretId,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+type DeletedNetworkPolicyModel struct {
+	NetworkPolicyId string `json:"networkPolicyId,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+}
+
 type DeletedIngressModel struct {
 	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
@@ -35,13 +53,16 @@ type DeletedIngressModel struct {
 }
 
 type DeleteResponseModel struct {
-	Pods        []DeletedPodModel        `json:"pods,omitempty"`
-	ReplicaSets []DeletedReplicaSetModel `json:"replicasets,omitempty"`
-	Deployments []DeletedDeploymentModel `json:"deployments,omitempty"`
-	Services    []DeletedServiceModel    `json:"services,omitempty"`
-	Ingresses   []DeletedIngressModel    `json:"ingresses,omitempty"`
-	Namespaces  []DeletedNamespaceModel  `json:"namespaces,omitempty"`
-	Warnings    []WarningModel           `json:"warnings,omitempty"`
+	Pods            []DeletedPodModel           `json:"pods,omitempty"`
+	ReplicaSets     []DeletedReplicaSetModel    `json:"replicasets,omitempty"`
+	Deployments     []DeletedDeploymentModel    `json:"deployments,omitempty"`
+	Services        []DeletedServiceModel       `json:"services,omitempty"`
+	Ingresses       []DeletedIngressModel       `json:"ingresses,omitempty"`
+	Namespaces      []DeletedNamespaceModel     `json:"namespaces,omitempty"`
+	ConfigMaps      []DeletedConfigMapModel     `json:"configMaps,omitempty"`
+	Secrets         []DeletedSecretModel        `json:"secrets,omitempty"`
+	NetworkPolicies []DeletedNetworkPolicyModel `json:"networkPolicies,omitempty"`
+	Warnings        []WarningModel              `json:"warnings,omitempty"`
 }
 
 type WarningModel struct {

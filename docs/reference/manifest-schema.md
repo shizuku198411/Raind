@@ -21,6 +21,9 @@ Raind accepts multi-document YAML separated by `---`. Empty documents are ignore
 | `Deployment` | Usually `apps/v1` | Yes | Yes | Stores a Deployment; the controller creates/manages the backing ReplicaSet. |
 | `Service` | Usually `v1` | Yes | Yes | Provides L4 forwarding to selected Pods. Supports `ClusterIP` and `NodePort`. |
 | `Ingress` | Usually `networking.k8s.io/v1` | Yes | Yes | Provides HTTP/HTTPS host/path routing through the embedded condenser gateway. |
+| `ConfigMap` | Usually `v1` | Yes | Yes | Stores non-sensitive key/value configuration for Pod env injection. |
+| `Secret` | Usually `v1` | Yes | Yes | Stores sensitive key/value configuration for Pod env injection. Values are hidden from normal output. |
+| `NetworkPolicy` | Usually `networking.k8s.io/v1` | Yes | Yes | Generates namespace-local Pod-to-Pod east-west allow rules through the Raind security policy backend. |
 
 `apiVersion` is parsed but not currently validated by version. Unsupported `kind` values fail with `unsupported kind`.
 
@@ -566,6 +569,42 @@ Ingress routing uses Host header + path matching. TLS certificate selection uses
 For HTTPS, Raind uses a dedicated Ingress CA under `/etc/raind/ingress/certs`. It issues host-specific server certificates with the host set as a DNS SAN. These certificates are local Raind-managed certificates and are not publicly trusted unless the Raind Ingress CA is installed into the client trust store.
 
 When an Ingress is removed, Raind removes per-host TLS certificates for hosts that are no longer referenced by any remaining Ingress.
+
+## `NetworkPolicy`
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-client
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      role: server
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: client
+      ports:
+        - protocol: TCP
+          port: 8080
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `metadata.name` | Yes | NetworkPolicy name. |
+| `metadata.namespace` | No | Namespace. Defaults to `default`. |
+| `spec.podSelector.matchLabels` | No | Selects destination Pods for ingress rules and source Pods for egress rules. Empty matches all running Pods in the namespace. |
+| `spec.ingress[].from[].podSelector.matchLabels` | No | Selects source Pods for ingress allow rules. |
+| `spec.ingress[].ports[].protocol` | No | `TCP` or `UDP`. Defaults to `TCP`. |
+| `spec.ingress[].ports[].port` | No | Destination port. |
+| `spec.egress[].to[].podSelector.matchLabels` | No | Selects destination Pods for egress allow rules. |
+| `spec.egress[].ports[].protocol` | No | `TCP` or `UDP`. Defaults to `TCP`. |
+| `spec.egress[].ports[].port` | No | Destination port. |
+
+NetworkPolicy currently supports namespace-local Pod selectors only. `namespaceSelector`, `ipBlock`, named ports, and cross-namespace rules are not supported yet.
 
 ## Comprehensive example
 

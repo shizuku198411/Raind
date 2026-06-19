@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	coreConfigMap "raind/internal/condenser/core/configmap"
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
+	coreNetworkPolicy "raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
+	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
 
 	"gopkg.in/yaml.v3"
@@ -38,6 +41,7 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		if err != nil {
 			return DeleteResult{}, statusMessage(http.StatusBadRequest, err.Error())
 		}
+		result.Warnings = append(result.Warnings, collectHeaderWarnings(header, raw)...)
 
 		switch header.Kind {
 		case "Namespace":
@@ -60,6 +64,27 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 				return DeleteResult{}, err
 			}
 			result.Ingresses = append(result.Ingresses, ingressResults...)
+
+		case "ConfigMap":
+			configMapResults, err := s.deleteConfigMap(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
+
+		case "Secret":
+			secretResults, err := s.deleteSecret(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.Secrets = append(result.Secrets, secretResults...)
+
+		case "NetworkPolicy":
+			networkPolicyResults, err := s.deleteNetworkPolicy(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResults...)
 
 		case "Deployment":
 			deployResults, err := s.deleteDeployment(rawBytes)
@@ -94,6 +119,80 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: name})
 	}
 
+	return result, nil
+}
+
+func (s *ResourceService) deleteSecret(rawBytes []byte) ([]DeleteSecretResult, error) {
+	manifest, err := coreSecret.DecodeK8sSecretManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	list, err := s.secHandler.GetSecretList()
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "list failed: %v", err)
+	}
+	var result []DeleteSecretResult
+	for _, secret := range list {
+		if secret.Name != manifest.Name || secret.Namespace != manifest.Namespace {
+			continue
+		}
+		if err := s.secHandler.RemoveSecret(secret.SecretId); err != nil {
+			return nil, statusError(http.StatusInternalServerError, "remove failed: %v", err)
+		}
+		result = append(result, DeleteSecretResult{
+			SecretId:  secret.SecretId,
+			Name:      secret.Name,
+			Namespace: secret.Namespace,
+		})
+	}
+	if len(result) == 0 {
+		return nil, statusError(http.StatusNotFound, "secret not found")
+	}
+	return result, nil
+}
+
+func (s *ResourceService) deleteNetworkPolicy(rawBytes []byte) ([]DeleteNetworkPolicyResult, error) {
+	manifest, err := coreNetworkPolicy.DecodeK8sNetworkPolicyManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	info, err := coreNetworkPolicy.NewService().Remove(manifest.Name, manifest.Namespace)
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "networkpolicy remove failed: %v", err)
+	}
+	return []DeleteNetworkPolicyResult{{
+		NetworkPolicyId: info.NetworkPolicyId,
+		Name:            info.Name,
+		Namespace:       info.Namespace,
+	}}, nil
+}
+
+func (s *ResourceService) deleteConfigMap(rawBytes []byte) ([]DeleteConfigMapResult, error) {
+	manifest, err := coreConfigMap.DecodeK8sConfigMapManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	list, err := s.cfmHandler.GetConfigMapList()
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "list failed: %v", err)
+	}
+	var result []DeleteConfigMapResult
+	for _, cm := range list {
+		if cm.Name != manifest.Name || cm.Namespace != manifest.Namespace {
+			continue
+		}
+		if err := s.cfmHandler.RemoveConfigMap(cm.ConfigMapId); err != nil {
+			return nil, statusError(http.StatusInternalServerError, "remove failed: %v", err)
+		}
+		result = append(result, DeleteConfigMapResult{
+			ConfigMapId: cm.ConfigMapId,
+			Name:        cm.Name,
+			Namespace:   cm.Namespace,
+		})
+	}
+	if len(result) == 0 {
+		return nil, statusError(http.StatusNotFound, "configmap not found")
+	}
 	return result, nil
 }
 
