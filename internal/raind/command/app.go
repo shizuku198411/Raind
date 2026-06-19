@@ -73,6 +73,11 @@ func NewApp() *cli.App {
 				Usage: "resource operation",
 				Subcommands: []*cli.Command{
 					resourcecommand.CommandApply(),
+					resourcecommand.CommandGet(),
+					resourcecommand.CommandDescribe(),
+					resourcecommand.CommandDelete(),
+					resourcecommand.CommandCreate(),
+					resourcecommand.CommandScale(),
 					resourcecommand.CommandRemove(),
 					resourcecommand.CommandPod(),
 					resourcecommand.CommandReplicaSet(),

@@ -16,7 +16,7 @@ import (
 func Flag() cli.Flag {
 	return &cli.BoolFlag{
 		Name:    "wait",
-		Aliases: []string{"w"},
+		Aliases: []string{"w", "watch"},
 		Usage:   "repeat list output every second until interrupted",
 	}
 }
@@ -24,6 +24,11 @@ func Flag() cli.Flag {
 func Enabled(ctx *cli.Context) bool {
 	for _, c := range ctx.Lineage() {
 		if c.Bool("wait") {
+			return true
+		}
+	}
+	for _, arg := range ctx.Args().Slice() {
+		if arg == "-w" || arg == "--wait" || arg == "--watch" {
 			return true
 		}
 	}

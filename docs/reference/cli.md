@@ -79,7 +79,37 @@ Apply or remove resources from YAML:
 
 ```sh
 raind resource apply -f <resource.yaml>
+raind resource delete -f <resource.yaml>
 raind resource rm -f <resource.yaml>
+```
+
+`raind resource` also supports a kubectl-style command layout. This means a
+shell alias like `alias kubectl='raind resource'` can be used for the supported
+resource operations:
+
+```sh
+raind resource get pods
+raind resource get deployments --namespace <namespace>
+raind resource describe pvc <pvc-id|name> --namespace <namespace>
+raind resource delete pod <pod-id>
+raind resource delete pvc <pvc-id|name> --namespace <namespace>
+raind resource create namespace <namespace>
+raind resource scale deployment <deployment-id> --replicas <n>
+```
+
+Resource aliases follow common kubectl names:
+
+```sh
+po/pod/pods
+rs/replicaset/replicasets
+deploy/deployment/deployments
+svc/service/services
+cm/configmap/configmaps
+secret/secrets
+ns/namespace/namespaces
+netpol/np/networkpolicy/networkpolicies
+pvc/persistentvolumeclaim/persistentvolumeclaims
+ing/ingress/ingresses
 ```
 
 Pod commands:
