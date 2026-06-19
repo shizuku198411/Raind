@@ -23,6 +23,7 @@ import (
 	networkPolicyHandler "raind/internal/condenser/api/http/networkpolicy"
 	podHandler "raind/internal/condenser/api/http/pod"
 	policyHandler "raind/internal/condenser/api/http/policy"
+	pvcHandler "raind/internal/condenser/api/http/pvc"
 	secretHandler "raind/internal/condenser/api/http/secret"
 	securityProfileHandler "raind/internal/condenser/api/http/securityprofile"
 	serviceHandler "raind/internal/condenser/api/http/service"
@@ -73,6 +74,7 @@ func NewApiRouter() *chi.Mux {
 	configMapHandler := configMapHandler.NewRequestHandler()
 	secretHandler := secretHandler.NewRequestHandler()
 	networkPolicyHandler := networkPolicyHandler.NewRequestHandler()
+	pvcHandler := pvcHandler.NewRequestHandler()
 
 	// middleware
 	r.Use(middleware.RequestID)
@@ -171,6 +173,11 @@ func NewApiRouter() *chi.Mux {
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/networkpolicies", networkPolicyHandler.GetNetworkPolicyList)
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/networkpolicies/{idOrName}", networkPolicyHandler.GetNetworkPolicy)
 	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/networkpolicies/{idOrName}", networkPolicyHandler.RemoveNetworkPolicy)
+
+	// == persistent volume claims ==
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/persistentvolumeclaims", pvcHandler.GetPVCList)
+	r.With(RequireCLIScope(ScopeRead)).Get("/v1/persistentvolumeclaims/{idOrName}", pvcHandler.GetPVC)
+	r.With(RequireCLIScope(ScopeResourceWrite)).Delete("/v1/persistentvolumeclaims/{idOrName}", pvcHandler.RemovePVC)
 
 	// == namespaces ==
 	r.With(RequireCLIScope(ScopeRead)).Get("/v1/namespaces", namespaceHandler.GetNamespaceList)

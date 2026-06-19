@@ -5,16 +5,17 @@ type ServicePodApplyModel struct {
 }
 
 type ApplyResponseDataModel struct {
-	Pods            []PodInfo           `json:"pods"`
-	ReplicaSets     []ReplicaSetInfo    `json:"replicasets"`
-	Deployments     []DeploymentInfo    `json:"deployments"`
-	Services        []ServiceInfo       `json:"services"`
-	Ingresses       []IngressInfo       `json:"ingresses"`
-	Namespaces      []NamespaceInfo     `json:"namespaces"`
-	ConfigMaps      []ConfigMapInfo     `json:"configMaps"`
-	Secrets         []SecretInfo        `json:"secrets"`
-	NetworkPolicies []NetworkPolicyInfo `json:"networkPolicies"`
-	Warnings        []WarningInfo       `json:"warnings,omitempty"`
+	Pods                   []PodInfo           `json:"pods"`
+	ReplicaSets            []ReplicaSetInfo    `json:"replicasets"`
+	Deployments            []DeploymentInfo    `json:"deployments"`
+	Services               []ServiceInfo       `json:"services"`
+	Ingresses              []IngressInfo       `json:"ingresses"`
+	Namespaces             []NamespaceInfo     `json:"namespaces"`
+	ConfigMaps             []ConfigMapInfo     `json:"configMaps"`
+	Secrets                []SecretInfo        `json:"secrets"`
+	NetworkPolicies        []NetworkPolicyInfo `json:"networkPolicies"`
+	PersistentVolumeClaims []PVCInfo           `json:"persistentVolumeClaims"`
+	Warnings               []WarningInfo       `json:"warnings,omitempty"`
 }
 
 type PodInfo struct {
@@ -73,6 +74,15 @@ type NetworkPolicyInfo struct {
 	Name            string `json:"name"`
 	Namespace       string `json:"namespace"`
 	GeneratedRules  int    `json:"generatedRules"`
+}
+
+type PVCInfo struct {
+	PVCId            string `json:"pvcId"`
+	Name             string `json:"name"`
+	Namespace        string `json:"namespace"`
+	RequestedStorage string `json:"requestedStorage"`
+	RequestedBytes   uint64 `json:"requestedBytes"`
+	ReclaimPolicy    string `json:"reclaimPolicy"`
 }
 
 type WarningInfo struct {

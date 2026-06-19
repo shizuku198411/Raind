@@ -23,6 +23,7 @@ type PodManifest struct {
 	ConfigMapEnvKeys []ContainerConfigMapKeyRef
 	SecretEnvFrom    []ContainerSecretRef
 	SecretEnvKeys    []ContainerSecretKeyRef
+	PVCMounts        []ContainerPVCMountRef
 	Rootless         bool
 	Replicas         int
 	Selector         map[string]string
@@ -50,6 +51,13 @@ type ContainerSecretKeyRef struct {
 	EnvName        string
 	Name           string
 	Key            string
+}
+
+type ContainerPVCMountRef struct {
+	ContainerIndex int
+	Name           string
+	MountPath      string
+	ReadOnly       bool
 }
 
 type manifestMeta struct {
@@ -166,13 +174,18 @@ type manifestPort struct {
 }
 
 type manifestVolume struct {
-	Name     string           `yaml:"name"`
-	HostPath manifestHostPath `yaml:"hostPath"`
+	Name                  string                        `yaml:"name"`
+	HostPath              manifestHostPath              `yaml:"hostPath"`
+	PersistentVolumeClaim manifestPersistentVolumeClaim `yaml:"persistentVolumeClaim"`
 }
 
 type manifestHostPath struct {
 	Path string `yaml:"path"`
 	Type string `yaml:"type"`
+}
+
+type manifestPersistentVolumeClaim struct {
+	ClaimName string `yaml:"claimName"`
 }
 
 type manifestVolumeMount struct {
@@ -323,55 +336,66 @@ func selectorMatchesLabels(selector, labels map[string]string) bool {
 	return true
 }
 
-func buildHostPathVolumeMap(volumes []manifestVolume) (map[string]string, error) {
+func buildVolumeMaps(volumes []manifestVolume) (map[string]string, map[string]string, error) {
 	volumeHostPath := map[string]string{}
+	volumePVC := map[string]string{}
 	for _, v := range volumes {
 		if v.Name == "" {
 			continue
 		}
 		if _, exists := volumeHostPath[v.Name]; exists {
-			return nil, fmt.Errorf("volume %q: duplicate volume name", v.Name)
+			return nil, nil, fmt.Errorf("volume %q: duplicate volume name", v.Name)
+		}
+		if _, exists := volumePVC[v.Name]; exists {
+			return nil, nil, fmt.Errorf("volume %q: duplicate volume name", v.Name)
+		}
+		if v.HostPath.Path != "" && v.PersistentVolumeClaim.ClaimName != "" {
+			return nil, nil, fmt.Errorf("volume %q: hostPath and persistentVolumeClaim are mutually exclusive", v.Name)
+		}
+		if v.PersistentVolumeClaim.ClaimName != "" {
+			volumePVC[v.Name] = v.PersistentVolumeClaim.ClaimName
+			continue
 		}
 		if v.HostPath.Path == "" {
-			return nil, fmt.Errorf("volume %q: only hostPath volumes are supported", v.Name)
+			return nil, nil, fmt.Errorf("volume %q: only hostPath and persistentVolumeClaim volumes are supported", v.Name)
 		}
 		if !filepath.IsAbs(v.HostPath.Path) {
-			return nil, fmt.Errorf("volume %q: hostPath.path must be absolute", v.Name)
+			return nil, nil, fmt.Errorf("volume %q: hostPath.path must be absolute", v.Name)
 		}
 
 		switch v.HostPath.Type {
 		case "", "Directory":
 			info, err := os.Stat(v.HostPath.Path)
 			if err != nil {
-				return nil, fmt.Errorf("volume %q: hostPath directory %q is not available: %w", v.Name, v.HostPath.Path, err)
+				return nil, nil, fmt.Errorf("volume %q: hostPath directory %q is not available: %w", v.Name, v.HostPath.Path, err)
 			}
 			if !info.IsDir() {
-				return nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
+				return nil, nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
 			}
 		case "DirectoryOrCreate":
 			if err := os.MkdirAll(v.HostPath.Path, 0755); err != nil {
-				return nil, fmt.Errorf("volume %q: create hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
+				return nil, nil, fmt.Errorf("volume %q: create hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
 			}
 			info, err := os.Stat(v.HostPath.Path)
 			if err != nil {
-				return nil, fmt.Errorf("volume %q: stat hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
+				return nil, nil, fmt.Errorf("volume %q: stat hostPath directory %q: %w", v.Name, v.HostPath.Path, err)
 			}
 			if !info.IsDir() {
-				return nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
+				return nil, nil, fmt.Errorf("volume %q: hostPath %q is not a directory", v.Name, v.HostPath.Path)
 			}
 		default:
-			return nil, fmt.Errorf("volume %q: unsupported hostPath.type %q", v.Name, v.HostPath.Type)
+			return nil, nil, fmt.Errorf("volume %q: unsupported hostPath.type %q", v.Name, v.HostPath.Type)
 		}
 		volumeHostPath[v.Name] = v.HostPath.Path
 	}
-	return volumeHostPath, nil
+	return volumeHostPath, volumePVC, nil
 }
 
 func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, error) {
 	if meta.Namespace == "" {
 		meta.Namespace = "default"
 	}
-	volumeHostPath, err := buildHostPathVolumeMap(podSpec.Volumes)
+	volumeHostPath, volumePVC, err := buildVolumeMaps(podSpec.Volumes)
 	if err != nil {
 		return PodManifest{}, err
 	}
@@ -381,6 +405,7 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 	var configMapEnvKeys []ContainerConfigMapKeyRef
 	var secretEnvFrom []ContainerSecretRef
 	var secretEnvKeys []ContainerSecretKeyRef
+	var pvcMounts []ContainerPVCMountRef
 	for i, c := range podSpec.Containers {
 		cmd := c.Command
 		if len(c.Args) > 0 {
@@ -437,14 +462,25 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 				return PodManifest{}, fmt.Errorf("container %q: volumeMount %q mountPath must be absolute", c.Name, vm.Name)
 			}
 			hostPath, ok := volumeHostPath[vm.Name]
-			if !ok {
-				return PodManifest{}, fmt.Errorf("container %q: volume %q not found", c.Name, vm.Name)
+			if ok {
+				m := hostPath + ":" + vm.MountPath
+				if vm.ReadOnly {
+					m += ":ro"
+				}
+				mounts = append(mounts, m)
+				continue
 			}
-			m := hostPath + ":" + vm.MountPath
-			if vm.ReadOnly {
-				m += ":ro"
+			claimName, ok := volumePVC[vm.Name]
+			if ok {
+				pvcMounts = append(pvcMounts, ContainerPVCMountRef{
+					ContainerIndex: i,
+					Name:           claimName,
+					MountPath:      vm.MountPath,
+					ReadOnly:       vm.ReadOnly,
+				})
+				continue
 			}
-			mounts = append(mounts, m)
+			return PodManifest{}, fmt.Errorf("container %q: volume %q not found", c.Name, vm.Name)
 		}
 		specs = append(specs, psm.ContainerTemplateSpec{
 			Name:    c.Name,
@@ -468,6 +504,7 @@ func buildPodManifest(meta manifestMeta, podSpec podManifestSpec) (PodManifest, 
 		ConfigMapEnvKeys: configMapEnvKeys,
 		SecretEnvFrom:    secretEnvFrom,
 		SecretEnvKeys:    secretEnvKeys,
+		PVCMounts:        pvcMounts,
 		Rootless:         rootlessFromHostUsers(podSpec.HostUsers),
 	}, nil
 }

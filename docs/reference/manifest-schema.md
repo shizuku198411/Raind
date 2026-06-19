@@ -24,6 +24,7 @@ Raind accepts multi-document YAML separated by `---`. Empty documents are ignore
 | `ConfigMap` | Usually `v1` | Yes | Yes | Stores non-sensitive key/value configuration for Pod env injection. |
 | `Secret` | Usually `v1` | Yes | Yes | Stores sensitive key/value configuration for Pod env injection. Values are hidden from normal output. |
 | `NetworkPolicy` | Usually `networking.k8s.io/v1` | Yes | Yes | Generates namespace-local Pod-to-Pod east-west allow rules through the Raind security policy backend. |
+| `PersistentVolumeClaim` | Usually `v1` | Yes | Yes | Allocates a Raind-managed local directory for Pod volume mounts. |
 
 `apiVersion` is parsed but not currently validated by version. Unsupported `kind` values fail with `unsupported kind`.
 
@@ -569,6 +570,45 @@ Ingress routing uses Host header + path matching. TLS certificate selection uses
 For HTTPS, Raind uses a dedicated Ingress CA under `/etc/raind/ingress/certs`. It issues host-specific server certificates with the host set as a DNS SAN. These certificates are local Raind-managed certificates and are not publicly trusted unless the Raind Ingress CA is installed into the client trust store.
 
 When an Ingress is removed, Raind removes per-host TLS certificates for hosts that are no longer referenced by any remaining Ingress.
+
+## `PersistentVolumeClaim`
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+  namespace: demo
+  annotations:
+    raind.dev/reclaimPolicy: Retain
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+| Field | Required | Description |
+|---|---:|---|
+| `metadata.name` | Yes | PVC name. |
+| `metadata.namespace` | No | Namespace. Defaults to `default`. |
+| `metadata.annotations.raind.dev/reclaimPolicy` | No | `Retain` or `Delete`. Defaults to `Retain`. |
+| `spec.accessModes` | Yes | Only `ReadWriteOnce` is supported. |
+| `spec.resources.requests.storage` | Yes | Parsed and stored as requested bytes metadata. Quota is not enforced in the MVP. |
+| `spec.storageClassName` | No | Stored as metadata only. |
+| `spec.volumeMode` | No | Only `Filesystem` is supported. |
+
+Pod usage:
+
+```yaml
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+```
+
+PVC volumes are backed by local runtime-owned directories under `/etc/raind/volume/pvc`. Removing a PVC with `Retain` leaves the host data directory in place; `Delete` removes the host data directory after no running Pod references it.
 
 ## `NetworkPolicy`
 

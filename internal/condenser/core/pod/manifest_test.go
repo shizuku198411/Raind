@@ -227,6 +227,41 @@ spec:
 	assert.Equal(t, []string{hostPath + ":/data"}, got[0].Containers[0].Mount)
 }
 
+func TestDecodeK8sManifestsDecodesPersistentVolumeClaim(t *testing.T) {
+	body := []byte(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-pod
+  namespace: demo
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: db-data
+  containers:
+    - name: app
+      image: busybox:latest
+      volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+`)
+
+	got, err := DecodeK8sManifests(body)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Len(t, got[0].PVCMounts, 1)
+	assert.Equal(t, ContainerPVCMountRef{
+		ContainerIndex: 0,
+		Name:           "db-data",
+		MountPath:      "/data",
+		ReadOnly:       true,
+	}, got[0].PVCMounts[0])
+	assert.Empty(t, got[0].Containers[0].Mount)
+}
+
 func TestDecodeK8sManifestsRejectsRelativeHostPath(t *testing.T) {
 	body := []byte(`
 apiVersion: v1

@@ -21,6 +21,7 @@ import (
 	"raind/internal/condenser/store/npm"
 	"raind/internal/condenser/store/nsm"
 	"raind/internal/condenser/store/sec"
+	"raind/internal/condenser/store/vsm"
 	"raind/internal/condenser/utils"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ func NewBootstrapManager() *BootstrapManager {
 		nsmStoreHandler:    nsm.NewNsmStore(utils.NsmStorePath),
 		secStoreHandler:    sec.NewSecStore(utils.SecStorePath),
 		netpolStoreHandler: netpol.NewStore(utils.NetpolStorePath),
+		vsmStoreHandler:    vsm.NewStore(utils.VsmStorePath),
 		npmStoreHandler:    npm.NewNpmStore(utils.NpmStorePath),
 		appArmorHandler:    lsm.NewAppArmorManager(),
 	}
@@ -63,6 +65,7 @@ type BootstrapManager struct {
 	nsmStoreHandler    nsm.NsmStoreHandler
 	secStoreHandler    *sec.SecStore
 	netpolStoreHandler netpol.StoreHandler
+	vsmStoreHandler    vsm.StoreHandler
 	npmStoreHandler    npm.NpmStoreHandler
 	appArmorHandler    lsm.AppArmorHandler
 }
@@ -110,6 +113,9 @@ func (m *BootstrapManager) SetupRuntime() error {
 	if err := m.setupNetpol(); err != nil {
 		return err
 	}
+	if err := m.setupVsm(); err != nil {
+		return err
+	}
 
 	// 2. setup cgroup
 	if err := m.setupCgroup(); err != nil {
@@ -147,6 +153,8 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		utils.ContainerRootDir,
 		utils.ImageRootDir,
 		utils.LayerRootDir,
+		utils.VolumeRootDir,
+		utils.PVCVolumeRootDir,
 		utils.StoreDir,
 		utils.StoreContainerDir,
 		utils.StoreImageDir,
@@ -158,6 +166,7 @@ func (m *BootstrapManager) setupRuntimeDirectory() error {
 		filepath.Dir(utils.CfmStorePath),
 		filepath.Dir(utils.NsmStorePath),
 		filepath.Dir(utils.NetpolStorePath),
+		filepath.Dir(utils.VsmStorePath),
 		utils.AuditLogDir,
 		utils.VarLogDir,
 		utils.CertDir,
@@ -195,6 +204,7 @@ func (m *BootstrapManager) migrateStoreLayout() error {
 		{Name: "cfm", Old: utils.OldCfmStorePath, New: utils.CfmStorePath},
 		{Name: "sec", Old: utils.OldSecStorePath, New: utils.SecStorePath},
 		{Name: "netpol", Old: utils.OldNetpolStorePath, New: utils.NetpolStorePath},
+		{Name: "vsm", Old: utils.OldVsmStorePath, New: utils.VsmStorePath},
 		{Name: "npm", Old: utils.OldNpmStorePath, New: utils.NpmStorePath},
 		{Name: "bsm", Old: utils.OldBsmStorePath, New: utils.BsmStorePath},
 		{Name: "nsm", Old: utils.OldNsmStorePath, New: utils.NsmStorePath},
@@ -272,6 +282,10 @@ func (m *BootstrapManager) setupSec() error {
 
 func (m *BootstrapManager) setupNetpol() error {
 	return m.netpolStoreHandler.SetNetworkPolicyState()
+}
+
+func (m *BootstrapManager) setupVsm() error {
+	return m.vsmStoreHandler.SetVolumeState()
 }
 
 func (m *BootstrapManager) setupCgroup() error {

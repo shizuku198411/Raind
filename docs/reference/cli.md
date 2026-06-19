@@ -184,6 +184,15 @@ raind resource netpol ls
 raind resource np show <name> --namespace <namespace>
 ```
 
+PersistentVolumeClaim commands:
+
+```sh
+raind resource pvc ls
+raind resource pvc ls --namespace <namespace>
+raind resource pvc show <pvc-id|name> [--namespace <namespace>]
+raind resource pvc rm <pvc-id|name> [--namespace <namespace>]
+```
+
 Namespace commands:
 
 ```sh

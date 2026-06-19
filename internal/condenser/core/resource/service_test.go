@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	corenamespace "raind/internal/condenser/core/namespace"
@@ -237,6 +238,37 @@ metadata:
 	require.NoError(t, err)
 	require.Len(t, result.Warnings, 1)
 	assert.Equal(t, "metadata.generateName", result.Warnings[0].Field)
+}
+
+func TestDeleteSkipsMissingChildResourceAndStillRemovesNamespace(t *testing.T) {
+	var events []string
+	service := &ResourceService{
+		namespaceHandler: &fakeNamespaceHandler{events: &events},
+		psmHandler:       psm.NewPsmManager(psm.NewPsmStore(filepath.Join(t.TempDir(), "psm.json"))),
+	}
+
+	result, err := service.Delete([]byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: missing-web
+  namespace: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+`))
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"namespace:remove:demo"}, events)
+	require.Len(t, result.Warnings, 1)
+	assert.Equal(t, "Deployment", result.Warnings[0].Kind)
+	assert.Equal(t, "missing-web", result.Warnings[0].Name)
+	assert.Equal(t, "demo", result.Warnings[0].Namespace)
+	assert.Contains(t, result.Warnings[0].Message, "skipped")
+	require.Len(t, result.Namespaces, 1)
+	assert.Equal(t, "demo", result.Namespaces[0].Name)
 }
 
 type fakeNamespaceHandler struct {

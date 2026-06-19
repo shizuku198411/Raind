@@ -83,6 +83,7 @@ func NewApp() *cli.App {
 					resourcecommand.CommandConfigMap(),
 					resourcecommand.CommandSecret(),
 					resourcecommand.CommandNetworkPolicy(),
+					resourcecommand.CommandPVC(),
 				},
 			},
 			{

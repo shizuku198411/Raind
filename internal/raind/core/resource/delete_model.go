@@ -46,6 +46,13 @@ type DeletedNetworkPolicyModel struct {
 	Namespace       string `json:"namespace,omitempty"`
 }
 
+type DeletedPVCModel struct {
+	PVCId         string `json:"pvcId,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Namespace     string `json:"namespace,omitempty"`
+	ReclaimPolicy string `json:"reclaimPolicy,omitempty"`
+}
+
 type DeletedIngressModel struct {
 	IngressId string `json:"ingressId"`
 	Name      string `json:"name"`
@@ -53,16 +60,17 @@ type DeletedIngressModel struct {
 }
 
 type DeleteResponseModel struct {
-	Pods            []DeletedPodModel           `json:"pods,omitempty"`
-	ReplicaSets     []DeletedReplicaSetModel    `json:"replicasets,omitempty"`
-	Deployments     []DeletedDeploymentModel    `json:"deployments,omitempty"`
-	Services        []DeletedServiceModel       `json:"services,omitempty"`
-	Ingresses       []DeletedIngressModel       `json:"ingresses,omitempty"`
-	Namespaces      []DeletedNamespaceModel     `json:"namespaces,omitempty"`
-	ConfigMaps      []DeletedConfigMapModel     `json:"configMaps,omitempty"`
-	Secrets         []DeletedSecretModel        `json:"secrets,omitempty"`
-	NetworkPolicies []DeletedNetworkPolicyModel `json:"networkPolicies,omitempty"`
-	Warnings        []WarningModel              `json:"warnings,omitempty"`
+	Pods                   []DeletedPodModel           `json:"pods,omitempty"`
+	ReplicaSets            []DeletedReplicaSetModel    `json:"replicasets,omitempty"`
+	Deployments            []DeletedDeploymentModel    `json:"deployments,omitempty"`
+	Services               []DeletedServiceModel       `json:"services,omitempty"`
+	Ingresses              []DeletedIngressModel       `json:"ingresses,omitempty"`
+	Namespaces             []DeletedNamespaceModel     `json:"namespaces,omitempty"`
+	ConfigMaps             []DeletedConfigMapModel     `json:"configMaps,omitempty"`
+	Secrets                []DeletedSecretModel        `json:"secrets,omitempty"`
+	NetworkPolicies        []DeletedNetworkPolicyModel `json:"networkPolicies,omitempty"`
+	PersistentVolumeClaims []DeletedPVCModel           `json:"persistentVolumeClaims,omitempty"`
+	Warnings               []WarningModel              `json:"warnings,omitempty"`
 }
 
 type WarningModel struct {
