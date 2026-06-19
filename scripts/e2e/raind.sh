@@ -16,6 +16,7 @@ IPAM_STORE="/etc/raind/store/network/ipam.json"
 ISM_STORE="/etc/raind/store/resource/ingress/ism.json"
 CFM_STORE="/etc/raind/store/resource/configmap/cfm.json"
 SEC_STORE="/etc/raind/store/resource/secret/sec.json"
+NETPOL_STORE="/etc/raind/store/resource/networkpolicy/netpol.json"
 NPM_STORE="/etc/raind/store/network/npm.json"
 NSM_STORE="/etc/raind/store/resource/namespace/nsm.json"
 PSM_STORE="/etc/raind/store/resource/pod/psm.json"
@@ -87,6 +88,7 @@ prepare_runtime() {
     /etc/raind/store/resource/ingress \
     /etc/raind/store/resource/configmap \
     /etc/raind/store/resource/secret \
+    /etc/raind/store/resource/networkpolicy \
     /etc/raind/store/resource/namespace \
     /etc/raind/store/resource/pod \
     /etc/raind/store/resource/service \
@@ -157,6 +159,7 @@ reset_resource_runtime_state() {
     "${ISM_STORE}" \
     "${CFM_STORE}" \
     "${SEC_STORE}" \
+    "${NETPOL_STORE}" \
     "${NPM_STORE}" \
     "${NSM_STORE}" \
     "${PSM_STORE}" \
@@ -1619,6 +1622,98 @@ YAML
   wait_resource_namespace_absent secret-namespace-removed "${ns}"
 }
 
+test_resource_networkpolicy() {
+  local base_yaml="${E2E_WORK_DIR}/networkpolicy-base.yaml"
+  local policy_yaml="${E2E_WORK_DIR}/networkpolicy.yaml"
+  local ns="e2e-netpol-ns-${SUFFIX}"
+
+  log "resource networkpolicy test"
+  cat >"${base_yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-netpol-client
+  namespace: ${ns}
+  labels:
+    app: e2e-netpol
+    role: client
+spec:
+  containers:
+  - name: client
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-netpol-server
+  namespace: ${ns}
+  labels:
+    app: e2e-netpol
+    role: server
+spec:
+  containers:
+  - name: server
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - 'trap "exit 0" TERM INT; while true; do sleep 1; done'
+YAML
+
+  cat >"${policy_yaml}" <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-client
+  namespace: ${ns}
+spec:
+  podSelector:
+    matchLabels:
+      role: server
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: client
+    ports:
+    - protocol: TCP
+      port: 8080
+YAML
+
+  run_resource_apply_with_retry netpol-base-apply "${base_yaml}"
+  assert_output_contains netpol-base-apply "pod:"
+  wait_pod_row_ready netpol-client-ready e2e-netpol-client resource pod ls --namespace "${ns}"
+  wait_pod_row_ready netpol-server-ready e2e-netpol-server resource pod ls --namespace "${ns}"
+
+  run_resource_apply_with_retry netpol-apply "${policy_yaml}"
+  assert_output_contains netpol-apply "networkpolicy:"
+  assert_output_contains netpol-apply "generated rules: 1"
+  run_raind netpol-ls resource netpol ls --namespace "${ns}"
+  assert_output_contains netpol-ls "allow-client"
+  run_raind netpol-show resource netpol show allow-client --namespace "${ns}"
+  assert_output_contains netpol-show "GENERATED RULES"
+  assert_output_contains netpol-show "1"
+  sudo_cmd jq -e --arg ns "${ns}" '.networkPolicies[] | select(.name == "allow-client" and .namespace == $ns and (.generatedRuleIds | length) == 1)' "${NETPOL_STORE}" >/dev/null
+
+  run_raind netpol-rm resource rm -f "${policy_yaml}"
+  assert_output_contains netpol-rm "networkpolicy:"
+  sudo_cmd jq -e --arg ns "${ns}" '[.networkPolicies[] | select(.name == "allow-client" and .namespace == $ns)] | length == 0' "${NETPOL_STORE}" >/dev/null
+
+  run_raind netpol-base-rm resource rm -f "${base_yaml}"
+  assert_output_contains netpol-base-rm "pod:"
+  assert_output_contains netpol-base-rm "namespace:"
+  wait_resource_namespace_absent netpol-namespace-removed "${ns}"
+}
+
 test_resource_replicaset() {
   local yaml="${E2E_WORK_DIR}/replicaset.yaml"
   local ns="e2e-rs-ns-${SUFFIX}"
@@ -1906,6 +2001,7 @@ main() {
   test_resource_pod
   test_resource_configmap
   test_resource_secret
+  test_resource_networkpolicy
   test_resource_replicaset
   test_resource_deployment
   test_resource_service

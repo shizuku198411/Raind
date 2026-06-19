@@ -9,6 +9,7 @@ import (
 	coreConfigMap "raind/internal/condenser/core/configmap"
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
+	coreNetworkPolicy "raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
 	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
@@ -78,6 +79,13 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 			}
 			result.Secrets = append(result.Secrets, secretResults...)
 
+		case "NetworkPolicy":
+			networkPolicyResults, err := s.deleteNetworkPolicy(rawBytes)
+			if err != nil {
+				return DeleteResult{}, err
+			}
+			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResults...)
+
 		case "Deployment":
 			deployResults, err := s.deleteDeployment(rawBytes)
 			if err != nil {
@@ -141,6 +149,22 @@ func (s *ResourceService) deleteSecret(rawBytes []byte) ([]DeleteSecretResult, e
 		return nil, statusError(http.StatusNotFound, "secret not found")
 	}
 	return result, nil
+}
+
+func (s *ResourceService) deleteNetworkPolicy(rawBytes []byte) ([]DeleteNetworkPolicyResult, error) {
+	manifest, err := coreNetworkPolicy.DecodeK8sNetworkPolicyManifest(rawBytes)
+	if err != nil {
+		return nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	info, err := coreNetworkPolicy.NewService().Remove(manifest.Name, manifest.Namespace)
+	if err != nil {
+		return nil, statusError(http.StatusInternalServerError, "networkpolicy remove failed: %v", err)
+	}
+	return []DeleteNetworkPolicyResult{{
+		NetworkPolicyId: info.NetworkPolicyId,
+		Name:            info.Name,
+		Namespace:       info.Namespace,
+	}}, nil
 }
 
 func (s *ResourceService) deleteConfigMap(rawBytes []byte) ([]DeleteConfigMapResult, error) {

@@ -12,6 +12,7 @@ import (
 	"raind/internal/condenser/core/container"
 	coreIngress "raind/internal/condenser/core/ingress"
 	corenamespace "raind/internal/condenser/core/namespace"
+	coreNetworkPolicy "raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
 	coreSecret "raind/internal/condenser/core/secret"
 	coreService "raind/internal/condenser/core/service"
@@ -141,6 +142,15 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			rollback = append(rollback, undo)
 			result.Secrets = append(result.Secrets, secretResult)
 
+		case "NetworkPolicy":
+			networkPolicyResult, undo, err := s.applyNetworkPolicy(rawBytes)
+			if err != nil {
+				rollbackApplied()
+				return ApplyResult{}, err
+			}
+			rollback = append(rollback, undo)
+			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResult)
+
 		case "Pod", "ReplicaSet", "Deployment":
 			if err := s.applyPodResource(rawBytes, &result, &rollback); err != nil {
 				rollbackApplied()
@@ -179,6 +189,25 @@ func (s *ResourceService) applySecret(rawBytes []byte) (ApplySecretResult, func(
 			Namespace: manifest.Namespace,
 		}, func() {
 			_ = s.secHandler.RemoveSecret(secretId)
+		}, nil
+}
+
+func (s *ResourceService) applyNetworkPolicy(rawBytes []byte) (ApplyNetworkPolicyResult, func(), error) {
+	manifest, err := coreNetworkPolicy.DecodeK8sNetworkPolicyManifest(rawBytes)
+	if err != nil {
+		return ApplyNetworkPolicyResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	info, err := coreNetworkPolicy.NewService().Apply(manifest)
+	if err != nil {
+		return ApplyNetworkPolicyResult{}, nil, statusError(http.StatusInternalServerError, "networkpolicy apply failed: %v", err)
+	}
+	return ApplyNetworkPolicyResult{
+			NetworkPolicyId: info.NetworkPolicyId,
+			Name:            info.Name,
+			Namespace:       info.Namespace,
+			GeneratedRules:  len(info.GeneratedRuleIds),
+		}, func() {
+			_, _ = coreNetworkPolicy.NewService().Remove(info.NetworkPolicyId, "")
 		}, nil
 }
 

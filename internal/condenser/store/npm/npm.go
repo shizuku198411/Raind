@@ -163,6 +163,29 @@ func (m *NpmManager) RemovePolicy(policyId string) error {
 	})
 }
 
+func (m *NpmManager) RemovePoliciesByOwner(ownerKind, ownerId string) ([]Policy, error) {
+	var removed []Policy
+	err := m.npmStore.withLock(func(np *NetworkPolicy) error {
+		np.Policies.EastWestPolicy, removed = removePoliciesByOwner(np.Policies.EastWestPolicy, ownerKind, ownerId, removed)
+		np.Policies.NorthSouthObservePolicy, removed = removePoliciesByOwner(np.Policies.NorthSouthObservePolicy, ownerKind, ownerId, removed)
+		np.Policies.NorthSouthEnforcePolicy, removed = removePoliciesByOwner(np.Policies.NorthSouthEnforcePolicy, ownerKind, ownerId, removed)
+		return nil
+	})
+	return removed, err
+}
+
+func removePoliciesByOwner(policies []Policy, ownerKind, ownerId string, removed []Policy) ([]Policy, []Policy) {
+	kept := policies[:0]
+	for _, policy := range policies {
+		if policy.OwnerKind == ownerKind && policy.OwnerId == ownerId {
+			removed = append(removed, policy)
+			continue
+		}
+		kept = append(kept, policy)
+	}
+	return kept, removed
+}
+
 func (m *NpmManager) UpdateStatus(chainName string, policyId string, status string, reason string) error {
 	return m.npmStore.withLock(func(np *NetworkPolicy) error {
 		switch chainName {

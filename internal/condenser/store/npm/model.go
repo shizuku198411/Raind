@@ -31,6 +31,11 @@ type Policy struct {
 	Protocol    string   `json:"protocol,omitempty"`
 	DestPort    int      `json:"dport,omitempty"`
 	Comment     string   `json:"comment,omitempty"`
+	ManagedBy   string   `json:"managedBy,omitempty"`
+	OwnerKind   string   `json:"ownerKind,omitempty"`
+	OwnerNS     string   `json:"ownerNamespace,omitempty"`
+	OwnerName   string   `json:"ownerName,omitempty"`
+	OwnerId     string   `json:"ownerId,omitempty"`
 }
 
 type HostInfo struct {

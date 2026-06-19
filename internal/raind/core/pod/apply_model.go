@@ -5,15 +5,16 @@ type ServicePodApplyModel struct {
 }
 
 type ApplyResponseDataModel struct {
-	Pods        []PodInfo        `json:"pods"`
-	ReplicaSets []ReplicaSetInfo `json:"replicasets"`
-	Deployments []DeploymentInfo `json:"deployments"`
-	Services    []ServiceInfo    `json:"services"`
-	Ingresses   []IngressInfo    `json:"ingresses"`
-	Namespaces  []NamespaceInfo  `json:"namespaces"`
-	ConfigMaps  []ConfigMapInfo  `json:"configMaps"`
-	Secrets     []SecretInfo     `json:"secrets"`
-	Warnings    []WarningInfo    `json:"warnings,omitempty"`
+	Pods            []PodInfo           `json:"pods"`
+	ReplicaSets     []ReplicaSetInfo    `json:"replicasets"`
+	Deployments     []DeploymentInfo    `json:"deployments"`
+	Services        []ServiceInfo       `json:"services"`
+	Ingresses       []IngressInfo       `json:"ingresses"`
+	Namespaces      []NamespaceInfo     `json:"namespaces"`
+	ConfigMaps      []ConfigMapInfo     `json:"configMaps"`
+	Secrets         []SecretInfo        `json:"secrets"`
+	NetworkPolicies []NetworkPolicyInfo `json:"networkPolicies"`
+	Warnings        []WarningInfo       `json:"warnings,omitempty"`
 }
 
 type PodInfo struct {
@@ -65,6 +66,13 @@ type SecretInfo struct {
 	SecretId  string `json:"secretId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+}
+
+type NetworkPolicyInfo struct {
+	NetworkPolicyId string `json:"networkPolicyId"`
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
+	GeneratedRules  int    `json:"generatedRules"`
 }
 
 type WarningInfo struct {

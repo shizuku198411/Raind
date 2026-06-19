@@ -168,6 +168,22 @@ raind resource secret rm <secret-id|name> [--namespace <namespace>]
 
 Secret values are not shown by default.
 
+NetworkPolicy commands:
+
+```sh
+raind resource networkpolicy ls
+raind resource networkpolicy ls --namespace <namespace>
+raind resource networkpolicy show <networkpolicy-id|name> [--namespace <namespace>]
+raind resource networkpolicy rm <networkpolicy-id|name> [--namespace <namespace>]
+```
+
+The short aliases `netpol` and `np` can be used for `networkpolicy`:
+
+```sh
+raind resource netpol ls
+raind resource np show <name> --namespace <namespace>
+```
+
 Namespace commands:
 
 ```sh

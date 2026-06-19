@@ -27,7 +27,7 @@ Raind currently focuses on:
 
 - Docker-like single-container workflows
 - local multi-container Bottle workflows
-- Kubernetes-style Namespace, Pod, ReplicaSet, Deployment, Service, and Ingress resources
+- Kubernetes-style Namespace, Pod, ReplicaSet, Deployment, Service, Ingress, ConfigMap, Secret, and NetworkPolicy resources
 - runtime-managed container networking and policy
 - container and Pod traffic observation
 - rootless standalone containers with explicit ID mapping modes
