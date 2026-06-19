@@ -5,6 +5,7 @@ import (
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/store/npm"
+	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/utils"
 	"strings"
 )
@@ -15,6 +16,7 @@ func NewwServicePolicy() *ServicePolicy {
 		npmHandler:      npm.NewNpmManager(npm.NewNpmStore(utils.NpmStorePath)),
 		npmStoreHandler: npm.NewNpmStore(utils.NpmStorePath),
 		csmHandler:      csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
+		psmHandler:      psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 
 		iptablesHandler: NewIptablesManager(),
 	}
@@ -25,6 +27,7 @@ type ServicePolicy struct {
 	npmHandler      npm.NpmHandler
 	npmStoreHandler npm.NpmStoreHandler
 	csmHandler      csm.CsmHandler
+	psmHandler      psm.PsmHandler
 
 	iptablesHandler IptablesHandler
 }
@@ -138,18 +141,14 @@ func (s *ServicePolicy) GetPolicyList(param ServiceListModel) PolicyListModel {
 
 		for _, p := range policyList {
 			policies = append(policies, PolicyInfo{
-				Id:     p.Id,
-				Status: p.Status,
-				Reason: p.Reason,
-				Source: HostInfo{
-					ContainerName: p.Source.ContainerName,
-				},
-				Destination: HostInfo{
-					ContainerName: p.Destination.ContainerName,
-				},
-				Protocol: p.Protocol,
-				DestPort: p.DestPort,
-				Comment:  p.Comment,
+				Id:          p.Id,
+				Status:      p.Status,
+				Reason:      p.Reason,
+				Source:      s.policyHostInfo(p.Source),
+				Destination: s.policyHostInfo(p.Destination),
+				Protocol:    p.Protocol,
+				DestPort:    p.DestPort,
+				Comment:     p.Comment,
 			})
 		}
 
@@ -160,18 +159,14 @@ func (s *ServicePolicy) GetPolicyList(param ServiceListModel) PolicyListModel {
 
 		for _, p := range policyList {
 			policies = append(policies, PolicyInfo{
-				Id:     p.Id,
-				Status: p.Status,
-				Reason: p.Reason,
-				Source: HostInfo{
-					ContainerName: p.Source.ContainerName,
-				},
-				Destination: HostInfo{
-					Address: p.Destination.Address,
-				},
-				Protocol: p.Protocol,
-				DestPort: p.DestPort,
-				Comment:  p.Comment,
+				Id:          p.Id,
+				Status:      p.Status,
+				Reason:      p.Reason,
+				Source:      s.policyHostInfo(p.Source),
+				Destination: s.policyHostInfo(p.Destination),
+				Protocol:    p.Protocol,
+				DestPort:    p.DestPort,
+				Comment:     p.Comment,
 			})
 		}
 
@@ -182,18 +177,14 @@ func (s *ServicePolicy) GetPolicyList(param ServiceListModel) PolicyListModel {
 
 		for _, p := range policyList {
 			policies = append(policies, PolicyInfo{
-				Id:     p.Id,
-				Status: p.Status,
-				Reason: p.Reason,
-				Source: HostInfo{
-					ContainerName: p.Source.ContainerName,
-				},
-				Destination: HostInfo{
-					Address: p.Destination.Address,
-				},
-				Protocol: p.Protocol,
-				DestPort: p.DestPort,
-				Comment:  p.Comment,
+				Id:          p.Id,
+				Status:      p.Status,
+				Reason:      p.Reason,
+				Source:      s.policyHostInfo(p.Source),
+				Destination: s.policyHostInfo(p.Destination),
+				Protocol:    p.Protocol,
+				DestPort:    p.DestPort,
+				Comment:     p.Comment,
 			})
 		}
 
@@ -223,6 +214,36 @@ func (s *ServicePolicy) ChangeNSMode(mode string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *ServicePolicy) policyHostInfo(host npm.HostInfo) HostInfo {
+	return HostInfo{
+		ContainerName: host.ContainerName,
+		DisplayName:   s.displayNameForPolicyHost(host),
+		Address:       host.Address,
+	}
+}
+
+func (s *ServicePolicy) displayNameForPolicyHost(host npm.HostInfo) string {
+	if host.DisplayName != "" {
+		return host.DisplayName
+	}
+	if host.ContainerName == "" || !strings.HasPrefix(host.ContainerName, utils.PodInfraContainerNamePrefix) {
+		return host.ContainerName
+	}
+	containerId, _ := s.resolveContainerNameAndInfo(host.ContainerName)
+	if containerId == "" {
+		return host.ContainerName
+	}
+	info, err := s.csmHandler.GetContainerById(containerId)
+	if err != nil || info.PodId == "" {
+		return host.ContainerName
+	}
+	pod, err := s.psmHandler.GetPodById(info.PodId)
+	if err != nil || pod.Name == "" {
+		return host.ContainerName
+	}
+	return pod.Name
 }
 
 func (s *ServicePolicy) resolveContainerNameAndInfo(str string) (string, string) {

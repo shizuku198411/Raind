@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
+	"raind/internal/condenser/store/psm"
 	"raind/internal/condenser/utils"
 	"strconv"
 	"strings"
@@ -27,11 +28,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-func NewResolver(ipamHandler ipam.IpamHandler, csmHandler csm.CsmHandler) *Resolver {
+func NewResolver(ipamHandler ipam.IpamHandler, csmHandler csm.CsmHandler, psmHandler psm.PsmHandler) *Resolver {
 	resolver := &Resolver{
 		ResolveMap:  map[string]ContainerMeta{},
 		ipamHandler: ipamHandler,
 		csmHandler:  csmHandler,
+		psmHandler:  psmHandler,
 	}
 	pool, _ := ipamHandler.GetPoolList()
 	for _, p := range pool {
@@ -42,6 +44,7 @@ func NewResolver(ipamHandler ipam.IpamHandler, csmHandler csm.CsmHandler) *Resol
 				resolver.ResolveMap[addr] = ContainerMeta{
 					ContainerId:   info.ContainerId,
 					ContainerName: containerName,
+					DisplayName:   resolver.displayNameForContainer(info.ContainerId, containerName),
 					Ipv4:          addr,
 					Veth:          info.Interface,
 					SpiffeId:      spiffeId,
@@ -56,6 +59,7 @@ type Resolver struct {
 	ResolveMap  map[string]ContainerMeta
 	ipamHandler ipam.IpamHandler
 	csmHandler  csm.CsmHandler
+	psmHandler  psm.PsmHandler
 }
 
 func (r *Resolver) Refresh() {
@@ -72,6 +76,7 @@ func (r *Resolver) Refresh() {
 				r.ResolveMap[addr] = ContainerMeta{
 					ContainerId:   info.ContainerId,
 					ContainerName: containerName,
+					DisplayName:   r.displayNameForContainer(info.ContainerId, containerName),
 					Ipv4:          addr,
 					Veth:          info.Interface,
 					SpiffeId:      spiffeId,
@@ -79,6 +84,21 @@ func (r *Resolver) Refresh() {
 			}
 		}
 	}
+}
+
+func (r *Resolver) displayNameForContainer(containerId, containerName string) string {
+	if !strings.HasPrefix(containerName, utils.PodInfraContainerNamePrefix) {
+		return containerName
+	}
+	info, err := r.csmHandler.GetContainerById(containerId)
+	if err != nil || info.PodId == "" {
+		return containerName
+	}
+	pod, err := r.psmHandler.GetPodById(info.PodId)
+	if err != nil || pod.Name == "" {
+		return containerName
+	}
+	return pod.Name
 }
 
 func (r *Resolver) Watch(ctx context.Context) error {
@@ -146,6 +166,7 @@ func (h *EnrichedLogHandler) EnrichedLogger() {
 	resolver := NewResolver(
 		ipam.NewIpamManager(ipam.NewIpamStore(utils.IpamStorePath)),
 		csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
+		psm.NewPsmManager(psm.NewPsmStore(utils.PsmStorePath)),
 	)
 
 	// start resolver watch
@@ -452,7 +473,7 @@ func (e *Enricher) enrich(rr RawRecord, rawLine []byte) Enriched {
 			if !ok {
 				src.Kind = "container_unresolved"
 			}
-			src.ContainerId, src.ContainerName, src.Veth, src.SpiffeId = containerMeta.ContainerId, containerMeta.ContainerName, containerMeta.Veth, containerMeta.SpiffeId
+			src.ContainerId, src.ContainerName, src.DisplayName, src.Veth, src.SpiffeId = containerMeta.ContainerId, containerMeta.ContainerName, containerMeta.DisplayName, containerMeta.Veth, containerMeta.SpiffeId
 		} else {
 			src.Kind = "external"
 		}
@@ -464,7 +485,7 @@ func (e *Enricher) enrich(rr RawRecord, rawLine []byte) Enriched {
 			if !ok {
 				dst.Kind = "container_unresolved"
 			}
-			dst.ContainerId, dst.ContainerName, dst.Veth, dst.SpiffeId = containerMeta.ContainerId, containerMeta.ContainerName, containerMeta.Veth, containerMeta.SpiffeId
+			dst.ContainerId, dst.ContainerName, dst.DisplayName, dst.Veth, dst.SpiffeId = containerMeta.ContainerId, containerMeta.ContainerName, containerMeta.DisplayName, containerMeta.Veth, containerMeta.SpiffeId
 		} else {
 			dst.Kind = "external"
 		}

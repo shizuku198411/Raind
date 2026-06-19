@@ -29,5 +29,6 @@ type PolicyModel struct {
 
 type HostInfoModel struct {
 	ContainerName string `json:"container_name"`
+	DisplayName   string `json:"display_name"`
 	Address       string `json:"address"`
 }

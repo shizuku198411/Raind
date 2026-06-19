@@ -3,6 +3,7 @@ package enrichedlog
 type ContainerMeta struct {
 	ContainerId   string `json:"container_id"`
 	ContainerName string `json:"container_name"`
+	DisplayName   string `json:"display_name,omitempty"`
 	Ipv4          string `json:"ip"`
 	Veth          string `json:"veth,omitempty"`
 	SpiffeId      string `json:"spiffe_id,omitempty"`
@@ -14,6 +15,7 @@ type Endpoint struct {
 	Port          int    `json:"port,omitempty"`
 	ContainerId   string `json:"container_id,omitempty"`
 	ContainerName string `json:"container_name,omitempty"`
+	DisplayName   string `json:"display_name,omitempty"`
 	SpiffeId      string `json:"spiffe_id,omitempty"`
 	Veth          string `json:"veth,omitempty"`
 }

@@ -56,5 +56,6 @@ type PolicyInfo struct {
 
 type HostInfo struct {
 	ContainerName string `json:"container_name,omitempty"`
+	DisplayName   string `json:"display_name,omitempty"`
 	Address       string `json:"address,omitempty"`
 }
