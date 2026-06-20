@@ -9,6 +9,7 @@ import (
 	imagecommand "raind/internal/raind/command/image"
 	logscommand "raind/internal/raind/command/logs"
 	networkcommand "raind/internal/raind/command/network"
+	promotecommand "raind/internal/raind/command/promote"
 	resourcecommand "raind/internal/raind/command/resource"
 	securitycommand "raind/internal/raind/command/security"
 
@@ -66,6 +67,13 @@ func NewApp() *cli.App {
 					networkcommand.CommandList(),
 					networkcommand.CommandCreate(),
 					networkcommand.CommandRemove(),
+				},
+			},
+			{
+				Name:  "promote",
+				Usage: "promote runtime state to the next deployment draft",
+				Subcommands: []*cli.Command{
+					promotecommand.CommandContainer(),
 				},
 			},
 			{

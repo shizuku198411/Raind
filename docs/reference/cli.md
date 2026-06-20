@@ -65,6 +65,29 @@ Common create and run flags:
 --rm
 ```
 
+## Promote
+
+Generate reviewable drafts from existing runtime state:
+
+```sh
+raind promote container <container-id-or-name> --to bottle -o Dripfile
+raind promote container <container-id-or-name> --to bottle --stdout
+raind promote container <container-id-or-name> --to bottle -o Dripfile --force
+```
+
+Useful flags:
+
+```sh
+--service-name <name>
+--bottle-name <name>
+--include-image-env
+-o, --output <path>
+--stdout
+--force
+```
+
+The generated Dripfile is a draft. Secret-like environment variables are redacted into TODO comments.
+
 ## Networks
 
 ```sh

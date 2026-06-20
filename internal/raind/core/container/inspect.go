@@ -18,10 +18,10 @@ func NewServiceContainerInspect() *ServiceContainerInspect {
 
 type ServiceContainerInspect struct{}
 
-func (s *ServiceContainerInspect) Inspect(target string, asJSON bool) error {
+func (s *ServiceContainerInspect) Get(target string) (ContainerInspectModel, error) {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
-		return err
+		return ContainerInspectModel{}, err
 	}
 	httpClient.NewRequest(
 		http.MethodGet,
@@ -30,24 +30,32 @@ func (s *ServiceContainerInspect) Inspect(target string, asJSON bool) error {
 	)
 	resp, err := httpClient.Client.Do(httpClient.Request)
 	if err != nil {
-		return fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
+		return ContainerInspectModel{}, fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
 	}
 	defer resp.Body.Close()
 
 	var respModel InspectResponseModel
 	if !httpClient.IsStatusOk(resp) {
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&respModel); decodeErr != nil {
-			return fmt.Errorf("decode response: %w", decodeErr)
+			return ContainerInspectModel{}, fmt.Errorf("decode response: %w", decodeErr)
 		}
-		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
+		return ContainerInspectModel{}, fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return ContainerInspectModel{}, fmt.Errorf("decode response: %w", err)
+	}
+	return respModel.Data.Container, nil
+}
+
+func (s *ServiceContainerInspect) Inspect(target string, asJSON bool) error {
+	inspect, err := s.Get(target)
+	if err != nil {
+		return err
 	}
 
 	if asJSON {
-		out, err := json.MarshalIndent(respModel.Data.Container, "", "  ")
+		out, err := json.MarshalIndent(inspect, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode inspect json: %w", err)
 		}
@@ -55,7 +63,7 @@ func (s *ServiceContainerInspect) Inspect(target string, asJSON bool) error {
 		return nil
 	}
 
-	return s.print(respModel.Data.Container)
+	return s.print(inspect)
 }
 
 func (s *ServiceContainerInspect) print(inspect ContainerInspectModel) error {
