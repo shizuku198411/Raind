@@ -1,229 +1,259 @@
 # Raind
 
-<p>
-  <img src="./assets/raind_icon.png" alt="Project Icon" width="150">
+<p align="center">
+  <img src="./assets/raind_icon.png" alt="Raind" width="140">
 </p>
 
-Raind is an experimental runtime stack that unifies Docker-style container management and Kubernetes-style Pod/resource management in a single runtime.
+<p align="center">
+  <strong>A local deployment validation runtime for containers and Kubernetes-style workloads.</strong>
+</p>
 
-The goal of Raind is to make container-level and Pod-level application deployment testable, controllable, and observable through one consistent runtime path. Instead of treating single containers, multi-container application groups, and Kubernetes-like resources as separate operational layers, Raind manages them as related workload units on top of the same runtime foundation.
+<p align="center">
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange.svg">
+  <img alt="Go" src="https://img.shields.io/badge/go-1.25%2B-00ADD8.svg">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-linux-lightgrey.svg">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-OCI--style-5C6BC0.svg">
+  <img alt="Kubernetes-style" src="https://img.shields.io/badge/resources-Kubernetes--style-326CE5.svg">
+</p>
 
-Raind is still under active development. Dockerfile parsing, image manifest handling, and Kubernetes manifest compatibility are being expanded incrementally, so some Docker/Kubernetes features may be parsed or partially supported before they are fully implemented.
+> [!WARNING]
+> Raind is under active development. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It supports a growing subset of Kubernetes-style resources for local deployment testing.
 
-## 1. Raind Concept
+Raind is an experimental runtime stack that runs **single containers**, **local multi-container groups**, and **Kubernetes-style resources** through one runtime path.
 
-Raind is built around a layered runtime architecture:
+It is designed for local pre-deployment checks where you want to validate how an application behaves with containers, Pods, Services, Ingress, PVCs, Secrets, and NetworkPolicy-like traffic control, without starting a full Kubernetes cluster.
+
+## Demo
+
+<!-- TODO: Place GIF here.
+Recommended file: ./assets/demo/raind-quickstart.gif
+
+Suggested content:
+1. Start Raind.
+2. Run a single nginx container.
+3. Apply a Kubernetes-style Deployment + Service.
+4. Show `raind resource get deploy`, `raind resource get service`.
+5. Access the service locally.
+-->
+
+![Raind quickstart demo](./assets/demo/raind-quickstart.gif)
+
+## Why Raind?
+
+Local container workflows often jump between different tools and mental models:
+
+- one tool for single containers,
+- another model for Pod-style workloads,
+- another layer for Services and Ingress,
+- another place to inspect traffic and policy.
+
+Raind tries to keep those concerns in one runtime.
+
+With Raind, you can:
+
+- run Docker-like single containers,
+- apply Kubernetes-style manifests,
+- run Pod-like workloads through an infra-container model,
+- reconcile ReplicaSet and Deployment resources,
+- route traffic with Service and Ingress resources,
+- mount PVC-backed local volumes,
+- inject ConfigMap and Secret values,
+- generate runtime security policy from NetworkPolicy resources,
+- inspect observed network flows from the runtime itself.
+
+Raind is useful when you want a lightweight local runtime for checking deployment behavior before moving to Docker, Compose, Kubernetes, or a real cluster.
+
+## What Raind is not
+
+Raind is intentionally not positioned as a full replacement for Docker, containerd, kind, minikube, or Kubernetes.
+
+| Tool | Primary role |
+|---|---|
+| Docker / Podman | Run and manage containers |
+| kind / minikube | Run a real local Kubernetes cluster |
+| Kubernetes | Production-grade orchestration platform |
+| Raind | Local runtime for container and Kubernetes-style deployment validation |
+
+Raind focuses on the space between single-container testing and full-cluster testing.
+
+## Features
+
+### Runtime foundation
+
+- Low-level OCI-style runtime layer
+- Container lifecycle: create, start, exec, stop, kill, remove
+- Namespace, mount, cgroup, capability, seccomp, and AppArmor-related runtime paths
+- Rootful and rootless-oriented runtime work
+- Runtime state managed through the Raind stack
+
+### Container workflows
+
+```sh
+raind container run --name web -p 8080:80 nginx:latest
+raind container exec web /bin/sh
+raind container logs web
+raind container stop web
+raind container rm web
+```
+
+### Kubernetes-style resources
+
+Raind supports a growing subset of Kubernetes-style resources.  
+
+Example manifest:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  namespace: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-server
+  template:
+    metadata:
+      labels:
+        app: web-server
+    spec:
+      containers:
+        - name: nginx-web
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+```
+
+Typical workflow:
+
+```sh
+raind resource apply -f app.yaml
+
+raind resource get ns
+raind resource get pod
+raind resource get deploy
+raind resource get service
+raind resource get ingress
+```
+
+### Network visibility and policy
+
+Raind connects Kubernetes-style NetworkPolicy resources to runtime-managed security policy.
+
+```sh
+raind resource apply -f networkpolicy.yaml
+
+raind security policy ls
+raind logs netflow
+```
+
+Example output:
 
 ```text
-raind CLI
-  -> condenser: high-level runtime API, image/resource/policy/log controller
-    -> droplet: low-level OCI-style container runtime
+POLICY TYPE : East-West
+CURRENT MODE: deny_by_default
+
+FLAG  SRC CONTAINER       DST CONTAINER   PROTOCOL  DST PORT  ACTION
+[*]   nextcloud-01kvfymx  mysql-01kvfyms  tcp       3306      ALLOW
+  >> DENY ALL EAST-WEST TRAFFIC <<
 ```
 
-`droplet` provides the low-level container runtime layer. It is responsible for OCI-style container lifecycle operations such as create, start, exec, stop, kill, delete, namespace setup, mounts, capabilities, cgroups, hooks, and runtime state.
-
-`condenser` provides the high-level runtime layer. It manages images, containers, bottles, Kubernetes-style resources, networking, policy, logs, and state, then delegates low-level container execution to `droplet`.
-
-`raind` is the user-facing CLI. It exposes container, image, resource, bottle, policy, network, and log workflows through one command surface.
-
-## 2. Why Raind?
-
-Modern container workflows are often split across different layers.
-
-Docker-style tools are convenient for building images and running individual containers, but they usually stop at the container boundary. Kubernetes-style systems are powerful for Pod-level deployment and service-oriented workloads, but they introduce a larger orchestration model even when the user only wants to test a workload locally.
-
-At the same time, policy and communication visibility are often outside the direct runtime path. Container-to-container and Pod-to-Pod traffic can become difficult to understand because deployment, policy, and logs are managed through different tools.
-
-Raind is designed to collapse those concerns into one runtime:
-
-- Run and inspect individual containers.
-- Group multiple containers into a local application unit.
-- Apply Kubernetes-style manifests for Pod-level resources.
-- Reconcile workload resources such as ReplicaSet and Deployment.
-- Expose Service-level traffic handling for matching Pods.
-- Apply runtime-managed network policy.
-- Observe container and Pod communication from runtime logs.
-
-This makes Raind useful as a local testing and deployment runtime for applications that may move between simple containers, multi-container groups, and Kubernetes-style workloads.
-
-## 3. Unifying Docker-Style Container Management and Kubernetes-Style Pod Management
-
-Raind provides Docker-like and Kubernetes-like workflows through one runtime interface.
-
-For container-level workflows, Raind can run individual containers, publish ports, mount volumes, pass environment variables, execute commands, read logs, and manage lifecycle state.
-
-```sh
-raind container run --name web -p 8080:80 nginx:latest
-raind container exec web /bin/sh
-raind container logs web
-raind container stop web
-raind container rm web
+```text
+ALLOW   FROM: nextcloud-01kvfymx => TO: mysql-01kvfyms {TCP/3306}
 ```
 
-For Pod/resource-level workflows, Raind can apply Kubernetes-style YAML manifests and manage resources such as Pod, ReplicaSet, Deployment, and Service.
+## Quickstart
+
+See the full quickstart guide:
+
+- [Installation](./docs/getting-started/installation.md)
+- [Quickstart](./docs/getting-started/quickstart.md)
+- [Testing](./docs/getting-started/testing.md)
+
+Minimal example:
 
 ```sh
-raind resource apply -f app.yaml
-raind resource pod ls
-raind resource replicaset ls
-raind resource deployment ls
-raind resource service ls
-```
-
-The important point is that both paths are handled by the same runtime stack. A container started directly through `raind container` and a container created as part of a Pod are ultimately managed through the same low-level runtime foundation.
-
-Raind also includes Docker/Kubernetes-compatible parsing paths for image builds and manifests. Dockerfile support and Kubernetes resource compatibility are being expanded progressively, with the goal of making existing container and manifest workflows usable inside the Raind runtime model.
-
-## 4. Management Units
-
-Raind organizes workloads into three main management units:
-
-1. `container`: a single runnable container.
-2. `bottle`: a local multi-container application group.
-3. `resource`: Kubernetes-style resources such as Pod, ReplicaSet, Deployment, and Service.
-
-Each unit has a different scope, but they are intended to share the same runtime concepts: image handling, container lifecycle, networking, policy, logging, and state management.
-
-### 4.1. Container
-
-A container is the smallest runnable unit in Raind.
-
-Container management is intended for Docker-like workflows: start one container, inspect it, execute commands in it, read logs, publish ports, mount volumes, and remove it when finished.
-
-Typical container operations include:
-
-```sh
+# Run a single container
 raind container run --name web -p 8080:80 nginx:latest
 raind container ls
-raind container exec web /bin/sh
-raind container logs web
-raind container stop web
-raind container rm web
+
+# Apply Kubernetes-style resources
+raind resource apply -f examples/quickstart/web.yaml
+raind resource get deploy
+raind resource get service
 ```
 
-Containers are executed by `droplet`, while `condenser` manages higher-level state, image resolution, network configuration, and policy/log integration.
+## Architecture
 
-This makes the container unit suitable for:
+Raind is split into three main layers.
 
-- Single-container application testing.
-- Image validation.
-- Runtime behavior checks.
-- Low-level container lifecycle testing.
-- Simple local services.
+### `droplet`
 
-### 4.2. Bottle
+`droplet` is the low-level OCI-style container runtime layer.
 
-A bottle is Raind's local multi-container application unit.
+It handles container lifecycle and low-level Linux runtime operations such as namespaces, mounts, capabilities, cgroups, hooks, and runtime state.
 
-It is designed for applications that are larger than one container but do not necessarily need a full Kubernetes-style manifest. A bottle can describe multiple services, dependencies, ports, mounts, environment variables, and policies in one YAML definition.
+### `condenser`
 
-Example workflows include:
+`condenser` is the high-level runtime controller layer.
 
-```sh
-raind bottle create -f bottle.yaml
-raind bottle start wordpress
-raind bottle show wordpress
-raind bottle stop wordpress
-```
+It manages images, containers, resources, networking, security policy, logs, and state, then delegates low-level execution to `droplet`.
 
-Bottle is useful for testing application stacks that need explicit relationships between containers, such as a frontend and backend, an application and database, or multiple internal services.
+### `raind`
 
-A key part of the bottle model is communication control. Bottle workloads can be paired with east-west policy so that container-to-container traffic is visible and explicitly controlled by the runtime.
+`raind` is the user-facing CLI.
 
-This makes the bottle unit suitable for:
+It exposes container, image, bottle, resource, policy, network, and log workflows through a single command surface.
 
-- Multi-container application testing.
-- Local service composition.
-- Testing internal traffic rules.
-- Verifying runtime policy behavior before moving to Pod-level deployment.
+## Documentation
 
-### 4.3. Resource: Pod / ReplicaSet / Deployment / Service
+- [Documentation index](./docs/)
+- [Architecture](./docs/architecture/)
+- [Resource reference](./docs/resources/)
+- [CLI reference](./docs/reference/cli.md)
+- [Manifest schema](./docs/reference/manifest-schema.md)
+- [Security](./SECURITY.md)
+- [Contributing](./CONTRIBUTING.md)
 
-A resource is Raind's Kubernetes-style management unit.
+## Project status
 
-Raind supports applying Kubernetes-compatible manifests for resources such as:
+Raind is experimental and evolving quickly.
 
-- `Pod`
-- `ReplicaSet`
-- `Deployment`
-- `Service`
-- `Namespace`
-- `ConfigMap`
-- `Secret`
-- `NetworkPolicy`
-- `PersistentVolumeClaim`
+Current focus areas include:
 
-A Pod groups one or more containers into a shared runtime unit. In Raind, Pod containers can share namespaces through an infra container model, allowing Pod-like behavior to be tested through the local runtime.
+- expanding Kubernetes-style resource support,
+- improving manifest validation and unsupported-field warnings,
+- strengthening reconciliation behavior,
+- improving Service and Ingress behavior,
+- improving NetworkPolicy reconciliation,
+- improving runtime observability and troubleshooting output,
+- hardening state management and security-sensitive paths.
 
-ReplicaSet and Deployment resources provide reconciliation-oriented workload management. They allow the runtime to maintain a desired number of Pod replicas and update workload state based on resource definitions.
+## Contributing
 
-Service resources provide L4 traffic handling for matching Pods, allowing Pod-level workloads to be reached through a stable service abstraction.
+Contributions, bug reports, compatibility reports, and runtime investigations are welcome.
 
-NetworkPolicy resources generate Raind security policy rules for namespace-local Pod-to-Pod traffic selected by labels.
+Useful starting points:
 
-PersistentVolumeClaim resources allocate Raind-managed local directories for Pod volume mounts.
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [SUPPORT.md](./SUPPORT.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
-Typical resource operations include:
+Good issues include:
 
-```sh
-raind resource apply -f app.yaml
-raind resource pod ls
-raind resource deployment ls
-raind resource service ls
-raind resource rm -f app.yaml
-```
-
-This resource unit is suitable for:
-
-- Testing Kubernetes-style workload manifests locally.
-- Validating Pod composition.
-- Testing ReplicaSet and Deployment behavior.
-- Testing Service-based traffic routing.
-- Moving from container-level tests to Pod-level deployment tests without leaving the Raind runtime.
-
-## 5. Visibility: Policy and Netflow
-
-Raind includes policy and log features to make container and Pod communication more transparent.
-
-Runtime-managed policy allows Raind to control traffic between containers, bottles, namespaces, and resource-managed workloads. Policy support includes east-west container-to-container policy and namespace egress observation/enforcement modes.
-
-Policy types include:
-
-- `ew`: east-west container-to-container policy.
-- `ns-obs`: namespace egress observation policy.
-- `ns-enf`: namespace egress enforcement policy.
-
-Example policy workflow:
-
-```sh
-raind security policy add --type ew \
-  --source frontend \
-  --destination backend \
-  --protocol tcp \
-  --dport 8080 \
-  --comment 'allow frontend to backend'
-
-raind security policy commit
-```
-
-Raind also records network flow logs so communication can be inspected from the runtime itself.
-
-```sh
-raind logs netflow --line 50
-raind logs netflow --json
-raind logs netflow -t web
-```
-
-Netflow logs can be enriched with runtime metadata such as container ID, container name, IP address, interface, and identity information when available.
-
-Together, policy and netflow are intended to solve a common problem in local container and Pod testing: the workload may start correctly, but it is still hard to see which component is talking to which other component and whether that communication should be allowed.
-
-Raind makes communication control and communication visibility part of the runtime itself.
-
-## More Details & Information
-
-read [docs](./docs/) for checking more details, information, installation and others.
+- adding small manifest examples,
+- improving resource documentation,
+- improving unsupported-field warnings,
+- adding tests for controllers and resource behavior,
+- reporting manifests that work on Kubernetes but not yet on Raind.
 
 ## License
 
-This project is licensed under the terms in [LICENSE](./LICENSE).
+Raind is licensed under the [MIT License](./LICENSE).
