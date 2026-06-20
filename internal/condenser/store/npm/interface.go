@@ -21,6 +21,7 @@ type NpmHandler interface {
 	AddPolicy(chainName string, policy Policy) error
 	RemovePolicy(policyId string) error
 	RemovePoliciesByOwner(ownerKind, ownerId string) ([]Policy, error)
+	ReplacePoliciesByOwnerKind(chainName, ownerKind string, policies []Policy) error
 
 	UpdateStatus(chainName string, ruleId string, status string, reason string) error
 	ChangeNSMode(mode string) error

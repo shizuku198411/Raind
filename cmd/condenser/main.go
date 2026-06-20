@@ -10,6 +10,7 @@ import (
 	"raind/internal/condenser/buildinfo"
 	"raind/internal/condenser/core/cert"
 	"raind/internal/condenser/core/ingress"
+	"raind/internal/condenser/core/networkpolicy"
 	"raind/internal/condenser/core/pod"
 	"raind/internal/condenser/core/service"
 	"raind/internal/condenser/dns"
@@ -123,6 +124,12 @@ func main() {
 	go func() {
 		log.Printf("[*] service controller start")
 		service.NewServiceController().Start()
+	}()
+
+	// networkpolicy controller
+	go func() {
+		log.Printf("[*] networkpolicy controller start")
+		networkpolicy.NewNetworkPolicyController().Start()
 	}()
 
 	// ingress gateway
