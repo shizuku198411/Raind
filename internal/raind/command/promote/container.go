@@ -13,7 +13,7 @@ import (
 func CommandContainer() *cli.Command {
 	return &cli.Command{
 		Name:      "container",
-		Usage:     "promote a container to a Dripfile draft",
+		Usage:     "promote a container to a bottle.yaml draft",
 		ArgsUsage: "<id|name> [id|name ...]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -24,17 +24,17 @@ func CommandContainer() *cli.Command {
 			&cli.StringFlag{
 				Name:    "output",
 				Aliases: []string{"o"},
-				Usage:   "output Dripfile path",
-				Value:   "Dripfile",
+				Usage:   "output bottle.yaml path",
+				Value:   "bottle.yaml",
 			},
 			&cli.StringFlag{
 				Name:  "service-name",
-				Usage: "service name in the generated Dripfile",
+				Usage: "service name in the generated bottle.yaml",
 				Value: "app",
 			},
 			&cli.StringFlag{
 				Name:  "bottle-name",
-				Usage: "bottle name in the generated Dripfile",
+				Usage: "bottle name in the generated bottle.yaml",
 			},
 			&cli.BoolFlag{
 				Name:  "include-image-env",
@@ -48,7 +48,7 @@ func CommandContainer() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:  "stdout",
-				Usage: "write generated Dripfile to stdout instead of a file",
+				Usage: "write generated bottle.yaml to stdout instead of a file",
 				Value: false,
 			},
 		},

@@ -7,7 +7,7 @@ import (
 
 func WriteOutput(path string, data []byte, force bool) error {
 	if path == "" {
-		path = "Dripfile"
+		path = "bottle.yaml"
 	}
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("output file already exists: %s (use --force to overwrite)", path)

@@ -53,7 +53,7 @@ func BuildBottleDraftFromContainers(inspects []container.ContainerInspectModel, 
 			warnings = append(warnings, Warning{Code: "missing-image", Message: fmt.Sprintf("container %s image could not be determined from inspect data", displayContainerRef(inspect))})
 		}
 		if inspect.SecurityProfile != "" && inspect.SecurityProfile != "default" {
-			warnings = append(warnings, Warning{Code: "security-profile", Message: fmt.Sprintf("container %s used security profile %q; Dripfile draft does not currently preserve security profiles", displayContainerRef(inspect), inspect.SecurityProfile)})
+			warnings = append(warnings, Warning{Code: "security-profile", Message: fmt.Sprintf("container %s used security profile %q; bottle.yaml draft does not currently preserve security profiles", displayContainerRef(inspect), inspect.SecurityProfile)})
 		}
 		services = append(services, svc)
 		sourceRefs = append(sourceRefs, displayContainerRef(inspect))

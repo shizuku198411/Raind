@@ -30,16 +30,16 @@ func TestBuildBottleDraftFromContainerRedactsSecretEnv(t *testing.T) {
 	}
 	text := string(out)
 	if strings.Contains(text, "super-secret") {
-		t.Fatalf("rendered Dripfile leaked secret value:\n%s", text)
+		t.Fatalf("rendered bottle.yaml leaked secret value:\n%s", text)
 	}
 	if !strings.Contains(text, "APP_ENV=dev") {
-		t.Fatalf("rendered Dripfile did not include non-secret env:\n%s", text)
+		t.Fatalf("rendered bottle.yaml did not include non-secret env:\n%s", text)
 	}
 	if !strings.Contains(text, "env example: DB_PASSWORD=<redacted>") {
-		t.Fatalf("rendered Dripfile did not include redacted secret hint:\n%s", text)
+		t.Fatalf("rendered bottle.yaml did not include redacted secret hint:\n%s", text)
 	}
 	if !strings.Contains(text, `"8080:3000"`) {
-		t.Fatalf("rendered Dripfile did not include port mapping:\n%s", text)
+		t.Fatalf("rendered bottle.yaml did not include port mapping:\n%s", text)
 	}
 }
 
@@ -89,10 +89,10 @@ func TestBuildBottleDraftFromContainerFiltersInternalMounts(t *testing.T) {
 	}
 	text := string(out)
 	if strings.Contains(text, "/var/lib/raind/internal") || strings.Contains(text, "/etc/resolv.conf") {
-		t.Fatalf("rendered Dripfile included internal mount:\n%s", text)
+		t.Fatalf("rendered bottle.yaml included internal mount:\n%s", text)
 	}
 	if !strings.Contains(text, `"/host/www:/usr/share/nginx/html:ro"`) {
-		t.Fatalf("rendered Dripfile did not include read-only user mount:\n%s", text)
+		t.Fatalf("rendered bottle.yaml did not include read-only user mount:\n%s", text)
 	}
 }
 
@@ -246,14 +246,14 @@ func TestBuildBottleDraftFromContainersGeneratesMultipleServicesAndDependsOn(t *
 		`      - "8080:80"`,
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("rendered Dripfile missing %q:\n%s", want, text)
+			t.Fatalf("rendered bottle.yaml missing %q:\n%s", want, text)
 		}
 	}
 	if strings.Contains(text, "root-secret") {
-		t.Fatalf("rendered Dripfile leaked secret value:\n%s", text)
+		t.Fatalf("rendered bottle.yaml leaked secret value:\n%s", text)
 	}
 	if !strings.Contains(text, "env example: MYSQL_ROOT_PASSWORD=<redacted>") {
-		t.Fatalf("rendered Dripfile did not include redacted secret hint;\n%s", text)
+		t.Fatalf("rendered bottle.yaml did not include redacted secret hint;\n%s", text)
 	}
 }
 
