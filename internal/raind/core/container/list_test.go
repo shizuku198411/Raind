@@ -12,10 +12,93 @@ import (
 
 func TestPrintContainerListPrintsHeaderWhenEmpty(t *testing.T) {
 	out := captureStdout(t, func() {
-		(&ServiceContainerList{}).printContainerList(nil)
+		(&ServiceContainerList{}).printContainerList(nil, ServiceListModel{})
 	})
 
 	assert.Contains(t, out, "CONTAINER ID")
+}
+
+func TestPrintContainerListWithoutListAllFlag(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceContainerList{}).printContainerList([]ContainerStateModel{{
+			ContainerId: "cid",
+			Repository:  "custom-image",
+			Reference:   "v1",
+			Command:     []string{"/bin/sh"},
+			CreatedAt:   time.Now(),
+			State:       "stopped",
+			Name:        "web",
+		}}, ServiceListModel{ListAll: false})
+	})
+
+	assert.NotContains(t, out, "web")
+}
+
+func TestPrintContainerListWithListAllFlag(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceContainerList{}).printContainerList([]ContainerStateModel{{
+			ContainerId: "cid",
+			Repository:  "custom-image",
+			Reference:   "v1",
+			Command:     []string{"/bin/sh"},
+			CreatedAt:   time.Now(),
+			State:       "stopped",
+			Name:        "web",
+		}}, ServiceListModel{ListAll: true})
+	})
+
+	assert.Contains(t, out, "web")
+}
+
+func TestPrintContainerListWithoutIncludePodFlag(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceContainerList{}).printContainerList([]ContainerStateModel{{
+			ContainerId: "cid",
+			PodId:       "podid",
+			Repository:  "custom-image",
+			Reference:   "v1",
+			Command:     []string{"/bin/sh"},
+			CreatedAt:   time.Now(),
+			State:       "stopped",
+			Name:        "web",
+		}}, ServiceListModel{IncludePod: false})
+	})
+
+	assert.NotContains(t, out, "web")
+}
+
+func TestPrintContainerListWithIncludePodFlag(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceContainerList{}).printContainerList([]ContainerStateModel{{
+			ContainerId: "cid",
+			PodId:       "podid",
+			Repository:  "custom-image",
+			Reference:   "v1",
+			Command:     []string{"/bin/sh"},
+			CreatedAt:   time.Now(),
+			State:       "running",
+			Name:        "web",
+		}}, ServiceListModel{IncludePod: true})
+	})
+
+	assert.Contains(t, out, "web")
+}
+
+func TestPrintContainerListWithIncludePodFlagAndListAllFlag(t *testing.T) {
+	out := captureStdout(t, func() {
+		(&ServiceContainerList{}).printContainerList([]ContainerStateModel{{
+			ContainerId: "cid",
+			PodId:       "podid",
+			Repository:  "custom-image",
+			Reference:   "v1",
+			Command:     []string{"/bin/sh"},
+			CreatedAt:   time.Now(),
+			State:       "stopped",
+			Name:        "web",
+		}}, ServiceListModel{ListAll: true, IncludePod: true})
+	})
+
+	assert.Contains(t, out, "web")
 }
 
 func TestPrintContainerListHandlesRepositoryWithoutSlash(t *testing.T) {
@@ -28,7 +111,7 @@ func TestPrintContainerListHandlesRepositoryWithoutSlash(t *testing.T) {
 			CreatedAt:   time.Now(),
 			State:       "running",
 			Name:        "web",
-		}})
+		}}, ServiceListModel{})
 	})
 
 	assert.Contains(t, out, "custom-image:v1")

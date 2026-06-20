@@ -593,7 +593,7 @@ resolve_container_id() {
     return
   fi
 
-  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" container ls >"${out}" 2>&1; then
+  if ! sudo_cmd env PATH="${PATH}" "${RAIND_BIN}" container ls --include-pod --all >"${out}" 2>&1; then
     printf '%s\n' "--- ${out} ---" >&2
     cat "${out}" >&2 || true
     fail "raind container ls failed while resolving container id for ${name}"

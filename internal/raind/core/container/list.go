@@ -17,7 +17,7 @@ func NewServiceContainerList() *ServiceContainerList {
 
 type ServiceContainerList struct{}
 
-func (s *ServiceContainerList) List() error {
+func (s *ServiceContainerList) List(param ServiceListModel) error {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
 		return err
@@ -47,12 +47,12 @@ func (s *ServiceContainerList) List() error {
 		return fmt.Errorf("decode response: %w", err)
 	}
 
-	s.printContainerList(respModel.Data)
+	s.printContainerList(respModel.Data, param)
 
 	return nil
 }
 
-func (s *ServiceContainerList) printContainerList(containerList []ContainerStateModel) {
+func (s *ServiceContainerList) printContainerList(containerList []ContainerStateModel, param ServiceListModel) {
 	w := tabwriter.NewWriter(
 		os.Stdout,
 		0,
@@ -105,6 +105,12 @@ func (s *ServiceContainerList) printContainerList(containerList []ContainerState
 
 	// data
 	for _, c := range containerList {
+		if !param.IncludePod && c.PodId != "" {
+			continue
+		}
+		if !param.ListAll && c.State == "stopped" {
+			continue
+		}
 		containerId := c.ContainerId
 		image := formatContainerImage(c.Repository, c.Reference)
 		command := formatCommand(c.Command)
