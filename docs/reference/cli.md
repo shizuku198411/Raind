@@ -71,6 +71,7 @@ Generate reviewable drafts from existing runtime state:
 
 ```sh
 raind promote container <container-id-or-name> --to bottle -o Dripfile
+raind promote container <container-a> <container-b> --to bottle -o Dripfile
 raind promote container <container-id-or-name> --to bottle --stdout
 raind promote container <container-id-or-name> --to bottle -o Dripfile --force
 ```
@@ -86,7 +87,7 @@ Useful flags:
 --force
 ```
 
-The generated Dripfile is a draft. Secret-like environment variables are redacted into TODO comments.
+The generated Dripfile is a draft. Secret-like environment variables are redacted into TODO comments. When multiple containers are promoted, service names are derived from container names and simple service-name references in environment values are converted into `depends_on` entries while keeping the environment values unchanged.
 
 ## Networks
 

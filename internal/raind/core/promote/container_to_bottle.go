@@ -9,48 +9,177 @@ import (
 )
 
 func BuildBottleDraftFromContainer(inspect container.ContainerInspectModel, opt ContainerToBottleOptions) (BottleDraft, error) {
-	if inspect.PodId != "" && !opt.AllowPodContainer {
-		return BottleDraft{}, fmt.Errorf("container %s is a pod member; promoting pod member containers is not supported yet", inspect.Name)
+	draft, err := BuildBottleDraftFromContainers([]container.ContainerInspectModel{inspect}, opt)
+	if err != nil {
+		return BottleDraft{}, err
 	}
+	return draft, nil
+}
+
+func BuildBottleDraftFromContainers(inspects []container.ContainerInspectModel, opt ContainerToBottleOptions) (BottleDraft, error) {
+	if len(inspects) == 0 {
+		return BottleDraft{}, fmt.Errorf("at least one container is required")
+	}
+	if len(inspects) > 1 && strings.TrimSpace(opt.ServiceName) != "" {
+		return BottleDraft{}, fmt.Errorf("--service-name can only be used when promoting a single container")
+	}
+
+	services := make([]ServiceDraft, 0, len(inspects))
+	warnings := []Warning{}
+	seenServices := map[string]struct{}{}
+	sourceRefs := make([]string, 0, len(inspects))
+
+	for _, inspect := range inspects {
+		if inspect.PodId != "" && !opt.AllowPodContainer {
+			return BottleDraft{}, fmt.Errorf("container %s is a pod member; promoting pod member containers is not supported yet", inspect.Name)
+		}
+
+		serviceName := serviceNameForInspect(inspect, opt, len(inspects) == 1)
+		if _, exists := seenServices[serviceName]; exists {
+			return BottleDraft{}, fmt.Errorf("multiple containers map to service name %q; rename one container or promote them separately", serviceName)
+		}
+		seenServices[serviceName] = struct{}{}
+
+		svc := ServiceDraft{
+			Name:    serviceName,
+			Image:   formatImage(inspect.ImageRepository, inspect.ImageReference),
+			Command: commandFromInspect(inspect),
+			Env:     envFromInspect(inspect, opt.IncludeImageEnv),
+			Ports:   portsFromInspect(inspect),
+			Mounts:  mountsFromInspect(inspect),
+			Tty:     inspect.Tty,
+		}
+		if svc.Image == "" {
+			warnings = append(warnings, Warning{Code: "missing-image", Message: fmt.Sprintf("container %s image could not be determined from inspect data", displayContainerRef(inspect))})
+		}
+		if inspect.SecurityProfile != "" && inspect.SecurityProfile != "default" {
+			warnings = append(warnings, Warning{Code: "security-profile", Message: fmt.Sprintf("container %s used security profile %q; Dripfile draft does not currently preserve security profiles", displayContainerRef(inspect), inspect.SecurityProfile)})
+		}
+		services = append(services, svc)
+		sourceRefs = append(sourceRefs, displayContainerRef(inspect))
+	}
+
+	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	inferServiceDependencies(services)
 
 	bottleName := strings.TrimSpace(opt.BottleName)
 	if bottleName == "" {
-		bottleName = sanitizeName(inspect.Name)
-	}
-	if bottleName == "" {
-		bottleName = sanitizeName(inspect.ContainerId)
+		if len(services) == 1 {
+			bottleName = sanitizeName(inspects[0].Name)
+			if bottleName == "" {
+				bottleName = sanitizeName(inspects[0].ContainerId)
+			}
+		} else {
+			bottleName = "promoted-bottle"
+		}
 	}
 	if bottleName == "" {
 		bottleName = "app"
 	}
 
-	serviceName := strings.TrimSpace(opt.ServiceName)
-	if serviceName == "" {
-		serviceName = "app"
-	}
-	serviceName = sanitizeName(serviceName)
-	if serviceName == "" {
-		serviceName = "app"
+	d := BottleDraft{
+		SourceContainer: strings.Join(sourceRefs, ", "),
+		BottleName:      bottleName,
+		Services:        services,
+		Warnings:        warnings,
 	}
 
-	d := BottleDraft{
-		SourceContainer: displayContainerRef(inspect),
-		BottleName:      bottleName,
-		ServiceName:     serviceName,
-		Image:           formatImage(inspect.ImageRepository, inspect.ImageReference),
-		Command:         commandFromInspect(inspect),
-		Env:             envFromInspect(inspect, opt.IncludeImageEnv),
-		Ports:           portsFromInspect(inspect),
-		Mounts:          mountsFromInspect(inspect),
-		Tty:             inspect.Tty,
-	}
-	if d.Image == "" {
-		d.Warnings = append(d.Warnings, Warning{Code: "missing-image", Message: "container image could not be determined from inspect data"})
-	}
-	if inspect.SecurityProfile != "" && inspect.SecurityProfile != "default" {
-		d.Warnings = append(d.Warnings, Warning{Code: "security-profile", Message: fmt.Sprintf("container used security profile %q; Dripfile draft does not currently preserve security profiles", inspect.SecurityProfile)})
+	// Populate legacy single-service fields for existing callers/tests.
+	if len(services) == 1 {
+		svc := services[0]
+		d.ServiceName = svc.Name
+		d.Image = svc.Image
+		d.Command = svc.Command
+		d.Env = svc.Env
+		d.Ports = svc.Ports
+		d.Mounts = svc.Mounts
+		d.Network = svc.Network
+		d.Tty = svc.Tty
 	}
 	return d, nil
+}
+
+func serviceNameForInspect(inspect container.ContainerInspectModel, opt ContainerToBottleOptions, single bool) string {
+	if single {
+		serviceName := strings.TrimSpace(opt.ServiceName)
+		if serviceName == "" {
+			serviceName = "app"
+		}
+		serviceName = sanitizeName(serviceName)
+		if serviceName != "" {
+			return serviceName
+		}
+		return "app"
+	}
+	name := sanitizeName(inspect.Name)
+	if name != "" {
+		return name
+	}
+	name = sanitizeName(inspect.ContainerId)
+	if name != "" {
+		return name
+	}
+	return "service"
+}
+
+func inferServiceDependencies(services []ServiceDraft) {
+	serviceNames := make([]string, 0, len(services))
+	for _, svc := range services {
+		serviceNames = append(serviceNames, svc.Name)
+	}
+	sort.Strings(serviceNames)
+
+	for i := range services {
+		deps := map[string]struct{}{}
+		for _, env := range services[i].Env {
+			for _, name := range serviceNames {
+				if name == services[i].Name {
+					continue
+				}
+				if envReferencesService(env.Value, name) {
+					deps[name] = struct{}{}
+				}
+			}
+		}
+		if len(deps) == 0 {
+			continue
+		}
+		services[i].DependsOn = make([]string, 0, len(deps))
+		for dep := range deps {
+			services[i].DependsOn = append(services[i].DependsOn, dep)
+		}
+		sort.Strings(services[i].DependsOn)
+	}
+}
+
+func envReferencesService(value, serviceName string) bool {
+	value = strings.TrimSpace(value)
+	serviceName = strings.TrimSpace(serviceName)
+	if value == "" || serviceName == "" {
+		return false
+	}
+	if value == serviceName {
+		return true
+	}
+	for _, token := range splitServiceReferenceTokens(value) {
+		if token == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
+func splitServiceReferenceTokens(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-')
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func displayContainerRef(inspect container.ContainerInspectModel) string {

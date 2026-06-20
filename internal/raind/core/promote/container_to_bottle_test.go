@@ -186,3 +186,123 @@ func TestBuildBottleDraftFromContainerIncludeImageEnv(t *testing.T) {
 		t.Fatalf("include-image-env output did not include image env:\n%s", string(includeOut))
 	}
 }
+
+func TestBuildBottleDraftFromContainersGeneratesMultipleServicesAndDependsOn(t *testing.T) {
+	inspects := []container.ContainerInspectModel{
+		{
+			ContainerId:     "db1",
+			Name:            "db",
+			ImageRepository: "mysql",
+			ImageReference:  "latest",
+			Config: map[string]any{
+				"process": map[string]any{
+					"env": []any{"MYSQL_ROOT_PASSWORD=secret", "PATH=/usr/bin"},
+				},
+			},
+		},
+		{
+			ContainerId:     "web1",
+			Name:            "web",
+			ImageRepository: "myapp",
+			ImageReference:  "latest",
+			Config: map[string]any{
+				"process": map[string]any{
+					"env": []any{"MYSQL_HOST=db", "APP_ENV=dev", "PATH=/usr/bin"},
+				},
+			},
+			Forwards: []container.ForwardInfoModel{{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
+		},
+	}
+
+	draft, err := BuildBottleDraftFromContainers(inspects, ContainerToBottleOptions{BottleName: "stack"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Services) != 2 {
+		t.Fatalf("expected two services, got %#v", draft.Services)
+	}
+	if draft.Services[0].Name != "db" || draft.Services[1].Name != "web" {
+		t.Fatalf("services were not sorted by service name: %#v", draft.Services)
+	}
+	if len(draft.Services[1].DependsOn) != 1 || draft.Services[1].DependsOn[0] != "db" {
+		t.Fatalf("expected web to depend on db, got %#v", draft.Services[1].DependsOn)
+	}
+
+	out, err := RenderBottlefile(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`bottle:`,
+		`  name: "stack"`,
+		`  db:`,
+		`    image: "mysql:latest"`,
+		`  web:`,
+		`    image: "myapp:latest"`,
+		`      - "MYSQL_HOST=db"`,
+		`    depends_on:`,
+		`      - "db"`,
+		`      - "8080:80"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered Dripfile missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "root-secret") {
+		t.Fatalf("rendered Dripfile leaked secret value:\n%s", text)
+	}
+	if !strings.Contains(text, "env example: MYSQL_ROOT_PASSWORD=<redacted>") {
+		t.Fatalf("rendered Dripfile did not include redacted secret hint;\n%s", text)
+	}
+}
+
+func TestBuildBottleDraftFromContainersInfersDependencyFromURLValue(t *testing.T) {
+	inspects := []container.ContainerInspectModel{
+		{Name: "db", ImageRepository: "postgres", ImageReference: "latest"},
+		{
+			Name:            "api",
+			ImageRepository: "api",
+			ImageReference:  "latest",
+			Config: map[string]any{
+				"process": map[string]any{
+					"env": []any{"DATABASE_URL=postgres://user:pass@db:5432/app"},
+				},
+			},
+		},
+	}
+
+	draft, err := BuildBottleDraftFromContainers(inspects, ContainerToBottleOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var api ServiceDraft
+	for _, svc := range draft.Services {
+		if svc.Name == "api" {
+			api = svc
+		}
+	}
+	if len(api.DependsOn) != 1 || api.DependsOn[0] != "db" {
+		t.Fatalf("expected api to depend on db, got %#v", api.DependsOn)
+	}
+}
+
+func TestBuildBottleDraftFromContainersRejectsServiceNameForMultipleTargets(t *testing.T) {
+	_, err := BuildBottleDraftFromContainers(
+		[]container.ContainerInspectModel{{Name: "db"}, {Name: "web"}},
+		ContainerToBottleOptions{ServiceName: "app"},
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestBuildBottleDraftFromContainersRejectsDuplicateServiceNames(t *testing.T) {
+	_, err := BuildBottleDraftFromContainers(
+		[]container.ContainerInspectModel{{Name: "my_app"}, {Name: "my-app"}},
+		ContainerToBottleOptions{},
+	)
+	if err == nil {
+		t.Fatal("expected duplicate service name error")
+	}
+}

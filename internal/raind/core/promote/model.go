@@ -10,15 +10,31 @@ type ContainerToBottleOptions struct {
 type BottleDraft struct {
 	SourceContainer string
 	BottleName      string
-	ServiceName     string
-	Image           string
-	Command         []string
-	Env             []EnvVar
-	Ports           []PortMapping
-	Mounts          []MountMapping
-	Network         string
-	Tty             bool
-	Warnings        []Warning
+	Services        []ServiceDraft
+
+	// Legacy single-service fields are kept for tests and callers that
+	// inspect the draft returned by BuildBottleDraftFromContainer.
+	ServiceName string
+	Image       string
+	Command     []string
+	Env         []EnvVar
+	Ports       []PortMapping
+	Mounts      []MountMapping
+	Network     string
+	Tty         bool
+	Warnings    []Warning
+}
+
+type ServiceDraft struct {
+	Name      string
+	Image     string
+	Command   []string
+	Env       []EnvVar
+	Ports     []PortMapping
+	Mounts    []MountMapping
+	Network   string
+	Tty       bool
+	DependsOn []string
 }
 
 type EnvVar struct {

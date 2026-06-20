@@ -5,6 +5,7 @@ import (
 	"os"
 	"raind/internal/raind/core/container"
 	"raind/internal/raind/core/promote"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 )
@@ -13,7 +14,7 @@ func CommandContainer() *cli.Command {
 	return &cli.Command{
 		Name:      "container",
 		Usage:     "promote a container to a Dripfile draft",
-		ArgsUsage: "<id|name>",
+		ArgsUsage: "<id|name> [id|name ...]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "to",
@@ -60,22 +61,33 @@ func runPromoteContainer(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	if opts.Target == "" {
+	if len(opts.Targets) == 0 {
 		return fmt.Errorf("container id or name is required")
+	}
+	if len(opts.Targets) > 1 && opts.ServiceNameSet {
+		return fmt.Errorf("--service-name can only be used when promoting a single container")
 	}
 	if opts.To != "bottle" {
 		return fmt.Errorf("unsupported promote target %q; only %q is supported", opts.To, "bottle")
 	}
 
 	inspectService := container.NewServiceContainerInspect()
-	inspect, err := inspectService.Get(opts.Target)
-	if err != nil {
-		return err
+	inspects := make([]container.ContainerInspectModel, 0, len(opts.Targets))
+	for _, target := range opts.Targets {
+		inspect, err := inspectService.Get(target)
+		if err != nil {
+			return err
+		}
+		inspects = append(inspects, inspect)
 	}
 
-	draft, err := promote.BuildBottleDraftFromContainer(inspect, promote.ContainerToBottleOptions{
+	serviceName := opts.ServiceName
+	if len(opts.Targets) > 1 && !opts.ServiceNameSet {
+		serviceName = ""
+	}
+	draft, err := promote.BuildBottleDraftFromContainers(inspects, promote.ContainerToBottleOptions{
 		BottleName:      opts.BottleName,
-		ServiceName:     opts.ServiceName,
+		ServiceName:     serviceName,
 		IncludeImageEnv: opts.IncludeImageEnv,
 	})
 	if err != nil {
@@ -95,9 +107,11 @@ func runPromoteContainer(ctx *cli.Context) error {
 
 type containerOptions struct {
 	Target          string
+	Targets         []string
 	To              string
 	Output          string
 	ServiceName     string
+	ServiceNameSet  bool
 	BottleName      string
 	IncludeImageEnv bool
 	Force           bool
@@ -107,20 +121,22 @@ type containerOptions struct {
 func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 	opts := containerOptions{
 		Target:          ctx.Args().Get(0),
+		Targets:         collectInitialTargets(ctx.Args().Slice()),
 		To:              ctx.String("to"),
 		Output:          ctx.String("output"),
 		ServiceName:     ctx.String("service-name"),
+		ServiceNameSet:  ctx.IsSet("service-name"),
 		BottleName:      ctx.String("bottle-name"),
 		IncludeImageEnv: ctx.Bool("include-image-env"),
 		Force:           ctx.Bool("force"),
 		Stdout:          ctx.Bool("stdout"),
 	}
 	args := ctx.Args().Slice()
-	if len(args) <= 1 {
-		return opts, nil
-	}
-	for i := 1; i < len(args); i++ {
+	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if i == 0 && opts.Target == arg {
+			continue
+		}
 		switch arg {
 		case "--to":
 			value, next, err := requirePostArgValue(args, i, arg)
@@ -142,6 +158,7 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 				return opts, err
 			}
 			opts.ServiceName = value
+			opts.ServiceNameSet = true
 			i = next
 		case "--bottle-name":
 			value, next, err := requirePostArgValue(args, i, arg)
@@ -171,13 +188,20 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 			}
 			if value, ok := trimPostArgPrefix(arg, "--service-name="); ok {
 				opts.ServiceName = value
+				opts.ServiceNameSet = true
 				continue
 			}
 			if value, ok := trimPostArgPrefix(arg, "--bottle-name="); ok {
 				opts.BottleName = value
 				continue
 			}
-			return opts, fmt.Errorf("unexpected argument: %s", arg)
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unexpected argument: %s", arg)
+			}
+			if arg != "" {
+				opts.Targets = appendUnique(opts.Targets, arg)
+			}
+			continue
 		}
 	}
 	return opts, nil
@@ -196,4 +220,24 @@ func trimPostArgPrefix(arg, prefix string) (string, bool) {
 		return "", false
 	}
 	return arg[len(prefix):], true
+}
+
+func collectInitialTargets(args []string) []string {
+	targets := []string{}
+	for _, arg := range args {
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			break
+		}
+		targets = appendUnique(targets, arg)
+	}
+	return targets
+}
+
+func appendUnique(items []string, value string) []string {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
