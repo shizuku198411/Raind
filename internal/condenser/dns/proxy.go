@@ -189,6 +189,12 @@ func (f *DnsProxy) ServeDns(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	if msg, ok := f.resolveRaindLocal(r); ok {
+		_ = w.WriteMsg(msg)
+		f.logLine(now, network, clientIp, clientPort, r, msg, "raind-local", 0, "ok", "local-zone", cacheHit)
+		return
+	}
+
 	var key string
 	dnssecOk := doBit(r)
 

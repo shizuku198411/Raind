@@ -164,7 +164,7 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 	rollbackFlag.DirectoryEnv = true
 
 	// 8. setup etc files
-	if err := s.setupEtcFiles(containerId, containerAddr, containerGateway); err != nil {
+	if err := s.setupEtcFiles(containerId, containerAddr, containerGateway, bridgeInterface); err != nil {
 		return "", fmt.Errorf("setup etc files failed: %w", err)
 	}
 
@@ -416,7 +416,7 @@ func rootlessRuntimeHostRootID(createParameter ServiceCreateModel) (uid int, gid
 	return uidBase, gidBase
 }
 
-func (s *ContainerService) setupEtcFiles(containerId string, containerAddr string, containerGateway string) error {
+func (s *ContainerService) setupEtcFiles(containerId string, containerAddr string, containerGateway string, networkName string) error {
 	etcDir := filepath.Join(utils.ContainerRootDir, containerId, "etc")
 
 	// /etc/hosts
@@ -439,6 +439,9 @@ func (s *ContainerService) setupEtcFiles(containerId string, containerAddr strin
 	}
 	resolvPath := filepath.Join(etcDir, "resolv.conf")
 	resolvData := "nameserver " + containerGateway + "\n"
+	if networkName != "" {
+		resolvData += "search " + networkName + ".raind\n"
+	}
 	if err := s.filesystemHandler.WriteFile(resolvPath, []byte(resolvData), 0o644); err != nil {
 		return err
 	}

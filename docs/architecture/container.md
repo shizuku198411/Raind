@@ -261,13 +261,14 @@ Condenser generates container-side runtime files before Droplet starts the proce
 /etc/resolv.conf
 ```
 
-The resolver points at the bridge gateway:
+The resolver points at the bridge gateway and adds the Raind local DNS search zone for the container network:
 
 ```text
 nameserver <bridge-gateway-ip>
+search <network-name>.raind
 ```
 
-The host redirects bridge DNS traffic to the Raind DNS proxy.
+The host redirects bridge DNS traffic to the Raind DNS proxy. For names under `<network-name>.raind`, the DNS proxy resolves container names from IPAM/CSM state instead of forwarding the query upstream. For example, a container named `db` on network `raind0` is reachable as `db.raind0.raind`; with the search suffix, other containers on the same network can usually use just `db`.
 
 ## Cgroup architecture
 
