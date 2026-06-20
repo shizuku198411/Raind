@@ -2,6 +2,11 @@ package container
 
 import "time"
 
+type ServiceListModel struct {
+	ListAll    bool
+	IncludePod bool
+}
+
 type ForwardInfoModel struct {
 	HostPort      int    `json:"source"`
 	ContainerPort int    `json:"destination"`
@@ -12,6 +17,7 @@ type ContainerStateModel struct {
 	ContainerId string   `json:"containerId"`
 	Name        string   `json:"name"`
 	State       string   `json:"state"`
+	PodId       string   `json:"podId"`
 	Pid         int      `json:"pid"`
 	Repository  string   `json:"imageRepository"`
 	Reference   string   `json:"imageReference"`
