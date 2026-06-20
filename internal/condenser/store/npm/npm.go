@@ -186,6 +186,34 @@ func removePoliciesByOwner(policies []Policy, ownerKind, ownerId string, removed
 	return kept, removed
 }
 
+func (m *NpmManager) ReplacePoliciesByOwnerKind(chainName, ownerKind string, policies []Policy) error {
+	return m.npmStore.withLock(func(np *NetworkPolicy) error {
+		switch chainName {
+		case "RAIND-EW":
+			np.Policies.EastWestPolicy = replacePoliciesByOwnerKind(np.Policies.EastWestPolicy, ownerKind, policies)
+		case "RAIND-NS-OBS":
+			np.Policies.NorthSouthObservePolicy = replacePoliciesByOwnerKind(np.Policies.NorthSouthObservePolicy, ownerKind, policies)
+		case "RAIND-NS-ENF":
+			np.Policies.NorthSouthEnforcePolicy = replacePoliciesByOwnerKind(np.Policies.NorthSouthEnforcePolicy, ownerKind, policies)
+		default:
+			return fmt.Errorf("Chain: %s is invalid", chainName)
+		}
+		return nil
+	})
+}
+
+func replacePoliciesByOwnerKind(current []Policy, ownerKind string, desired []Policy) []Policy {
+	out := make([]Policy, 0, len(current)+len(desired))
+	for _, policy := range current {
+		if policy.OwnerKind == ownerKind {
+			continue
+		}
+		out = append(out, policy)
+	}
+	out = append(out, desired...)
+	return out
+}
+
 func (m *NpmManager) UpdateStatus(chainName string, policyId string, status string, reason string) error {
 	return m.npmStore.withLock(func(np *NetworkPolicy) error {
 		switch chainName {

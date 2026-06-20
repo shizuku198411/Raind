@@ -78,6 +78,18 @@ func (m *Manager) RemoveNetworkPolicy(networkPolicyId string) error {
 	})
 }
 
+func (m *Manager) UpdateGeneratedRuleIds(networkPolicyId string, generatedRuleIds []string) error {
+	return m.store.withLock(func(st *NetworkPolicyState) error {
+		info, ok := st.NetworkPolicies[networkPolicyId]
+		if !ok {
+			return fmt.Errorf("networkPolicyId=%s not found", networkPolicyId)
+		}
+		info.GeneratedRuleIds = append([]string(nil), generatedRuleIds...)
+		st.NetworkPolicies[networkPolicyId] = info
+		return nil
+	})
+}
+
 func (m *Manager) IsNameAlreadyUsed(name, namespace string) bool {
 	if namespace == "" {
 		namespace = "default"

@@ -10,5 +10,6 @@ type Handler interface {
 	GetNetworkPolicyById(networkPolicyId string) (NetworkPolicyInfo, error)
 	GetNetworkPolicyByName(name, namespace string) (NetworkPolicyInfo, error)
 	RemoveNetworkPolicy(networkPolicyId string) error
+	UpdateGeneratedRuleIds(networkPolicyId string, generatedRuleIds []string) error
 	IsNameAlreadyUsed(name, namespace string) bool
 }
