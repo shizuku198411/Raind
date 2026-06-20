@@ -4,6 +4,8 @@ base: ubuntu@24.04
 sdks:
   - name: go
     channel: latest/stable
+  
+  - name: project-raind-base
 
 actions:
   bootstrap: |

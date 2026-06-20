@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+# == install required packages ==
+sudo apt-get update
+sudo apt-get install -y \
+  ulogd2 \
+  ulogd2-json \
+  dpkg-dev
