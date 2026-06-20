@@ -27,6 +27,13 @@ func RenderBottlefile(d BottleDraft) ([]byte, error) {
 	for _, svc := range bottleDraftServices(d) {
 		renderService(&b, svc)
 	}
+	if len(d.Policies) > 0 {
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "policies:")
+		for _, policy := range d.Policies {
+			renderPolicy(&b, policy)
+		}
+	}
 	return b.Bytes(), nil
 }
 
@@ -125,4 +132,19 @@ func renderMount(m MountMapping) string {
 
 func quoteYAMLString(s string) string {
 	return strconv.Quote(s)
+}
+
+func renderPolicy(b *bytes.Buffer, p PolicyDraft) {
+	fmt.Fprintf(b, "  - type: %s\n", quoteYAMLString(p.Type))
+	fmt.Fprintf(b, "    source: %s\n", quoteYAMLString(p.Source))
+	fmt.Fprintf(b, "    destination: %s\n", quoteYAMLString(p.Destination))
+	if p.Protocol != "" {
+		fmt.Fprintf(b, "    protocol: %s\n", quoteYAMLString(p.Protocol))
+	}
+	if p.DestPort != 0 {
+		fmt.Fprintf(b, "    dest_port: %d\n", p.DestPort)
+	}
+	if p.Comment != "" {
+		fmt.Fprintf(b, "    comment: %s\n", quoteYAMLString(p.Comment))
+	}
 }

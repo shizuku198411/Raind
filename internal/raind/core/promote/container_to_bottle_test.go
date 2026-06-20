@@ -187,6 +187,44 @@ func TestBuildBottleDraftFromContainerIncludeImageEnv(t *testing.T) {
 	}
 }
 
+func TestBuildBottleDraftFromContainerIncludesBindMountWithEmptyType(t *testing.T) {
+	inspect := container.ContainerInspectModel{
+		ContainerId:     "ctr-db",
+		Name:            "db",
+		ImageRepository: "library/alpine",
+		ImageReference:  "latest",
+		Config: map[string]any{
+			"mounts": []any{
+				map[string]any{
+					"type":        "",
+					"source":      "/mnt/data",
+					"destination": "/data",
+					"options":     []any{"bind"},
+				},
+			},
+		},
+	}
+
+	draft, err := BuildBottleDraftFromContainer(inspect, ContainerToBottleOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Mounts) != 1 {
+		t.Fatalf("expected one mount, got %#v", draft.Mounts)
+	}
+	if draft.Mounts[0].Source != "/mnt/data" || draft.Mounts[0].Destination != "/data" {
+		t.Fatalf("unexpected mount: %#v", draft.Mounts[0])
+	}
+
+	out, err := RenderBottlefile(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"/mnt/data:/data"`) {
+		t.Fatalf("rendered bottle.yaml did not include bind mount:\n%s", string(out))
+	}
+}
+
 func TestBuildBottleDraftFromContainersGeneratesMultipleServicesAndDependsOn(t *testing.T) {
 	inspects := []container.ContainerInspectModel{
 		{

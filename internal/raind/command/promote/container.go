@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"raind/internal/raind/core/container"
+	policycore "raind/internal/raind/core/policy"
 	"raind/internal/raind/core/promote"
 	"strings"
 
@@ -92,6 +93,15 @@ func runPromoteContainer(ctx *cli.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	policyData, err := policycore.NewServicePolicyList().Get("RAIND-EW")
+	if err != nil {
+		draft.Warnings = append(draft.Warnings, promote.Warning{
+			Code:    "security-policy",
+			Message: fmt.Sprintf("could not load running security policies from condenser API: %v", err),
+		})
+	} else {
+		promote.AttachSecurityPoliciesFromPolicyList(&draft, inspects, policyData.Policies)
 	}
 
 	data, err := promote.RenderBottlefile(draft)

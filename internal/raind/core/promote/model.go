@@ -11,6 +11,7 @@ type BottleDraft struct {
 	SourceContainer string
 	BottleName      string
 	Services        []ServiceDraft
+	Policies        []PolicyDraft
 
 	// Legacy single-service fields are kept for tests and callers that
 	// inspect the draft returned by BuildBottleDraftFromContainer.
@@ -59,4 +60,13 @@ type MountMapping struct {
 type Warning struct {
 	Code    string
 	Message string
+}
+
+type PolicyDraft struct {
+	Type        string
+	Source      string
+	Destination string
+	Protocol    string
+	DestPort    int
+	Comment     string
 }

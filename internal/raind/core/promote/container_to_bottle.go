@@ -284,6 +284,17 @@ func portsFromInspect(inspect container.ContainerInspectModel) []PortMapping {
 	return ports
 }
 
+func isBindMount(mountType string, options []string) bool {
+	mountType = strings.ToLower(strings.TrimSpace(mountType))
+	if mountType == "bind" {
+		return true
+	}
+	if mountType != "" {
+		return false
+	}
+	return hasMountOption(options, "bind") || hasMountOption(options, "rbind")
+}
+
 func mountsFromInspect(inspect container.ContainerInspectModel) []MountMapping {
 	items, ok := inspect.Config["mounts"].([]any)
 	if !ok || len(items) == 0 {
@@ -297,7 +308,8 @@ func mountsFromInspect(inspect container.ContainerInspectModel) []MountMapping {
 			continue
 		}
 		mountType, _ := m["type"].(string)
-		if mountType != "bind" {
+		options, _ := stringSliceFromAny(m["options"])
+		if !isBindMount(mountType, options) {
 			continue
 		}
 		source, _ := m["source"].(string)
@@ -307,7 +319,6 @@ func mountsFromInspect(inspect container.ContainerInspectModel) []MountMapping {
 		if source == "" || dest == "" || shouldSkipMount(source, dest) {
 			continue
 		}
-		options, _ := stringSliceFromAny(m["options"])
 		readOnly := hasMountOption(options, "ro")
 		key := source + "\x00" + dest
 		if _, exists := seen[key]; exists {
