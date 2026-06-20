@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"raind/internal/condenser/store/bsm"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
 	"raind/internal/condenser/utils"
@@ -94,6 +95,7 @@ type DnsProxy struct {
 
 	csmHandler  csm.CsmHandler
 	ipamHandler ipam.IpamHandler
+	bsmHandler  bsm.BsmHandler
 
 	logger *DnsLogger
 }
@@ -117,6 +119,7 @@ func NewDnsProxy(upstreams []string, timeout time.Duration, cache *DnsCache) *Dn
 		},
 		csmHandler:  csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
 		ipamHandler: ipam.NewIpamManager(ipam.NewIpamStore(utils.IpamStorePath)),
+		bsmHandler:  bsm.NewBsmManager(bsm.NewBsmStore(utils.BsmStorePath)),
 
 		logger: dnsLogger,
 	}

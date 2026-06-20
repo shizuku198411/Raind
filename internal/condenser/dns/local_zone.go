@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 
+	"raind/internal/condenser/store/ipam"
+
 	"github.com/miekg/dns"
 )
 
@@ -125,16 +127,54 @@ func (f *DnsProxy) lookupContainerAddress(networkName string, containerName stri
 		if pool.Interface != networkName {
 			continue
 		}
-		for addr, alloc := range pool.Allocations {
-			name, err := f.csmHandler.GetContainerNameById(alloc.ContainerId)
-			if err != nil {
-				continue
-			}
-			if name == containerName {
-				return addr, nil
-			}
+
+		if addr, ok := f.lookupDirectContainerName(pool.Allocations, containerName); ok {
+			return addr, nil
 		}
-		return "", fmt.Errorf("container %s not found in network %s", containerName, networkName)
+		if addr, ok := f.lookupBottleServiceAlias(networkName, pool.Allocations, containerName); ok {
+			return addr, nil
+		}
+
+		return "", fmt.Errorf("container or service %s not found in network %s", containerName, networkName)
 	}
 	return "", fmt.Errorf("network %s not found", networkName)
+}
+
+func (f *DnsProxy) lookupDirectContainerName(allocations map[string]ipam.Allocation, containerName string) (string, bool) {
+	for addr, alloc := range allocations {
+		name, err := f.csmHandler.GetContainerNameById(alloc.ContainerId)
+		if err != nil {
+			continue
+		}
+		if name == containerName {
+			return addr, true
+		}
+	}
+	return "", false
+}
+
+func (f *DnsProxy) lookupBottleServiceAlias(networkName string, allocations map[string]ipam.Allocation, serviceName string) (string, bool) {
+	if f.bsmHandler == nil {
+		return "", false
+	}
+
+	bottles, err := f.bsmHandler.GetBottleList()
+	if err != nil {
+		return "", false
+	}
+	for _, bottle := range bottles {
+		if bottle.Network != networkName {
+			continue
+		}
+		containerId := bottle.Containers[serviceName]
+		if containerId == "" {
+			continue
+		}
+		for addr, alloc := range allocations {
+			if alloc.ContainerId == containerId {
+				return addr, true
+			}
+		}
+	}
+	return "", false
 }

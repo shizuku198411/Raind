@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"raind/internal/condenser/store/bsm"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
 
@@ -55,6 +56,22 @@ func TestResolveRaindLocalReturnsARecordFromIPAMAndCSM(t *testing.T) {
 	assert.Equal(t, uint32(raindLocalTTL), a.Hdr.Ttl)
 }
 
+func TestResolveRaindLocalReturnsARecordForBottleServiceAlias(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("api.raind0.raind.", dns.TypeA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeSuccess, resp.Rcode)
+	require.Len(t, resp.Answer, 1)
+	a, ok := resp.Answer[0].(*dns.A)
+	require.True(t, ok)
+	assert.Equal(t, "10.166.0.3", a.A.String())
+}
+
 func TestResolveRaindLocalReturnsNXDOMAINForUnknownContainer(t *testing.T) {
 	proxy := newTestDnsProxy(t)
 	req := new(dns.Msg)
@@ -97,6 +114,7 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 
 	ipamPath := filepath.Join(dir, "ipam.json")
 	csmPath := filepath.Join(dir, "csm.json")
+	bsmPath := filepath.Join(dir, "bsm.json")
 
 	writeJSON(t, ipamPath, ipam.IpamState{
 		Version:       "test",
@@ -111,6 +129,11 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 					Interface:   "rd_cid-db",
 					AssignedAt:  time.Now(),
 				},
+				"10.166.0.3": {
+					ContainerId: "cid-api",
+					Interface:   "rd_cid-api",
+					AssignedAt:  time.Now(),
+				},
 			},
 		}},
 	})
@@ -122,12 +145,34 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 				ContainerName: "db",
 				State:         "running",
 			},
+			"cid-api": {
+				ContainerId:   "cid-api",
+				ContainerName: "test-bottle-api",
+				State:         "running",
+			},
+		},
+	})
+	writeJSON(t, bsmPath, bsm.BottleState{
+		Version: "test",
+		Bottles: map[string]bsm.BottleInfo{
+			"bot-1": {
+				BottleId:   "bot-1",
+				BottleName: "test-bottle",
+				Network:    "raind0",
+				Services: map[string]bsm.ServiceSpec{
+					"api": {Image: "alpine:latest"},
+				},
+				Containers: map[string]string{
+					"api": "cid-api",
+				},
+			},
 		},
 	})
 
 	return &DnsProxy{
 		csmHandler:  csm.NewCsmManager(csm.NewCsmStore(csmPath)),
 		ipamHandler: ipam.NewIpamManager(ipam.NewIpamStore(ipamPath)),
+		bsmHandler:  bsm.NewBsmManager(bsm.NewBsmStore(bsmPath)),
 	}
 }
 

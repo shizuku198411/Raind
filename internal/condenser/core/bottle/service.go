@@ -180,11 +180,7 @@ func (s *BottleService) Create(bottleIdOrName string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("service spec not found: %s", serviceName)
 		}
-		env, err := s.resolveEnvWithDeps(info, containers, serviceName, spec.Env)
-		if err != nil {
-			s.rollbackCreatedContainers(created, containers, bottleId, bridge, autoNetwork)
-			return "", err
-		}
+		env := spec.Env
 		networkName := spec.Network
 		if networkName == "" && autoNetwork {
 			networkName = bridge
@@ -427,53 +423,4 @@ func bottleIdPrefix(bottleId string) string {
 		return bottleId
 	}
 	return bottleId[:10]
-}
-
-func (s *BottleService) resolveEnvWithDeps(info bsm.BottleInfo, containers map[string]string, serviceName string, env []string) ([]string, error) {
-	spec, ok := info.Services[serviceName]
-	if !ok || len(spec.DependsOn) == 0 || len(env) == 0 {
-		return env, nil
-	}
-
-	depAddrs := map[string]string{}
-	for _, dep := range spec.DependsOn {
-		containerId := ""
-		if containers != nil {
-			containerId = containers[dep]
-		}
-		if containerId == "" {
-			name := buildContainerName(info.BottleName, dep)
-			id, err := s.csmHandler.GetContainerIdByName(name)
-			if err != nil {
-				return nil, fmt.Errorf("container for dependency %s not found", dep)
-			}
-			containerId = id
-		}
-		addr, _, err := s.ipamHandler.GetNetworkInfoById(containerId)
-		if err != nil {
-			return nil, err
-		}
-		depAddrs[dep] = addr
-	}
-
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		key, val, ok := strings.Cut(kv, "=")
-		if !ok {
-			out = append(out, kv)
-			continue
-		}
-		for dep, addr := range depAddrs {
-			if strings.HasPrefix(val, dep+":") {
-				val = addr + val[len(dep):]
-				break
-			}
-			if val == dep {
-				val = addr
-				break
-			}
-		}
-		out = append(out, key+"="+val)
-	}
-	return out, nil
 }
