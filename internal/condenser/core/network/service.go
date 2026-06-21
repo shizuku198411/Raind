@@ -392,7 +392,23 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		return err
 	}
 
-	// 4. allow forward: in
+	// 4. masquerade localhost-originated traffic after OUTPUT DNAT.
+	// Without this, localhost/127.0.0.1 published-port access can leave the
+	// host namespace with a loopback source address and stall before the
+	// container can return traffic. External host-interface traffic keeps the
+	// existing forwarding path unchanged.
+	localhostMasqueradeParam := []string{
+		"-s", "127.0.0.0/8",
+		"-d", containerAddr,
+		"-p", portParam.Protocol,
+		"--dport", portParam.ContainerPort,
+		"-j", "MASQUERADE",
+	}
+	if err := s.addIptablesRuleIfMissing("nat", "POSTROUTING", "append", localhostMasqueradeParam); err != nil {
+		return err
+	}
+
+	// 5. allow forward: in
 	forwardInParam := []string{
 		"-i", hostInterface,
 		"-o", bridgeInterface,
@@ -405,7 +421,7 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		return err
 	}
 
-	// 5. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
+	// 6. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
 	forwardHairpinParam := []string{
 		"-i", bridgeInterface,
 		"-o", bridgeInterface,
@@ -420,7 +436,7 @@ func (s *NetworkService) setForwardRules(hostInterface string, bridgeInterface s
 		return err
 	}
 
-	// 6. allow forward: out
+	// 7. allow forward: out
 	forwardOutParam := []string{
 		"-o", hostInterface,
 		"-i", bridgeInterface,
@@ -476,7 +492,19 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		return err
 	}
 
-	// 4. allow forward: in
+	// 4. masquerade localhost-originated traffic after OUTPUT DNAT.
+	localhostMasqueradeParam := []string{
+		"-s", "127.0.0.0/8",
+		"-d", containerAddr,
+		"-p", portParam.Protocol,
+		"--dport", portParam.ContainerPort,
+		"-j", "MASQUERADE",
+	}
+	if err := s.deleteIptablesRuleIfExists("nat", "POSTROUTING", localhostMasqueradeParam); err != nil {
+		return err
+	}
+
+	// 5. allow forward: in
 	forwardInParam := []string{
 		"-i", hostInterface,
 		"-o", bridgeInterface,
@@ -489,7 +517,7 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		return err
 	}
 
-	// 5. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
+	// 6. allow forwarded dnat traffic within same bridge (container -> hostAddr -> container)
 	forwardHairpinParam := []string{
 		"-i", bridgeInterface,
 		"-o", bridgeInterface,
@@ -504,7 +532,7 @@ func (s *NetworkService) deleteForwardRules(hostInterface string, bridgeInterfac
 		return err
 	}
 
-	// 6. allow forward: out
+	// 7. allow forward: out
 	forwardOutParam := []string{
 		"-o", hostInterface,
 		"-i", bridgeInterface,
