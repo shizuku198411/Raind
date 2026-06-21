@@ -26,7 +26,7 @@ func CommandContainer() *cli.Command {
 				Name:    "output",
 				Aliases: []string{"o"},
 				Usage:   "output bottle.yaml path",
-				Value:   "bottle.yaml",
+				Value:   promote.DefaultBottlePromotionOutput,
 			},
 			&cli.StringFlag{
 				Name:  "service-name",
@@ -40,11 +40,6 @@ func CommandContainer() *cli.Command {
 			&cli.BoolFlag{
 				Name:  "include-image-env",
 				Usage: "include common image-provided environment variables such as PATH",
-				Value: false,
-			},
-			&cli.BoolFlag{
-				Name:  "force",
-				Usage: "overwrite output file if it already exists",
 				Value: false,
 			},
 			&cli.BoolFlag{
@@ -117,7 +112,7 @@ func runPromoteContainer(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return promote.WriteBottlePromotionOutputs(opts.Output, bottleData, reviewData, opts.Force)
+	return promote.WriteBottlePromotionOutputs(opts.Output, bottleData, reviewData, true)
 }
 
 type containerOptions struct {
@@ -129,7 +124,6 @@ type containerOptions struct {
 	ServiceNameSet  bool
 	BottleName      string
 	IncludeImageEnv bool
-	Force           bool
 	Stdout          bool
 }
 
@@ -143,7 +137,6 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 		ServiceNameSet:  ctx.IsSet("service-name"),
 		BottleName:      ctx.String("bottle-name"),
 		IncludeImageEnv: ctx.Bool("include-image-env"),
-		Force:           ctx.Bool("force"),
 		Stdout:          ctx.Bool("stdout"),
 	}
 	args := ctx.Args().Slice()
@@ -184,8 +177,6 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 			i = next
 		case "--include-image-env":
 			opts.IncludeImageEnv = true
-		case "--force":
-			opts.Force = true
 		case "--stdout":
 			opts.Stdout = true
 		default:

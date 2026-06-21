@@ -249,6 +249,9 @@ func TestReconcileCleansPreviousServiceRulesByServiceID(t *testing.T) {
 	assert.Contains(t, commands.commands, "iptables -D FORWARD -j RAIND-FWD-svc-1")
 	assert.Contains(t, commands.commands, "iptables -F RAIND-FWD-svc-1")
 	assert.Contains(t, commands.commands, "iptables -X RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -D POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SNAT-svc-1")
 }
 
 func TestApplyRulesUsesManagedForwardChain(t *testing.T) {
@@ -277,11 +280,45 @@ func TestApplyRulesUsesManagedForwardChain(t *testing.T) {
 	assert.Contains(t, commands.commands, "iptables -F RAIND-FWD-svc-1")
 	assert.Contains(t, commands.commands, "iptables -D FORWARD -j RAIND-FWD-svc-1")
 	assert.Contains(t, commands.commands, "iptables -I FORWARD 1 -j RAIND-FWD-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -N RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -D POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i rbr0 -o rbr0 -p tcp -m conntrack --ctstate DNAT --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
+	assert.Contains(t, commands.commands, "iptables -t nat -A RAIND-SNAT-svc-1 -s 127.0.0.0/8 -d 10.166.0.2 -p tcp --dport 80 -j MASQUERADE")
 	assert.NotContains(t, commands.commands, "iptables -A FORWARD -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.NotContains(t, commands.commands, "iptables -A FORWARD -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
+}
+
+func TestApplyRulesDoesNotCreateLocalhostSNATForClusterIP(t *testing.T) {
+	commands := &recordedCommandFactory{}
+	controller := &ServiceController{commandFactory: commands}
+	svc := ssm.ServiceInfo{
+		ServiceId: "svc-1",
+		Name:      "web",
+		Namespace: "default",
+		Type:      ssm.ServiceTypeClusterIP,
+		ClusterIP: "10.166.255.10",
+		Ports: []ssm.ServicePort{{
+			Port:       80,
+			TargetPort: 80,
+			Protocol:   "tcp",
+		}},
+	}
+	endpoints := []svcEndpoint{{
+		Addr:          "10.166.0.2",
+		HostInterface: "eth0",
+		Bridge:        "rbr0",
+	}}
+
+	require.NoError(t, controller.applyRules(svc, endpoints))
+
+	for _, cmd := range commands.commands {
+		assert.NotContains(t, cmd, "-A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
+		assert.NotContains(t, cmd, "MASQUERADE")
+	}
 }
 
 func TestServiceTypeDefaultsToClusterIP(t *testing.T) {

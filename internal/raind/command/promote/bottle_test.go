@@ -15,14 +15,13 @@ func TestParsePromoteBottleCLIOptionsAcceptsTrailingFlags(t *testing.T) {
 		"-o", "manifests",
 		"--namespace", "dev-ns",
 		"--ingress-host", "app.raind.local",
-		"--force",
 	})
 
 	opts, err := parsePromoteBottleCLIOptions(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Path != "bottle.yaml" || opts.To != "resources" || opts.Output != "manifests" || opts.Namespace != "dev-ns" || opts.IngressHost != "app.raind.local" || !opts.Force {
+	if opts.Path != "bottle.yaml" || opts.To != "resources" || opts.Output != "manifests" || opts.Namespace != "dev-ns" || opts.IngressHost != "app.raind.local" {
 		t.Fatalf("unexpected parsed options: %#v", opts)
 	}
 }
@@ -40,7 +39,7 @@ func TestParsePromoteBottleCLIOptionsAcceptsEqualsTrailingFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Output != "out" || opts.Namespace != "prod" || opts.IngressHost != "app.example.test" || opts.Force {
+	if opts.Output != "out" || opts.Namespace != "prod" || opts.IngressHost != "app.example.test" {
 		t.Fatalf("unexpected parsed options: %#v", opts)
 	}
 }
@@ -71,7 +70,6 @@ func newPromoteBottleTestContext(t *testing.T, args []string) *cli.Context {
 	set.String("o", "manifests", "")
 	set.String("namespace", "", "")
 	set.String("ingress-host", "", "")
-	set.Bool("force", false, "")
 	if err := set.Parse(args); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}

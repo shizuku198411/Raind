@@ -14,7 +14,9 @@ type ResourceFile struct {
 }
 
 type RenderResourcesOptions struct {
-	IngressHost string
+	IngressHost       string
+	ServiceType       string
+	PreserveHostPorts bool
 }
 
 func RenderResourceFiles(d BottleDraft, opt RenderResourcesOptions) ([]ResourceFile, error) {
@@ -37,7 +39,7 @@ func RenderResourceFiles(d BottleDraft, opt RenderResourcesOptions) ([]ResourceF
 		files = append(files, ResourceFile{Name: "03-pvcs.yaml", Data: data})
 	}
 	files = append(files, ResourceFile{Name: "04-deployments.yaml", Data: renderDeployments(namespace, services)})
-	if data := renderServices(namespace, services); len(data) > 0 {
+	if data := renderServices(namespace, services, opt); len(data) > 0 {
 		files = append(files, ResourceFile{Name: "05-services.yaml", Data: data})
 	}
 	ingressHost := effectiveIngressHost(d, opt)
@@ -335,7 +337,7 @@ func renderDeployments(namespace string, services []ServiceDraft) []byte {
 	return b.Bytes()
 }
 
-func renderServices(namespace string, services []ServiceDraft) []byte {
+func renderServices(namespace string, services []ServiceDraft, opt RenderResourcesOptions) []byte {
 	var b bytes.Buffer
 	for _, svc := range services {
 		if len(svc.Ports) == 0 {
@@ -348,7 +350,11 @@ func renderServices(namespace string, services []ServiceDraft) []byte {
 		fmt.Fprintf(&b, "  name: %s\n", quoteYAMLString(svc.Name))
 		fmt.Fprintf(&b, "  namespace: %s\n", quoteYAMLString(namespace))
 		fmt.Fprintln(&b, "spec:")
-		fmt.Fprintln(&b, "  type: ClusterIP")
+		serviceType := strings.TrimSpace(opt.ServiceType)
+		if serviceType == "" {
+			serviceType = "ClusterIP"
+		}
+		fmt.Fprintf(&b, "  type: %s\n", serviceType)
 		fmt.Fprintln(&b, "  selector:")
 		fmt.Fprintf(&b, "    app: %s\n", quoteYAMLString(svc.Name))
 		fmt.Fprintln(&b, "  ports:")
@@ -357,7 +363,11 @@ func renderServices(namespace string, services []ServiceDraft) []byte {
 			if protocol == "" {
 				protocol = "TCP"
 			}
-			fmt.Fprintf(&b, "    - port: %d\n", p.ContainerPort)
+			servicePort := p.ContainerPort
+			if opt.PreserveHostPorts && p.HostPort > 0 {
+				servicePort = p.HostPort
+			}
+			fmt.Fprintf(&b, "    - port: %d\n", servicePort)
 			fmt.Fprintf(&b, "      targetPort: %d\n", p.ContainerPort)
 			fmt.Fprintf(&b, "      protocol: %s\n", quoteYAMLString(protocol))
 		}
@@ -476,10 +486,23 @@ func RenderResourceReview(d BottleDraft, files []ResourceFile, opt RenderResourc
 	for _, svc := range bottleDraftServices(d) {
 		fmt.Fprintf(&b, "- Deployment/%s with replicas=1 and image `%s`.\n", svc.Name, svc.Image)
 		if len(svc.Ports) > 0 {
-			fmt.Fprintf(&b, "- Service/%s as ClusterIP using container ports", svc.Name)
+			serviceType := strings.TrimSpace(opt.ServiceType)
+			if serviceType == "" {
+				serviceType = "ClusterIP"
+			}
+			fmt.Fprintf(&b, "- Service/%s as %s using", svc.Name, serviceType)
+			if opt.PreserveHostPorts {
+				fmt.Fprint(&b, " host-published ports when available")
+			} else {
+				fmt.Fprint(&b, " container ports")
+			}
 			for _, p := range svc.Ports {
-				fmt.Fprintf(&b, " %d/%s", p.ContainerPort, strings.ToUpper(defaultProtocol(p.Protocol)))
-				if p.HostPort != 0 && p.HostPort != p.ContainerPort {
+				servicePort := p.ContainerPort
+				if opt.PreserveHostPorts && p.HostPort > 0 {
+					servicePort = p.HostPort
+				}
+				fmt.Fprintf(&b, " %d->%d/%s", servicePort, p.ContainerPort, strings.ToUpper(defaultProtocol(p.Protocol)))
+				if !opt.PreserveHostPorts && p.HostPort != 0 && p.HostPort != p.ContainerPort {
 					fmt.Fprintf(&b, " (host port %d was not preserved as a Service port)", p.HostPort)
 				}
 			}
@@ -510,7 +533,11 @@ func RenderResourceReview(d BottleDraft, files []ResourceFile, opt RenderResourc
 	fmt.Fprintln(&b, "- Replace placeholder secret values before applying `02-secret.example.yaml` or omit that file until secrets are ready.")
 	fmt.Fprintln(&b, "- Review resource requests, limits, probes, rollout strategy, service account, RBAC, and securityContext.")
 	fmt.Fprintln(&b, "- Review PVC names, sizes, storage classes, and whether each original host mount should become persistent storage.")
-	fmt.Fprintln(&b, "- Review ClusterIP Services because Bottle host-published ports are not preserved as external exposure.")
+	if strings.EqualFold(strings.TrimSpace(opt.ServiceType), "NodePort") {
+		fmt.Fprintln(&b, "- Review NodePort Services before using these manifests outside Promote Strategy validation.")
+	} else {
+		fmt.Fprintln(&b, "- Review ClusterIP Services because Bottle host-published ports are not preserved as external exposure.")
+	}
 	fmt.Fprintln(&b, "- Review NetworkPolicy boundaries. Policies without destination ports allow broader egress within the selected destination pods.")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Apply order")
