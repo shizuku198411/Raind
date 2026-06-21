@@ -70,11 +70,25 @@ func (d StrategyDuration) Duration() time.Duration {
 }
 
 type StrategyOptions struct {
-	File        string
-	Until       string
-	DryRun      bool
-	IngressHost string
-	Namespace   string
+	File          string
+	Until         string
+	DryRun        bool
+	IngressHost   string
+	Namespace     string
+	ProgressStart StrategyProgressStartFunc
+	Progress      StrategyProgressFunc
+}
+
+type StrategyProgressStartFunc func(name string)
+
+type StrategyProgressFunc func(event StrategyProgressEvent)
+
+type StrategyProgressEvent struct {
+	Name   string
+	Status string
+	Index  int
+	Total  int
+	Done   bool
 }
 
 type StrategySpec struct {

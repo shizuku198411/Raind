@@ -2,6 +2,7 @@ package promotecommand
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"raind/internal/raind/core/promote"
@@ -43,18 +44,42 @@ func CommandStrategy() *cli.Command {
 }
 
 func runPromoteStrategy(ctx *cli.Context) error {
+	dryRun := ctx.Bool("dry-run")
 	result, err := promote.RunStrategyFile(ctx.String("file"), promote.StrategyOptions{
 		File:        ctx.String("file"),
 		Until:       ctx.String("until"),
-		DryRun:      ctx.Bool("dry-run"),
+		DryRun:      dryRun,
 		Namespace:   ctx.String("namespace"),
 		IngressHost: ctx.String("ingress-host"),
+		ProgressStart: func(name string) {
+			if !dryRun {
+				fmt.Printf("Promote Strategy: %s\n", name)
+			}
+		},
+		Progress: func(event promote.StrategyProgressEvent) {
+			if !dryRun {
+				printStrategyProgress(event)
+			}
+		},
 	})
 	if err != nil {
 		return err
 	}
-	printStrategyResult(result, ctx.Bool("dry-run"))
+	printStrategyResult(result, dryRun)
 	return nil
+}
+
+func printStrategyProgress(event promote.StrategyProgressEvent) {
+	status := strings.TrimSpace(event.Status)
+	if status == "" {
+		status = "ok"
+	}
+	total := event.Total
+	if total <= 0 {
+		total = event.Index
+	}
+	fmt.Printf("[%d/%d] %s ... %s\n", event.Index, total, event.Name, status)
+	_ = os.Stdout.Sync()
 }
 
 func printStrategyResult(result promote.StrategyRunResult, dryRun bool) {
@@ -62,14 +87,6 @@ func printStrategyResult(result promote.StrategyRunResult, dryRun bool) {
 		fmt.Printf("Promote Strategy: %s\n", result.Name)
 		fmt.Println("Plan validated")
 		return
-	}
-	fmt.Printf("Promote Strategy: %s\n", result.Name)
-	for i, step := range result.Steps {
-		status := strings.TrimSpace(step.Status)
-		if status == "" {
-			status = "ok"
-		}
-		fmt.Printf("[%d/%d] %s ... %s\n", i+1, len(result.Steps), step.Name, status)
 	}
 	if result.BottleOutput != "" {
 		fmt.Printf("bottle draft: %s\n", result.BottleOutput)
