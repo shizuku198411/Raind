@@ -74,6 +74,7 @@ func NewApp() *cli.App {
 				Usage: "promote runtime state to the next deployment draft",
 				Subcommands: []*cli.Command{
 					promotecommand.CommandContainer(),
+					promotecommand.CommandBottle(),
 				},
 			},
 			{

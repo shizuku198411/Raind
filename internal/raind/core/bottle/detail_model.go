@@ -8,6 +8,8 @@ type BottleServiceModel struct {
 	Env       []string `json:"env"`
 	Ports     []string `json:"ports"`
 	Mount     []string `json:"mount"`
+	CapAdd    []string `json:"capAdd"`
+	CapDrop   []string `json:"capDrop"`
 	Network   string   `json:"network"`
 	Tty       bool     `json:"tty"`
 	DependsOn []string `json:"dependsOn"`

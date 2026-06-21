@@ -12,6 +12,7 @@ type BottleDraft struct {
 	BottleName      string
 	Services        []ServiceDraft
 	Policies        []PolicyDraft
+	IngressHost     string
 
 	// Legacy single-service fields are kept for tests and callers that
 	// inspect the draft returned by BuildBottleDraftFromContainer.
@@ -33,6 +34,8 @@ type ServiceDraft struct {
 	Env       []EnvVar
 	Ports     []PortMapping
 	Mounts    []MountMapping
+	CapAdd    []string
+	CapDrop   []string
 	Network   string
 	Tty       bool
 	DependsOn []string
