@@ -113,10 +113,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Host:   net.JoinHostPort(match.clusterIP, strconv.Itoa(match.servicePort)),
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalHost := r.Host
+	forwardedProto := "http"
+	if r.TLS != nil {
+		forwardedProto = "https"
+	}
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
-		req.Host = target.Host
+
+		// Keep the original external host visible to the backend.
+		// Applications such as WordPress build redirects and absolute URLs from
+		// the Host header; rewriting it to the ClusterIP backend makes them
+		// redirect users to internal service addresses.
+		req.Host = originalHost
+		req.Header.Set("X-Forwarded-Host", originalHost)
+		req.Header.Set("X-Forwarded-Proto", forwardedProto)
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 	}

@@ -23,6 +23,7 @@ func RenderResourceFiles(d BottleDraft, opt RenderResourcesOptions) ([]ResourceF
 		namespace = "default"
 	}
 	services := bottleDraftServices(d)
+	services = prepareResourceServices(namespace, services, d.Policies)
 	sort.SliceStable(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 
 	files := []ResourceFile{{Name: "00-namespace.yaml", Data: renderNamespace(namespace)}}
@@ -60,6 +61,107 @@ func effectiveIngressHost(d BottleDraft, opt RenderResourcesOptions) string {
 		return host
 	}
 	return strings.TrimSpace(d.IngressHost)
+}
+
+func prepareResourceServices(namespace string, services []ServiceDraft, policies []PolicyDraft) []ServiceDraft {
+	serviceNames := map[string]struct{}{}
+	out := make([]ServiceDraft, 0, len(services))
+	for _, svc := range services {
+		copySvc := svc
+		copySvc.Command = append([]string{}, svc.Command...)
+		copySvc.Env = rewriteServiceHostEnv(namespace, svc.Env, services)
+		copySvc.Ports = append([]PortMapping{}, svc.Ports...)
+		copySvc.Mounts = append([]MountMapping{}, svc.Mounts...)
+		copySvc.CapAdd = append([]string{}, svc.CapAdd...)
+		copySvc.CapDrop = append([]string{}, svc.CapDrop...)
+		copySvc.DependsOn = append([]string{}, svc.DependsOn...)
+		serviceNames[copySvc.Name] = struct{}{}
+		out = append(out, copySvc)
+	}
+	index := map[string]int{}
+	for i := range out {
+		index[out[i].Name] = i
+	}
+	for _, p := range policies {
+		dst := strings.TrimSpace(p.Destination)
+		if dst == "" || p.DestPort <= 0 {
+			continue
+		}
+		if _, ok := serviceNames[dst]; !ok {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		if protocol != "tcp" && protocol != "udp" {
+			continue
+		}
+		i := index[dst]
+		if hasPort(out[i].Ports, p.DestPort, protocol) {
+			continue
+		}
+		out[i].Ports = append(out[i].Ports, PortMapping{ContainerPort: p.DestPort, Protocol: protocol})
+		sort.SliceStable(out[i].Ports, func(a, b int) bool {
+			if out[i].Ports[a].ContainerPort != out[i].Ports[b].ContainerPort {
+				return out[i].Ports[a].ContainerPort < out[i].Ports[b].ContainerPort
+			}
+			if out[i].Ports[a].HostPort != out[i].Ports[b].HostPort {
+				return out[i].Ports[a].HostPort < out[i].Ports[b].HostPort
+			}
+			return out[i].Ports[a].Protocol < out[i].Ports[b].Protocol
+		})
+	}
+	return out
+}
+
+func rewriteServiceHostEnv(namespace string, envs []EnvVar, services []ServiceDraft) []EnvVar {
+	serviceNames := map[string]string{}
+	for _, svc := range services {
+		if svc.Name == "" {
+			continue
+		}
+		serviceNames[svc.Name] = serviceFQDN(svc.Name, namespace)
+	}
+	out := make([]EnvVar, 0, len(envs))
+	for _, env := range envs {
+		copyEnv := env
+		if !env.Sensitive {
+			copyEnv.Value = rewriteServiceHostValue(env.Value, serviceNames)
+		}
+		out = append(out, copyEnv)
+	}
+	return out
+}
+
+func rewriteServiceHostValue(value string, serviceNames map[string]string) string {
+	trimmed := strings.TrimSpace(value)
+	if fqdn, ok := serviceNames[trimmed]; ok {
+		return fqdn
+	}
+	host, port, ok := strings.Cut(trimmed, ":")
+	if ok {
+		if fqdn, found := serviceNames[host]; found && strings.TrimSpace(port) != "" {
+			return fqdn + ":" + port
+		}
+	}
+	return value
+}
+
+func serviceFQDN(service string, namespace string) string {
+	return sanitizeName(service) + "." + sanitizeName(namespace) + ".svc.cluster.local"
+}
+
+func hasPort(ports []PortMapping, port int, protocol string) bool {
+	for _, p := range ports {
+		if p.ContainerPort != port {
+			continue
+		}
+		if strings.EqualFold(defaultProtocol(p.Protocol), protocol) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderNamespace(namespace string) []byte {
@@ -268,7 +370,7 @@ func renderIngress(namespace string, services []ServiceDraft, host string) []byt
 	var port int
 	for i := range services {
 		for _, p := range services[i].Ports {
-			if p.Protocol == "" || strings.EqualFold(p.Protocol, "tcp") {
+			if (p.Protocol == "" || strings.EqualFold(p.Protocol, "tcp")) && p.HostPort > 0 {
 				target = &services[i]
 				port = p.ContainerPort
 				break
@@ -276,6 +378,20 @@ func renderIngress(namespace string, services []ServiceDraft, host string) []byt
 		}
 		if target != nil {
 			break
+		}
+	}
+	if target == nil {
+		for i := range services {
+			for _, p := range services[i].Ports {
+				if p.Protocol == "" || strings.EqualFold(p.Protocol, "tcp") {
+					target = &services[i]
+					port = p.ContainerPort
+					break
+				}
+			}
+			if target != nil {
+				break
+			}
 		}
 	}
 	if target == nil || port == 0 {

@@ -202,8 +202,14 @@ func TestRenderResourceFilesCoversGeneratedManifestCombinations(t *testing.T) {
 			t.Fatalf("deployments missing %q:\n%s", want, deployments)
 		}
 	}
-	if !strings.Contains(string(byName["05-services.yaml"]), `protocol: "UDP"`) {
-		t.Fatalf("service did not preserve UDP port:\n%s", byName["05-services.yaml"])
+	services := string(byName["05-services.yaml"])
+	for _, want := range []string{`name: "db"`, `port: 3306`, `protocol: "UDP"`} {
+		if !strings.Contains(services, want) {
+			t.Fatalf("services missing %q:\n%s", want, services)
+		}
+	}
+	if !strings.Contains(string(byName["01-configmap.yaml"]), `MYSQL_HOST: "db.myapp.svc.cluster.local"`) {
+		t.Fatalf("service host env was not rewritten to Kubernetes Service FQDN:\n%s", byName["01-configmap.yaml"])
 	}
 	if !strings.Contains(string(byName["06-ingress.yaml"]), `host: "app.raind.local"`) || !strings.Contains(string(byName["06-ingress.yaml"]), `name: "web"`) {
 		t.Fatalf("ingress did not target requested host/web service:\n%s", byName["06-ingress.yaml"])
@@ -222,6 +228,61 @@ func TestRenderResourceFilesCoversGeneratedManifestCombinations(t *testing.T) {
 	review := string(byName["REVIEW.md"])
 	if !strings.Contains(review, "Ingress draft was requested for host `app.raind.local`") || !strings.Contains(review, "depends_on: db") {
 		t.Fatalf("review missed ingress/dependency notes:\n%s", review)
+	}
+}
+
+func TestRenderResourceFilesPromotesWordPressMySQLConnectivity(t *testing.T) {
+	body := []byte(`bottle:
+  name: wordpress-mysql
+services:
+  mysql:
+    image: mysql:8.0
+    env:
+      - MYSQL_ROOT_PASSWORD=root-password
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=wordpress
+      - MYSQL_PASSWORD=wordpress-password
+  wordpress:
+    image: wordpress:latest
+    env:
+      - WORDPRESS_DB_HOST=mysql
+      - WORDPRESS_DB_NAME=wordpress
+      - WORDPRESS_DB_USER=wordpress
+      - WORDPRESS_DB_PASSWORD=wordpress-password
+    ports:
+      - "9850:80"
+    depends_on:
+      - mysql
+policies:
+  - type: east-west
+    source: wordpress
+    destination: mysql
+    protocol: tcp
+    dest_port: 3306
+`)
+
+	draft, err := BuildResourceDraftFromBottle(body, BottleToResourcesOptions{IngressHost: "wordpress.raind.local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := resourceFilesByName(files)
+	configMap := string(byName["01-configmap.yaml"])
+	if !strings.Contains(configMap, `WORDPRESS_DB_HOST: "mysql.wordpress-mysql.svc.cluster.local"`) {
+		t.Fatalf("wordpress DB host should be promoted to Service FQDN:\n%s", configMap)
+	}
+	services := string(byName["05-services.yaml"])
+	for _, want := range []string{`name: "mysql"`, `port: 3306`, `targetPort: 3306`, `name: "wordpress"`, `port: 80`} {
+		if !strings.Contains(services, want) {
+			t.Fatalf("services missing %q:\n%s", want, services)
+		}
+	}
+	ingress := string(byName["06-ingress.yaml"])
+	if !strings.Contains(ingress, `name: "wordpress"`) || strings.Contains(ingress, `name: "mysql"`) {
+		t.Fatalf("ingress should target the published wordpress service, not the policy-inferred mysql service:\n%s", ingress)
 	}
 }
 
