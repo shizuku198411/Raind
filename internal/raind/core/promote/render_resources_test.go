@@ -307,7 +307,7 @@ func TestBuildResourceDraftFromBottleDetailRequiresRunningAndUsesRuntimeState(t 
 				ContainerId: "ctr-web",
 				State:       "running",
 				Repository:  "runtime/web",
-				Reference:   "sha256:abcdef",
+				Reference:   "sha256@abcdef",
 				Command:     []string{"runtime-cmd", "--serve"},
 				Forwards:    []container.ForwardInfoModel{{HostPort: 18080, ContainerPort: 8080, Protocol: "tcp"}},
 			},
@@ -332,7 +332,7 @@ func TestBuildResourceDraftFromBottleDetailRequiresRunningAndUsesRuntimeState(t 
 		t.Fatalf("unexpected services: %#v", draft.Services)
 	}
 	web := draft.Services[1]
-	if web.Image != "runtime/web:sha256:abcdef" {
+	if web.Image != "runtime/web:sha256@abcdef" {
 		t.Fatalf("runtime image should win over Bottlefile image, got %q", web.Image)
 	}
 	if len(web.Command) != 2 || web.Command[0] != "runtime-cmd" {
