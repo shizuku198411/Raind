@@ -20,9 +20,7 @@
 > [!WARNING]
 > Raind is experimental. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It focuses on a growing local subset that is useful for validating application deployment shape before a real cluster.
 
-Raind is a **runtime-promoted deployment workflow**.
-
-Instead of translating configuration files in isolation, Raind lets you start with something real: a running container, observed runtime state, opened ports, environment, service relationships, traffic policy, and netflow. From there, Raind can generate the next reviewable draft:
+Raind is a local pre-Docker/pre-Kubernetes validation and promotion tool that runs applications as containers/Bottles, verifies basic runtime behavior, and generates reviewable Kubernetes-style deployment drafts.
 
 ## Why Raind?
 
