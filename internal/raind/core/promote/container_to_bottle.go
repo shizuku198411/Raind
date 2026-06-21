@@ -193,7 +193,7 @@ func displayContainerRef(inspect container.ContainerInspectModel) string {
 }
 
 func formatImage(repo, ref string) string {
-	repo = strings.TrimSpace(repo)
+	repo = promoteDisplayRepository(repo)
 	ref = strings.TrimSpace(ref)
 	if repo == "" {
 		return ref
@@ -208,6 +208,16 @@ func formatImage(repo, ref string) string {
 		return repo + "@" + ref
 	}
 	return repo + ":" + ref
+}
+
+func promoteDisplayRepository(repo string) string {
+	repo = strings.TrimSpace(repo)
+	repo = strings.TrimPrefix(repo, "docker.io/")
+	repo = strings.TrimPrefix(repo, "index.docker.io/")
+	if strings.HasPrefix(repo, "library/") {
+		return strings.TrimPrefix(repo, "library/")
+	}
+	return repo
 }
 
 func commandFromInspect(inspect container.ContainerInspectModel) []string {

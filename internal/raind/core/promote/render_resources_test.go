@@ -380,3 +380,66 @@ func resourceFileNames(files []ResourceFile) []string {
 	}
 	return out
 }
+
+func TestBuildResourceDraftFromBottleDetailOmitsDefaultLibraryPrefixFromRuntimeImages(t *testing.T) {
+	detail := bottlecore.BottleDetailModel{
+		BottleName: "myapp",
+		Services: map[string]bottlecore.BottleServiceModel{
+			"mysql": {Image: "mysql:8.0"},
+			"web":   {Image: "library/wordpress:latest"},
+		},
+		Containers: map[string]container.ContainerStateModel{
+			"mysql": {ContainerId: "ctr-mysql", State: "running", Repository: "library/mysql", Reference: "8.0"},
+			"web":   {ContainerId: "ctr-web", State: "running", Repository: "docker.io/library/wordpress", Reference: "latest"},
+		},
+	}
+
+	draft, err := BuildResourceDraftFromBottleDetail(detail, BottleToResourcesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployments := string(resourceFilesByName(files)["04-deployments.yaml"])
+	for _, want := range []string{`image: "mysql:8.0"`, `image: "wordpress:latest"`} {
+		if !strings.Contains(deployments, want) {
+			t.Fatalf("deployment manifest missing %q:\n%s", want, deployments)
+		}
+	}
+	if strings.Contains(deployments, "library/mysql") || strings.Contains(deployments, "library/wordpress") {
+		t.Fatalf("deployment manifest should not include default library prefix:\n%s", deployments)
+	}
+}
+
+func TestBuildResourceDraftFromBottleOmitsDefaultLibraryPrefixFromSpecImages(t *testing.T) {
+	body := []byte(`bottle:
+  name: myapp
+services:
+  mysql:
+    image: library/mysql:8.0
+  wordpress:
+    image: docker.io/library/wordpress:latest
+  app:
+    image: registry.example.com/library/app:v1
+`)
+
+	draft, err := BuildResourceDraftFromBottle(body, BottleToResourcesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployments := string(resourceFilesByName(files)["04-deployments.yaml"])
+	for _, want := range []string{`image: "mysql:8.0"`, `image: "wordpress:latest"`, `image: "registry.example.com/library/app:v1"`} {
+		if !strings.Contains(deployments, want) {
+			t.Fatalf("deployment manifest missing %q:\n%s", want, deployments)
+		}
+	}
+	if strings.Contains(deployments, "library/mysql") || strings.Contains(deployments, "library/wordpress") {
+		t.Fatalf("deployment manifest should not include default library prefix:\n%s", deployments)
+	}
+}

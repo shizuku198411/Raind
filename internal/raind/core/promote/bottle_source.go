@@ -80,7 +80,7 @@ func BuildResourceDraftFromBottle(body []byte, opt BottleToResourcesOptions) (Bo
 		}
 		services = append(services, ServiceDraft{
 			Name:      serviceName,
-			Image:     strings.TrimSpace(svc.Image),
+			Image:     formatPromoteImageString(svc.Image),
 			Command:   cleanStrings(svc.Command),
 			Env:       envFromBottleStrings(svc.Env),
 			Ports:     portsFromBottleStrings(svc.Ports),

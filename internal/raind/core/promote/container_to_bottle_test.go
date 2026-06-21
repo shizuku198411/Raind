@@ -514,3 +514,27 @@ func TestRenderBottleReviewIncludesPoliciesAndWarnings(t *testing.T) {
 		}
 	}
 }
+
+func TestPromoteImageOutputOmitsDefaultLibraryPrefix(t *testing.T) {
+	cases := []struct {
+		name string
+		repo string
+		ref  string
+		want string
+	}{
+		{name: "implicit docker hub library tag", repo: "library/mysql", ref: "8.0", want: "mysql:8.0"},
+		{name: "docker io library tag", repo: "docker.io/library/wordpress", ref: "latest", want: "wordpress:latest"},
+		{name: "index docker io library digest", repo: "index.docker.io/library/nginx", ref: "sha256:abcdef", want: "nginx@sha256:abcdef"},
+		{name: "non library namespace preserved", repo: "docker.io/acme/web", ref: "v1", want: "acme/web:v1"},
+		{name: "registry preserved", repo: "registry.example.com/library/mysql", ref: "8.0", want: "registry.example.com/library/mysql:8.0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatImage(tc.repo, tc.ref)
+			if got != tc.want {
+				t.Fatalf("formatImage(%q, %q) = %q, want %q", tc.repo, tc.ref, got, tc.want)
+			}
+		})
+	}
+}

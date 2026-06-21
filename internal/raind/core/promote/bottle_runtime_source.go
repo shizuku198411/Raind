@@ -202,9 +202,27 @@ func runtimeImage(specImage string, repository string, reference string) string 
 	repository = strings.TrimSpace(repository)
 	reference = strings.TrimSpace(reference)
 	if repository != "" && reference != "" {
-		return repository + ":" + reference
+		return formatImage(repository, reference)
 	}
-	return strings.TrimSpace(specImage)
+	return formatPromoteImageString(specImage)
+}
+
+func formatPromoteImageString(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return ""
+	}
+
+	if at := strings.Index(image, "@"); at >= 0 {
+		return promoteDisplayRepository(image[:at]) + image[at:]
+	}
+
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return promoteDisplayRepository(image[:lastColon]) + image[lastColon:]
+	}
+	return promoteDisplayRepository(image)
 }
 
 func runtimeCommand(specCommand []string, runningCommand []string) []string {
