@@ -46,6 +46,8 @@ func NewApp() *cli.App {
 					bottlecommand.CommandStart(),
 					bottlecommand.CommandStop(),
 					bottlecommand.CommandDelete(),
+					bottlecommand.CommandUp(),
+					bottlecommand.CommandDown(),
 					bottlecommand.CommandList(),
 					bottlecommand.CommandShow(),
 				},
