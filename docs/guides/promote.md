@@ -2,14 +2,14 @@
 
 `raind promote` generates reviewable deployment drafts from existing Raind runtime state.
 
-The current MVP supports promoting one or more existing containers to a bottle.yaml:
+The current MVP supports promoting one or more existing containers to a bottle.yaml and a REVIEW_BOTTLE.md review report:
 
 ```sh
 raind promote container myapp --to bottle -o bottle.yaml
 raind promote container db web --to bottle -o bottle.yaml
 ```
 
-The generated bottle.yaml is a draft. Review the image, command, environment variables, ports, mounts, dependencies, and TODO comments before sharing or committing it.
+The generated bottle.yaml is a draft. Raind also writes REVIEW_BOTTLE.md next to the bottle.yaml unless --stdout is used. Review the image, command, environment variables, ports, mounts, dependencies, redacted secret candidates, and TODO comments before sharing or committing it.
 
 ## Single container to bottle.yaml
 
@@ -19,6 +19,7 @@ Example:
 raind image build -t myapp:dev .
 raind container run --name myapp -p 8080:3000 -e APP_ENV=dev myapp:dev
 raind promote container myapp --to bottle -o bottle.yaml
+# writes bottle.yaml and REVIEW_BOTTLE.md
 ```
 
 Useful options:

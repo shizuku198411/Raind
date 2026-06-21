@@ -104,15 +104,20 @@ func runPromoteContainer(ctx *cli.Context) error {
 		promote.AttachSecurityPoliciesFromPolicyList(&draft, inspects, policyData.Policies)
 	}
 
-	data, err := promote.RenderBottlefile(draft)
+	bottleData, err := promote.RenderBottlefile(draft)
 	if err != nil {
 		return err
 	}
 	if opts.Stdout {
-		_, err = os.Stdout.Write(data)
+		_, err = os.Stdout.Write(bottleData)
 		return err
 	}
-	return promote.WriteOutput(opts.Output, data, opts.Force)
+
+	reviewData, err := promote.RenderBottleReview(draft)
+	if err != nil {
+		return err
+	}
+	return promote.WriteBottlePromotionOutputs(opts.Output, bottleData, reviewData, opts.Force)
 }
 
 type containerOptions struct {

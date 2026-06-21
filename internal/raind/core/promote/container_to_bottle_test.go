@@ -344,3 +344,49 @@ func TestBuildBottleDraftFromContainersRejectsDuplicateServiceNames(t *testing.T
 		t.Fatal("expected duplicate service name error")
 	}
 }
+
+func TestRenderBottleReviewRedactsSecretValues(t *testing.T) {
+	draft := BottleDraft{
+		SourceContainer: "container/myapp",
+		BottleName:      "myapp",
+		Services: []ServiceDraft{{
+			Name:  "app",
+			Image: "myapp:dev",
+			Env: []EnvVar{
+				{Key: "APP_ENV", Value: "dev"},
+				{Key: "DB_PASSWORD", Value: "super-secret", Sensitive: true},
+			},
+			Ports:  []PortMapping{{HostPort: 8080, ContainerPort: 3000, Protocol: "tcp"}},
+			Mounts: []MountMapping{{Source: "/host/data", Destination: "/data"}},
+		}},
+	}
+
+	out, err := RenderBottleReview(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if strings.Contains(text, "super-secret") {
+		t.Fatalf("rendered review leaked secret value:\n%s", text)
+	}
+	for _, want := range []string{
+		"# Generated Bottle Draft Review",
+		"Source container(s): `container/myapp`",
+		"Service `app`",
+		"Secret candidates: `DB_PASSWORD`",
+		"Review host-specific absolute mounts: `app:/host/data -> /data`.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered review missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestBottleReviewPathForOutputUsesOutputDirectory(t *testing.T) {
+	if got := BottleReviewPathForOutput("out/bottle.yaml"); got != "out/REVIEW_BOTTLE.md" {
+		t.Fatalf("unexpected review path: %s", got)
+	}
+	if got := BottleReviewPathForOutput("bottle.yaml"); got != "REVIEW_BOTTLE.md" {
+		t.Fatalf("unexpected review path: %s", got)
+	}
+}
