@@ -16,18 +16,572 @@ actual run
   -> reviewable deployment draft
 ```
 
-Promote currently supports two paths:
+The recommended entry point is **Promote Strategy**. A strategy file describes the seed containers and the checks that must pass at each stage. Raind then runs the workflow end-to-end:
+
+```text
+create containers
+  -> check container runtime and application health
+  -> promote containers to a Bottle draft
+  -> delete source containers
+  -> apply the Bottle draft
+  -> check Bottle runtime and application health
+  -> promote the running Bottle to resource drafts
+  -> delete the source Bottle
+  -> apply the resource drafts
+  -> check resource application health
+  -> delete the applied resources
+```
+
+Generated files are drafts. Promote overwrites draft outputs by default so repeated local iterations produce a clean `raind_promote/` directory.
+
+Default output layout:
+
+```text
+raind_promote/
+  bottle/
+    bottle.yaml
+    REVIEW_BOTTLE.md
+  resources/
+    00-namespace.yaml
+    01-configmap.yaml
+    02-secret.example.yaml
+    03-pvcs.yaml
+    04-deployments.yaml
+    05-services.yaml
+    06-ingress.yaml
+    07-networkpolicies.yaml
+    REVIEW.md
+    all.yaml
+```
+
+Only applicable resource files are generated. For example, `03-pvcs.yaml` is omitted when there are no mounts, and `06-ingress.yaml` is generated when an ingress host is provided.
+
+## Promote Strategy
+
+Create `raind-strategy.yaml` in the working directory:
+
+```yaml
+apiVersion: raind.io/v1alpha1
+kind: PromoteStrategy
+
+metadata:
+  name: web-stack
+
+source:
+  mode: create
+  containers:
+    - name: mysql
+      image: mysql:8
+      env:
+        MYSQL_ROOT_PASSWORD: root-password
+        MYSQL_DATABASE: app
+        MYSQL_USER: app
+        MYSQL_PASSWORD: app-password
+
+    - name: nginx
+      image: nginx:latest
+      ports:
+        - "9980:80"
+      dependsOn:
+        - mysql
+
+stages:
+  container:
+    checks:
+      runtime:
+        - name: mysql-running
+          type: containerStatus
+          target: mysql
+          expect:
+            state: running
+          timeout: 60s
+          interval: 2s
+
+        - name: nginx-running
+          type: containerStatus
+          target: nginx
+          expect:
+            state: running
+          timeout: 60s
+          interval: 2s
+
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+            bodyContains: "Welcome to nginx"
+          timeout: 60s
+          interval: 2s
+
+    promote:
+      to: bottle
+      output: raind_promote/bottle/bottle.yaml
+
+  bottle:
+    apply:
+      file: raind_promote/bottle/bottle.yaml
+
+    checks:
+      runtime:
+        - name: bottle-running
+          type: bottleStatus
+          target: web-stack
+          timeout: 60s
+          interval: 2s
+
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+          timeout: 60s
+          interval: 2s
+
+    promote:
+      to: resources
+      output: raind_promote/resources
+
+  resources:
+    apply:
+      file: raind_promote/resources/all.yaml
+
+    checks:
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+          timeout: 60s
+          interval: 2s
+```
+
+Run the strategy:
 
 ```sh
-raind promote container <container...> --to bottle -o bottle/bottle.yaml
-raind promote bottle bottle/bottle.yaml --to resources -o bottle/manifests --ingress-host app.raind.local
+raind promote strategy
+```
+
+Or pass the file explicitly:
+
+```sh
+raind promote strategy -f ./raind-strategy.yaml
+```
+
+Example progress output:
+
+```text
+Promote Strategy: web-stack
+[container] create::mysql ... ok
+[container] create::nginx ... ok
+[container] runtime ... ok
+[container] checks::runtime::mysql-running ... ok
+[container] checks::runtime::nginx-running ... ok
+[container] checks::application::nginx-http ... ok
+[container] promote ... raind_promote/bottle/bottle.yaml
+[container] delete ... ok
+[bottle] apply ... web-stack
+[bottle] checks::runtime::bottle-running ... ok
+[bottle] checks::application::nginx-http ... ok
+[bottle] promote ... raind_promote/resources
+[bottle] delete ... ok
+[resources] apply ... raind_promote/resources/all.yaml
+[resources] checks::application::nginx-http ... ok
+[resources] delete ... ok
+bottle draft: raind_promote/bottle/bottle.yaml
+resource drafts: raind_promote/resources
+```
+
+### Strategy command options
+
+| Option | Default | Supported values | Description |
+| --- | --- | --- | --- |
+| `-f`, `--file` | `raind-strategy.yaml` | Path to a YAML file | Strategy file to read. |
+| `--dry-run` | `false` | `true` / `false` | Parse and validate the strategy without creating containers, applying Bottles, or applying resources. |
+| `--until` | empty | `container`, `bottle-draft`, `bottle`, `resources-draft` | Stop after a stage. `container` and `bottle-draft` stop after the container stage has generated the Bottle draft. `bottle` and `resources-draft` stop after the Bottle stage has generated resource drafts. |
+| `--namespace` | `metadata.name` | Namespace string | Namespace used while generating resource drafts. |
+| `--ingress-host` | empty | Hostname string | Generate an Ingress draft for the first TCP service port using this host. |
+
+### Strategy YAML fields
+
+#### Root object
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `apiVersion` | No | Any string | Informational. The current parser does not enforce a specific value. Use `raind.io/v1alpha1` for current examples. |
+| `kind` | No | empty or `PromoteStrategy` | When set, it must be `PromoteStrategy`. |
+| `metadata.name` | Yes | Non-empty string | Strategy name. Also used as the Bottle name and default resource namespace. |
+| `source` | Yes | See below | Defines the seed containers. |
+| `containers` | No | List of containers | Backward-compatible alias for `source.containers`. Prefer `source.containers`. |
+| `stages` | No | `container`, `bottle`, `resources` | Per-stage apply, check, and promote definitions. Empty stage fields use defaults where available. |
+| `outputs.bottle` | No | File path | Bottle draft output. Defaults to `raind_promote/bottle/bottle.yaml`. Legacy values `bottle.yaml` are treated as the default path. |
+| `outputs.resources` | No | Directory path | Resource draft output directory. Defaults to `raind_promote/resources`. Legacy values `manifests` and `manifests/` are treated as the default path. |
+
+#### `source`
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `source.mode` | No | empty or `create` | Source mode. `create` is the only supported mode in this release. Empty defaults to `create`. |
+| `source.containers` | Yes | List of container definitions | Containers that Strategy creates, checks, promotes, and then removes before the Bottle stage. |
+
+#### `source.containers[]`
+
+Each container maps to the existing Raind container create/start flow.
+
+| Field | Required | Value type | Description |
+| --- | --- | --- | --- |
+| `name` | Yes | String | Container name. Checks and promotion refer to this name. |
+| `image` | Yes | String | Image reference, such as `nginx:latest` or `mysql:8`. |
+| `command` | No | String, list, or map | Command passed to the container create model. Prefer list form for command arguments. |
+| `network` | No | String | Network name passed to container creation. |
+| `volume` | No | String, list, or map | Volume entries passed to container creation. |
+| `mount` | No | String, list, or map | Additional mount entries. `volume` and `mount` are merged before creation. |
+| `publish` | No | String, list, or map | Published ports, such as `9980:80`. |
+| `ports` | No | String, list, or map | Alias-like published ports. `publish` and `ports` are merged before creation. |
+| `device` | No | String, list, or map | Device entries passed to container creation. |
+| `env` | No | String, list, or map | Environment variables. Map form becomes `KEY=value`; list form should use `KEY=value`. |
+| `capAdd` | No | String, list, or map | Capabilities to add. |
+| `capDrop` | No | String, list, or map | Capabilities to drop. |
+| `securityProfile` | No | String | Security profile name passed to container creation. |
+| `tty` | No | Boolean | Whether to allocate/start with TTY. Defaults to `false`. |
+| `dependsOn` | No | String, list, or map | Dependency metadata for the strategy file. Container creation currently follows the listed order in `source.containers`. |
+
+String-list fields accept all of these forms:
+
+```yaml
+# list form
+env:
+  - MYSQL_DATABASE=app
+  - MYSQL_USER=app
+
+# map form
+env:
+  MYSQL_DATABASE: app
+  MYSQL_USER: app
+
+# scalar form
+env: MYSQL_DATABASE=app
+```
+
+For `command`, prefer list form:
+
+```yaml
+command:
+  - nginx
+  - -g
+  - daemon off;
+```
+
+### Stage lifecycle
+
+Promote Strategy treats each stage as a temporary validation environment. This avoids port collisions between stages.
+
+| Stage | Lifecycle |
+| --- | --- |
+| `container` | Create and start `source.containers`, wait for container runtime state, run `stages.container` checks, promote to Bottle, then stop and remove the source containers. |
+| `bottle` | Apply and start the generated Bottle, run `stages.bottle` checks, promote the running Bottle to resource drafts, then delete the source Bottle. |
+| `resources` | Apply `all.yaml`, run `stages.resources` checks, then delete the applied resources. |
+
+Strategy-generated resource Services are rendered as `NodePort` and preserve the host ports observed from the Bottle/container stage so local application checks can use the same URL, such as `http://127.0.0.1:9980`.
+
+### Stage fields
+
+#### `stages.container`
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `checks.runtime` | No | List of checks | Runtime checks for the container stage. Usually `containerStatus`. |
+| `checks.application` | No | List of checks | Application checks for the container stage. Usually `http` or `tcp`. |
+| `healthChecks` | No | List of checks | Backward-compatible check list. Prefer `checks.runtime` and `checks.application`. |
+| `promote.to` | No | empty or `bottle` | Promote target. If set, it must be `bottle`. |
+| `promote.output` | No | File path | Bottle draft output. Defaults to `raind_promote/bottle/bottle.yaml`. |
+
+#### `stages.bottle`
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `apply.file` | No | File path | Bottlefile to apply. Defaults to the Bottle output path. |
+| `checks.runtime` | No | List of checks | Runtime checks for the Bottle stage. Usually `bottleStatus`. |
+| `checks.application` | No | List of checks | Application checks for the Bottle stage. Usually `http` or `tcp`. |
+| `healthChecks` | No | List of checks | Backward-compatible check list. Prefer `checks.runtime` and `checks.application`. |
+| `promote.to` | No | empty or `resources` | Promote target. If set, it must be `resources`. |
+| `promote.output` | No | Directory path | Resource draft output directory. Defaults to `raind_promote/resources`. |
+
+#### `stages.resources`
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `apply.file` | No | File path | Resource manifest to apply. Defaults to `<resources output>/all.yaml`. |
+| `apply.path` | No | Directory path | Directory containing `all.yaml`. When set, Strategy applies `<apply.path>/all.yaml`. |
+| `checks.runtime` | No | List of checks | Runtime checks for the resources stage. No resource-specific check type is currently implemented, so use only supported check types. |
+| `checks.application` | No | List of checks | Application checks for the resources stage. Usually `http` or `tcp`. |
+| `healthChecks` | No | List of checks | Backward-compatible check list. Prefer `checks.runtime` and `checks.application`. |
+
+### Check definition
+
+A check has this shape:
+
+```yaml
+name: nginx-http
+type: http
+target: http://127.0.0.1:9980
+expect:
+  status: 200
+  bodyContains: "Welcome"
+timeout: 60s
+interval: 2s
+```
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `name` | No | String | Display name. If omitted, Strategy uses `target`; if `target` is also empty, it uses `type`. |
+| `type` | No | empty, `http`, `tcp`, `containerStatus`, `container-status`, `bottleStatus`, `bottle-status` | Check type. Empty defaults to `http`. Matching is case-insensitive. |
+| `target` | Yes | Type-specific string | URL, host:port, container name, or Bottle name depending on `type`. |
+| `expect` | No | Type-specific object | Expected result. Unsupported fields are ignored by the selected check type. |
+| `timeout` | No | Go duration string, such as `500ms`, `2s`, `1m` | Maximum time to retry the check. Defaults to `60s`. |
+| `interval` | No | Go duration string, such as `500ms`, `2s`, `1m` | Retry interval. Defaults to `2s`. For HTTP/TCP, this is also used as the per-request/per-dial timeout. |
+
+#### `http` check
+
+Use `http` to verify that an application endpoint is reachable.
+
+```yaml
+- name: nginx-http
+  type: http
+  target: http://127.0.0.1:9980
+  expect:
+    status: 200
+    bodyContains: "Welcome to nginx"
+  timeout: 60s
+  interval: 2s
+```
+
+Supported parameters:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `target` | Yes | HTTP or HTTPS URL to request with `GET`. |
+| `expect.status` | No | Expected HTTP status code. Defaults to `200` when omitted or `0`. |
+| `expect.bodyContains` | No | Substring that must be present in the response body. The check reads up to 1 MiB of response body. |
+| `timeout` | No | Overall retry timeout. Defaults to `60s`. |
+| `interval` | No | Retry interval and HTTP client timeout. Defaults to `2s`. |
+
+#### `tcp` check
+
+Use `tcp` to verify that a TCP socket accepts connections.
+
+```yaml
+- name: mysql-tcp
+  type: tcp
+  target: 127.0.0.1:3306
+  timeout: 60s
+  interval: 2s
+```
+
+Supported parameters:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `target` | Yes | TCP address in `host:port` form. |
+| `timeout` | No | Overall retry timeout. Defaults to `60s`. |
+| `interval` | No | Retry interval and TCP dial timeout. Defaults to `2s`. |
+
+`expect` is not used by `tcp` checks.
+
+#### `containerStatus` check
+
+Use `containerStatus` to verify a Raind container state by name.
+
+```yaml
+- name: nginx-running
+  type: containerStatus
+  target: nginx
+  expect:
+    state: running
+  timeout: 60s
+  interval: 2s
+```
+
+Supported parameters:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `target` | Yes | Container name or identifier accepted by `raind container inspect`. |
+| `expect.state` | No | Expected container state. Defaults to `running`. Comparison is case-insensitive. |
+| `timeout` | No | Overall retry timeout. Defaults to `60s`. |
+| `interval` | No | Retry interval. Defaults to `2s`. |
+
+#### `bottleStatus` check
+
+Use `bottleStatus` to verify that a Bottle exists and is running.
+
+```yaml
+- name: bottle-running
+  type: bottleStatus
+  target: web-stack
+  timeout: 60s
+  interval: 2s
+```
+
+Supported parameters:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `target` | Yes | Bottle name. Usually this is `metadata.name`. |
+| `timeout` | No | Overall retry timeout. Defaults to `60s`. |
+| `interval` | No | Retry interval. Defaults to `2s`. |
+
+`expect` is not used by `bottleStatus` checks. Success means Raind can fetch a running Bottle detail for `target`.
+
+### Complete strategy example
+
+The following example intentionally includes every supported Strategy section and every supported check type.
+
+```yaml
+apiVersion: raind.io/v1alpha1
+kind: PromoteStrategy
+
+metadata:
+  name: wordpress-stack
+
+outputs:
+  bottle: raind_promote/bottle/bottle.yaml
+  resources: raind_promote/resources
+
+source:
+  mode: create
+  containers:
+    - name: mysql
+      image: mysql:8
+      env:
+        MYSQL_ROOT_PASSWORD: root-password
+        MYSQL_DATABASE: wordpress-db
+        MYSQL_USER: wordpress-user
+        MYSQL_PASSWORD: wordpress-password
+      ports:
+        - "3306:3306"
+      tty: false
+
+    - name: wordpress
+      image: wordpress:latest
+      env:
+        WORDPRESS_DB_HOST: mysql
+        WORDPRESS_DB_NAME: wordpress-db
+        WORDPRESS_DB_USER: wordpress-user
+        WORDPRESS_DB_PASSWORD: wordpress-password
+      publish:
+        - "9850:80"
+      capAdd:
+        - NET_BIND_SERVICE
+      capDrop:
+        - MKNOD
+      dependsOn:
+        - mysql
+
+stages:
+  container:
+    checks:
+      runtime:
+        - name: mysql-running
+          type: containerStatus
+          target: mysql
+          expect:
+            state: running
+          timeout: 60s
+          interval: 2s
+
+        - name: wordpress-running
+          type: containerStatus
+          target: wordpress
+          expect:
+            state: running
+          timeout: 60s
+          interval: 2s
+
+      application:
+        - name: wordpress-http
+          type: http
+          target: http://127.0.0.1:9850
+          expect:
+            status: 200
+          timeout: 90s
+          interval: 2s
+
+        - name: mysql-tcp
+          type: tcp
+          target: 127.0.0.1:3306
+          timeout: 60s
+          interval: 2s
+
+    promote:
+      to: bottle
+      output: raind_promote/bottle/bottle.yaml
+
+  bottle:
+    apply:
+      file: raind_promote/bottle/bottle.yaml
+
+    checks:
+      runtime:
+        - name: bottle-running
+          type: bottleStatus
+          target: wordpress-stack
+          timeout: 60s
+          interval: 2s
+
+      application:
+        - name: wordpress-http
+          type: http
+          target: http://127.0.0.1:9850
+          expect:
+            status: 200
+          timeout: 90s
+          interval: 2s
+
+    promote:
+      to: resources
+      output: raind_promote/resources
+
+  resources:
+    apply:
+      path: raind_promote/resources
+
+    checks:
+      application:
+        - name: wordpress-http
+          type: http
+          target: http://127.0.0.1:9850
+          expect:
+            status: 200
+          timeout: 90s
+          interval: 2s
+```
+
+### Secrets in Promote Strategy
+
+Manual `raind promote container` redacts secret-like environment values by default and writes TODO comments into the Bottle draft. Strategy is different: it is designed to run the generated Bottle and resource drafts immediately in the same local validation flow, so Strategy preserves secret-like environment values in the generated drafts.
+
+Review the generated files before committing them.
+
+## Manual Promote commands
+
+You can still run the stages manually when you want more control or when you are debugging a single step.
+
+Manual Promote currently supports two paths:
+
+```sh
+raind promote container <container...> --to bottle -o raind_promote/bottle/bottle.yaml
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources -o raind_promote/resources --ingress-host app.raind.local
 ```
 
 The generated files are useful starting points, not final production configuration. Always review the generated review files and edit secrets, storage, ingress, and policy assumptions before applying the next stage.
 
-## End-to-end flow
+## Manual end-to-end flow
 
-This guide walks through a WordPress + MySQL example using the full workflow:
+This section walks through a WordPress + MySQL example using the manual workflow:
 
 1. Run and verify the application as normal containers.
 2. Promote the running containers to a Bottlefile.
@@ -89,15 +643,14 @@ curl http://<host-ip>:9850
 After the container-level test works, generate a Bottle draft from the running containers:
 
 ```sh
-mkdir -p bottle
-raind promote container wordpress mysql --to bottle --bottle-name wordpress -o bottle/bottle.yaml
+raind promote container wordpress mysql --to bottle --bottle-name wordpress -o raind_promote/bottle/bottle.yaml
 ```
 
 This writes:
 
 ```text
-bottle/bottle.yaml
-bottle/REVIEW_BOTTLE.md
+raind_promote/bottle/bottle.yaml
+raind_promote/bottle/REVIEW_BOTTLE.md
 ```
 
 The generated Bottlefile keeps runtime information such as image names, commands, published ports, inferred dependencies, and Raind security policy drafts.
@@ -152,15 +705,15 @@ policies:
 Open both generated files before starting the Bottle:
 
 ```sh
-cat bottle/REVIEW_BOTTLE.md
-$EDITOR bottle/bottle.yaml
+cat raind_promote/bottle/REVIEW_BOTTLE.md
+$EDITOR raind_promote/bottle/bottle.yaml
 ```
 
 Review these items:
 
 - `image`: confirm the generated image references are the ones you want to keep.
 - `command`: confirm the runtime command should be preserved in the Bottlefile.
-- `env`: secret-like values are redacted by default. Restore local test values or replace them with safe values before running the Bottle.
+- `env`: secret-like values are redacted by default in manual container promotion. Restore local test values or replace them with safe values before running the Bottle.
 - `ports`: confirm the host-to-container port mappings.
 - `depends_on`: confirm inferred service dependencies.
 - `policies`: confirm the generated east-west policies match observed runtime traffic.
@@ -190,14 +743,7 @@ services:
 Start the Bottle from the reviewed file:
 
 ```sh
-cd bottle
-raind bottle up
-```
-
-`raind bottle up` is a wrapper for creating and starting a Bottle. By default it looks for `bottle.yaml`, then `compose.yaml`. Use `-f` when the file has a different name:
-
-```sh
-raind bottle up -f ./bottle.yaml
+raind bottle up -f raind_promote/bottle/bottle.yaml
 ```
 
 Check the running Bottle:
@@ -221,13 +767,13 @@ The important validation here is that the multi-service application works as a B
 Once the Bottle works, generate Kubernetes-style resource drafts:
 
 ```sh
-raind promote bottle bottle.yaml --to resources -o manifests --ingress-host wordpress.raind.local
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources -o raind_promote/resources --ingress-host wordpress.raind.local
 ```
 
 This writes a directory like this:
 
 ```text
-manifests/
+raind_promote/resources/
   00-namespace.yaml
   01-configmap.yaml
   02-secret.example.yaml
@@ -240,14 +786,12 @@ manifests/
   all.yaml
 ```
 
-Only applicable files are generated. For example, `03-pvcs.yaml` is omitted when there are no mounts, and `06-ingress.yaml` is generated when `--ingress-host` is provided.
-
 Promote uses the running Bottle state and the reviewed Bottlefile to generate Raind-compatible Kubernetes-style resources:
 
 - Bottle services become `Deployment` resources.
 - Non-secret environment variables become per-service `ConfigMap` resources.
 - Secret-like environment variables become `Secret` examples with placeholder values.
-- Bottle ports become `ClusterIP` `Service` resources.
+- Bottle ports become `ClusterIP` `Service` resources for manual promotion.
 - Internal destination ports from policies can also produce service ports, such as `mysql:3306`.
 - Service-name environment values are promoted to Kubernetes-style service DNS names, such as `mysql.wordpress.svc.cluster.local`.
 - Published HTTP-like ports can become an `Ingress` when `--ingress-host` is provided.
@@ -285,9 +829,9 @@ spec:
 Before applying the resources, review the report and manifests:
 
 ```sh
-cat manifests/REVIEW.md
-$EDITOR manifests/02-secret.example.yaml
-$EDITOR manifests/all.yaml
+cat raind_promote/resources/REVIEW.md
+$EDITOR raind_promote/resources/02-secret.example.yaml
+$EDITOR raind_promote/resources/all.yaml
 ```
 
 Review these items:
@@ -322,20 +866,20 @@ stringData:
 Apply the combined manifest:
 
 ```sh
-raind resource apply -f manifests/all.yaml
+raind resource apply -f raind_promote/resources/all.yaml
 ```
 
 Or apply the generated files in order:
 
 ```sh
-raind resource apply -f manifests/00-namespace.yaml
-raind resource apply -f manifests/01-configmap.yaml
-raind resource apply -f manifests/02-secret.example.yaml
-raind resource apply -f manifests/03-pvcs.yaml
-raind resource apply -f manifests/04-deployments.yaml
-raind resource apply -f manifests/05-services.yaml
-raind resource apply -f manifests/06-ingress.yaml
-raind resource apply -f manifests/07-networkpolicies.yaml
+raind resource apply -f raind_promote/resources/00-namespace.yaml
+raind resource apply -f raind_promote/resources/01-configmap.yaml
+raind resource apply -f raind_promote/resources/02-secret.example.yaml
+raind resource apply -f raind_promote/resources/03-pvcs.yaml
+raind resource apply -f raind_promote/resources/04-deployments.yaml
+raind resource apply -f raind_promote/resources/05-services.yaml
+raind resource apply -f raind_promote/resources/06-ingress.yaml
+raind resource apply -f raind_promote/resources/07-networkpolicies.yaml
 ```
 
 Check the generated resources:
@@ -374,42 +918,56 @@ curl http://<ingress-host>:7780
 For generated resources:
 
 ```sh
-raind resource delete -f manifests/all.yaml
+raind resource delete -f raind_promote/resources/all.yaml
 ```
 
 For the Bottle:
 
 ```sh
-raind bottle down
+raind bottle down -f raind_promote/bottle/bottle.yaml
 ```
 
 For the original container test resources, remove the containers and any policies you no longer need.
 
 ## Command reference
 
+Promote Strategy:
+
+```sh
+raind promote strategy
+raind promote strategy -f ./raind-strategy.yaml
+raind promote strategy --dry-run
+raind promote strategy --until bottle-draft
+raind promote strategy --until resources-draft
+raind promote strategy --namespace wordpress-dev
+raind promote strategy --ingress-host wordpress.raind.local
+```
+
 Container to Bottle:
 
 ```sh
-raind promote container wordpress mysql --to bottle --bottle-name wordpress -o bottle/bottle.yaml
+raind promote container wordpress mysql --to bottle
+raind promote container wordpress mysql --to bottle --bottle-name wordpress
+raind promote container wordpress mysql --to bottle -o raind_promote/bottle/bottle.yaml
 raind promote container wordpress mysql --to bottle --stdout
-raind promote container wordpress mysql --to bottle -o bottle/bottle.yaml --force
 ```
 
 Bottle lifecycle wrappers:
 
 ```sh
 raind bottle up
-raind bottle up -f ./bottle.yaml
+raind bottle up -f raind_promote/bottle/bottle.yaml
 raind bottle down
-raind bottle down -f ./bottle.yaml
+raind bottle down -f raind_promote/bottle/bottle.yaml
 ```
 
 Bottle to resources:
 
 ```sh
-raind promote bottle bottle.yaml --to resources -o manifests
-raind promote bottle bottle.yaml --to resources -o manifests --ingress-host wordpress.raind.local
-raind promote bottle bottle.yaml --to resources -o manifests --namespace wordpress-dev
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources -o raind_promote/resources
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources -o raind_promote/resources --ingress-host wordpress.raind.local
+raind promote bottle raind_promote/bottle/bottle.yaml --to resources -o raind_promote/resources --namespace wordpress-dev
 ```
 
 ## Design notes
@@ -418,6 +976,6 @@ Promote is designed around these principles:
 
 - Runtime-aware: prefer observed runtime state when available.
 - Reviewable: generate drafts and reports instead of pretending the output is production-ready.
-- Safe by default: redact or placeholder secret-like values.
+- Strategy-first: automate the local validation flow while still leaving reviewable draft files behind.
 - Deterministic: keep output stable so generated diffs can be reviewed.
 - Compatible with Raind's current Kubernetes-style subset: generate what Raind can apply and validate locally.

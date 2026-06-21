@@ -77,11 +77,14 @@ type StrategyOptions struct {
 	Namespace     string
 	ProgressStart StrategyProgressStartFunc
 	Progress      StrategyProgressFunc
+	InternalLog   StrategyInternalLogFunc
 }
 
 type StrategyProgressStartFunc func(name string)
 
 type StrategyProgressFunc func(event StrategyProgressEvent)
+
+type StrategyInternalLogFunc func(event StrategyInternalLogEvent)
 
 type StrategyProgressEvent struct {
 	Name   string
@@ -89,6 +92,12 @@ type StrategyProgressEvent struct {
 	Index  int
 	Total  int
 	Done   bool
+}
+
+type StrategyInternalLogEvent struct {
+	Step string
+	Line string
+	Done bool
 }
 
 type StrategySpec struct {

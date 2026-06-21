@@ -1,11 +1,13 @@
 package promote
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	bottlecore "raind/internal/raind/core/bottle"
@@ -14,6 +16,8 @@ import (
 	policycore "raind/internal/raind/core/policy"
 	resourcecore "raind/internal/raind/core/resource"
 )
+
+const strategyRaindCommandSettleDelay = 500 * time.Millisecond
 
 type StrategyRunner struct {
 	spec       StrategySpec
@@ -121,32 +125,38 @@ func (r *StrategyRunner) runResourcesStage() error {
 func (r *StrategyRunner) createContainers() ([]string, error) {
 	createdIDs := []string{}
 	for _, c := range r.spec.Source.Containers {
-		step := "container/create " + c.Name
+		step := "container/create::" + c.Name
 		r.beginStep(step)
+		var id string
 		create := container.NewServiceContainerCreate()
-		id, err := create.Create(container.ServiceCreateModel{
-			Image:           c.Image,
-			Command:         []string(c.Command),
-			Network:         c.Network,
-			Volume:          mergeStringSlices([]string(c.Volume), []string(c.Mount)),
-			Publish:         mergeStringSlices([]string(c.Publish), []string(c.Ports)),
-			Device:          []string(c.Device),
-			Env:             normalizeEnv([]string(c.Env)),
-			CapAdd:          []string(c.CapAdd),
-			CapDrop:         []string(c.CapDrop),
-			SecurityProfile: c.SecurityProfile,
-			Tty:             c.Tty,
-			Name:            c.Name,
+		err := r.captureInternalOutput(step, func() error {
+			r.waitBeforeRaindCommand()
+			createdID, err := create.Create(container.ServiceCreateModel{
+				Image:           c.Image,
+				Command:         []string(c.Command),
+				Network:         c.Network,
+				Volume:          mergeStringSlices([]string(c.Volume), []string(c.Mount)),
+				Publish:         mergeStringSlices([]string(c.Publish), []string(c.Ports)),
+				Device:          []string(c.Device),
+				Env:             normalizeEnv([]string(c.Env)),
+				CapAdd:          []string(c.CapAdd),
+				CapDrop:         []string(c.CapDrop),
+				SecurityProfile: c.SecurityProfile,
+				Tty:             c.Tty,
+				Name:            c.Name,
+			})
+			if err != nil {
+				return fmt.Errorf("create container %s: %w", c.Name, err)
+			}
+			id = createdID
+			r.waitBeforeRaindCommand()
+			return container.NewServiceContainerStart().Start(container.ServiceStartModel{Id: id, Tty: c.Tty})
 		})
 		if err != nil {
 			r.failStep(step, err)
-			return createdIDs, fmt.Errorf("create container %s: %w", c.Name, err)
+			return createdIDs, err
 		}
 		createdIDs = append(createdIDs, id)
-		if err := container.NewServiceContainerStart().Start(container.ServiceStartModel{Id: id, Tty: c.Tty}); err != nil {
-			r.failStep(step, err)
-			return createdIDs, fmt.Errorf("start container %s: %w", c.Name, err)
-		}
 		r.addStep(step, "ok")
 	}
 	step := "container/runtime"
@@ -184,7 +194,7 @@ func (r *StrategyRunner) waitContainersRunning() error {
 }
 
 func (r *StrategyRunner) promoteContainersToBottle() error {
-	step := "promote/container-to-bottle"
+	step := "container/promote"
 	r.beginStep(step)
 	inspectService := container.NewServiceContainerInspect()
 	inspects := make([]container.ContainerInspectModel, 0, len(r.spec.Source.Containers))
@@ -238,18 +248,23 @@ func (r *StrategyRunner) deleteContainers(ids []string) error {
 	step := "container/delete"
 	r.beginStep(step)
 	var errs []string
-	for i := len(ids) - 1; i >= 0; i-- {
-		id := strings.TrimSpace(ids[i])
-		if id == "" {
-			continue
+	_ = r.captureInternalOutput(step, func() error {
+		for i := len(ids) - 1; i >= 0; i-- {
+			id := strings.TrimSpace(ids[i])
+			if id == "" {
+				continue
+			}
+			r.waitBeforeRaindCommand()
+			if err := container.NewServiceContainerStop().Stop(container.ServiceStopModel{Id: id}); err != nil {
+				errs = append(errs, fmt.Sprintf("stop %s: %v", id, err))
+			}
+			r.waitBeforeRaindCommand()
+			if err := container.NewServiceContainerRemove().Remove(container.ServiceRemoveModel{Id: id}); err != nil {
+				errs = append(errs, fmt.Sprintf("remove %s: %v", id, err))
+			}
 		}
-		if err := container.NewServiceContainerStop().Stop(container.ServiceStopModel{Id: id}); err != nil {
-			errs = append(errs, fmt.Sprintf("stop %s: %v", id, err))
-		}
-		if err := container.NewServiceContainerRemove().Remove(container.ServiceRemoveModel{Id: id}); err != nil {
-			errs = append(errs, fmt.Sprintf("remove %s: %v", id, err))
-		}
-	}
+		return nil
+	})
 	if len(errs) > 0 {
 		err := errors.New(strings.Join(errs, "; "))
 		r.failStep(step, err)
@@ -271,21 +286,30 @@ func (r *StrategyRunner) applyBottle() (string, error) {
 		r.failStep(step, err)
 		return "", fmt.Errorf("read bottle file: %w", err)
 	}
-	created, err := bottlecore.NewServiceBottleCreate().Create(bottlecore.ServiceBottleCreateModel{Yaml: data})
+	var created bottlecore.CreateResponseDataModel
+	err = r.captureInternalOutput(step, func() error {
+		r.waitBeforeRaindCommand()
+		createdBottle, err := bottlecore.NewServiceBottleCreate().Create(bottlecore.ServiceBottleCreateModel{Yaml: data})
+		if err != nil {
+			return fmt.Errorf("bottle create failed: %w", err)
+		}
+		created = createdBottle
+		r.waitBeforeRaindCommand()
+		if err := bottlecore.NewServiceBottleStart().Start(bottlecore.ServiceBottleStartModel{Target: created.BottleName}); err != nil {
+			return fmt.Errorf("bottle start failed: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		r.failStep(step, err)
-		return "", fmt.Errorf("bottle create failed: %w", err)
-	}
-	if err := bottlecore.NewServiceBottleStart().Start(bottlecore.ServiceBottleStartModel{Target: created.BottleName}); err != nil {
-		r.failStep(step, err)
-		return created.BottleName, fmt.Errorf("bottle start failed: %w", err)
+		return created.BottleName, err
 	}
 	r.addStep(step, created.BottleName)
 	return created.BottleName, nil
 }
 
 func (r *StrategyRunner) promoteBottleToResources() error {
-	step := "promote/bottle-to-resources"
+	step := "bottle/promote"
 	r.beginStep(step)
 	draft, err := BuildResourceDraftFromRunningBottleFile(r.bottleOutput(), BottleToResourcesOptions{
 		Namespace:   firstNonEmpty(r.opt.Namespace, r.spec.Metadata.Name),
@@ -321,7 +345,10 @@ func (r *StrategyRunner) deleteBottle(name string) error {
 	}
 	step := "bottle/delete"
 	r.beginStep(step)
-	if err := bottlecore.NewServiceBottleDelete().Delete(bottlecore.ServiceBottleDeleteModel{Target: name}); err != nil {
+	if err := r.captureInternalOutput(step, func() error {
+		r.waitBeforeRaindCommand()
+		return bottlecore.NewServiceBottleDelete().Delete(bottlecore.ServiceBottleDeleteModel{Target: name})
+	}); err != nil {
 		r.failStep(step, err)
 		return err
 	}
@@ -343,9 +370,16 @@ func (r *StrategyRunner) applyResources() (string, error) {
 		r.failStep(step, err)
 		return "", fmt.Errorf("resource apply file %q is not readable: %w", path, err)
 	}
-	if _, err := pod.NewServicePodApply().Apply(pod.ServicePodApplyModel{FilePath: path}); err != nil {
+	if err := r.captureInternalOutput(step, func() error {
+		r.waitBeforeRaindCommand()
+		_, err := pod.NewServicePodApply().Apply(pod.ServicePodApplyModel{FilePath: path})
+		if err != nil {
+			return fmt.Errorf("resource apply failed: %w", err)
+		}
+		return nil
+	}); err != nil {
 		r.failStep(step, err)
-		return path, fmt.Errorf("resource apply failed: %w", err)
+		return path, err
 	}
 	r.addStep(step, path)
 	return path, nil
@@ -358,7 +392,11 @@ func (r *StrategyRunner) deleteResources(path string) error {
 	}
 	step := "resources/delete"
 	r.beginStep(step)
-	if _, err := resourcecore.NewServiceResourceDelete().Delete(resourcecore.ServiceResourceDeleteModel{FilePath: path}); err != nil {
+	if err := r.captureInternalOutput(step, func() error {
+		r.waitBeforeRaindCommand()
+		_, err := resourcecore.NewServiceResourceDelete().Delete(resourcecore.ServiceResourceDeleteModel{FilePath: path})
+		return err
+	}); err != nil {
 		r.failStep(step, err)
 		return err
 	}
@@ -367,15 +405,25 @@ func (r *StrategyRunner) deleteResources(path string) error {
 }
 
 func (r *StrategyRunner) runStageChecks(name string, stage StrategyStage) error {
-	checks := append([]StrategyCheck{}, stage.Checks.Runtime...)
-	checks = append(checks, stage.Checks.Application...)
-	checks = append(checks, stage.Health...)
+	if err := r.runCheckGroup(name, "runtime", stage.Checks.Runtime); err != nil {
+		return err
+	}
+	if err := r.runCheckGroup(name, "application", stage.Checks.Application); err != nil {
+		return err
+	}
+	if err := r.runCheckGroup(name, "health", stage.Health); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *StrategyRunner) runCheckGroup(stageName, group string, checks []StrategyCheck) error {
 	for _, check := range checks {
-		step := name + "/check " + checkName(check)
+		step := stageName + "/checks::" + group + "::" + checkName(check)
 		r.beginStep(step)
 		if err := RunStrategyCheck(check); err != nil {
 			r.failStep(step, err)
-			return fmt.Errorf("%s check %s failed: %w", name, checkName(check), err)
+			return fmt.Errorf("%s %s check %s failed: %w", stageName, group, checkName(check), err)
 		}
 		r.addStep(step, "ok")
 	}
@@ -432,11 +480,10 @@ func (r *StrategyRunner) beginStep(name string) {
 		return
 	}
 	r.opt.Progress(StrategyProgressEvent{
-		Name:   name,
-		Status: "running",
-		Index:  len(r.result.Steps) + 1,
-		Total:  r.totalSteps,
-		Done:   false,
+		Name:  name,
+		Index: len(r.result.Steps) + 1,
+		Total: r.totalSteps,
+		Done:  false,
 	})
 }
 
@@ -460,6 +507,50 @@ func (r *StrategyRunner) addStep(name, status string) {
 			Done:   true,
 		})
 	}
+}
+
+func (r *StrategyRunner) waitBeforeRaindCommand() {
+	time.Sleep(strategyRaindCommandSettleDelay)
+}
+
+func (r *StrategyRunner) captureInternalOutput(step string, fn func() error) error {
+	if r.opt.InternalLog == nil {
+		return fn()
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return fn()
+	}
+
+	originalStdout := os.Stdout
+	originalStderr := os.Stderr
+	os.Stdout = writer
+	os.Stderr = writer
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimRight(scanner.Text(), "\r\n")
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			r.opt.InternalLog(StrategyInternalLogEvent{Step: step, Line: line})
+		}
+	}()
+
+	runErr := fn()
+
+	_ = writer.Close()
+	os.Stdout = originalStdout
+	os.Stderr = originalStderr
+	wg.Wait()
+	_ = reader.Close()
+	r.opt.InternalLog(StrategyInternalLogEvent{Step: step, Done: true})
+	return runErr
 }
 
 func estimateStrategyStepCount(spec StrategySpec, opt StrategyOptions) int {
