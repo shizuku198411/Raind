@@ -531,3 +531,56 @@ func (h *fakeSsmHandler) record(event string) {
 		*h.events = append(*h.events, event)
 	}
 }
+
+func TestSortDeleteManifestDocumentsUsesDependencyAwareOrder(t *testing.T) {
+	docs := []deleteManifestDocument{
+		{Header: Header{Kind: "Namespace"}},
+		{Header: Header{Kind: "PersistentVolumeClaim"}},
+		{Header: Header{Kind: "Secret"}},
+		{Header: Header{Kind: "ConfigMap"}},
+		{Header: Header{Kind: "Service"}},
+		{Header: Header{Kind: "NetworkPolicy"}},
+		{Header: Header{Kind: "Ingress"}},
+		{Header: Header{Kind: "Pod"}},
+		{Header: Header{Kind: "ReplicaSet"}},
+		{Header: Header{Kind: "Deployment"}},
+	}
+
+	ordered := sortDeleteManifestDocuments(docs)
+
+	var kinds []string
+	for _, doc := range ordered {
+		kinds = append(kinds, doc.Header.Kind)
+	}
+	assert.Equal(t, []string{
+		"Deployment",
+		"ReplicaSet",
+		"Pod",
+		"Ingress",
+		"NetworkPolicy",
+		"Service",
+		"ConfigMap",
+		"Secret",
+		"PersistentVolumeClaim",
+		"Namespace",
+	}, kinds)
+}
+
+func TestSortDeleteManifestDocumentsKeepsSameKindOrderStable(t *testing.T) {
+	docs := []deleteManifestDocument{
+		{Header: Header{Kind: "Service", Metadata: struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		}{Name: "web"}}},
+		{Header: Header{Kind: "Service", Metadata: struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		}{Name: "db"}}},
+	}
+
+	ordered := sortDeleteManifestDocuments(docs)
+
+	require.Len(t, ordered, 2)
+	assert.Equal(t, "web", ordered[0].Header.Metadata.Name)
+	assert.Equal(t, "db", ordered[1].Header.Metadata.Name)
+}

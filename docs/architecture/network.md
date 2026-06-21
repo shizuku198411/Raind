@@ -82,10 +82,20 @@ The bridge address acts as the default gateway and resolver address inside conta
 container resolv.conf
 
   nameserver <bridge-gateway-ip>
+  search <network-name>.raind
 
 example:
   nameserver 10.166.1.254
+  search raind0.raind
 ```
+
+Raind DNS proxy treats `*.raind` as a local zone. Container names are resolved dynamically from IPAM and CSM state:
+
+```text
+<container-name>.<network-name>.raind -> container IP
+```
+
+For example, if a container named `db` is attached to `raind0`, containers on the same network can use `db` and the resolver will search `db.raind0.raind`. Local Raind DNS misses return NXDOMAIN instead of being forwarded upstream.
 
 ## Namespace resource and network binding
 

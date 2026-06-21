@@ -87,6 +87,8 @@ type ContainerInspect struct {
 	ImageRepository string         `json:"imageRepository"`
 	ImageReference  string         `json:"imageReference"`
 	Command         []string       `json:"command"`
+	Address         string         `json:"address,omitempty"`
+	Forwards        []ForwardInfo  `json:"forwards,omitempty"`
 	SecurityProfile string         `json:"securityProfile"`
 	LogPath         string         `json:"logPath"`
 	Tty             bool           `json:"tty"`

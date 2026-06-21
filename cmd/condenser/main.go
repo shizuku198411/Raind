@@ -17,6 +17,7 @@ import (
 	enrichedlog "raind/internal/condenser/enriched_log"
 	"raind/internal/condenser/env"
 	"raind/internal/condenser/monitor"
+	"raind/internal/condenser/ulogd"
 	"raind/internal/condenser/utils"
 )
 
@@ -32,6 +33,10 @@ func main() {
 	bootstrap := env.NewBootstrapManager()
 	if err := bootstrap.SetupRuntime(); err != nil {
 		log.Fatal(err)
+	}
+
+	if err := ulogd.NewManager().EnsureRaindNFLOGConfig(); err != nil {
+		log.Printf("ulogd auto-config skipped: %v", err)
 	}
 
 	// == rest api ==

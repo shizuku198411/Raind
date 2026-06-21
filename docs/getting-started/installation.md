@@ -13,7 +13,7 @@ Install them for your environment. On Ubuntu, for example:
 
 ```sh
 sudo apt update
-sudo apt install -y ulogd2 ulogd2-json
+sudo apt install -y ulogd2 ulogd2-json dpkg-dev
 ```
 
 Go can be installed with your preferred toolchain manager, distribution package, or Workshop SDK.
@@ -139,9 +139,36 @@ exit
 ```
 
 
-## (Optional) Configure Log Forwarding
+## Log Forwarding
 
-raind reads raw NFLOG records from ulogd and writes enriched runtime logs under `/var/log/raind`.
+Raind uses NFLOG + ulogd to collect raw packet logs and writes enriched runtime logs under `/var/log/raind`.
+
+On condenser startup, Raind now tries to configure the required ulogd NFLOG stacks automatically. The automatic configuration is conservative:
+
+- Raind only manages its marker blocks in `/etc/ulogd.conf`: `# BEGIN RAIND MANAGED ULOGD PLUGINS` / `# END RAIND MANAGED ULOGD PLUGINS` and `# BEGIN RAIND MANAGED NFLOG CONFIG` / `# END RAIND MANAGED NFLOG CONFIG`.
+- Existing ulogd configuration outside those blocks is not modified.
+- If ulogd is not installed, required plugins are missing, or ulogd cannot be restarted, condenser startup continues and prints a warning.
+- The raw ulogd output remains `/var/log/ulog/raind.jsonl`.
+- The enriched Raind netflow output remains `/var/log/raind/raind_netflow.jsonl`.
+
+You can disable automatic ulogd configuration if you manage ulogd yourself:
+
+```sh
+RAIND_AUTO_CONFIG_ULOGD=false condenser
+```
+
+For systemd installs, add the environment variable to the condenser service override if needed.
+
+Inspect the enriched log output:
+
+```sh
+sudo cat /var/log/raind/raind_netflow.jsonl | jq .
+raind logs netflow --line 20
+```
+
+### Troubleshooting: manual ulogd configuration
+
+If automatic configuration is disabled or skipped, configure ulogd manually.
 
 Create the ulog output directory:
 
@@ -166,32 +193,32 @@ plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_raw2packet_BASE.so"
 plugin="/usr/lib/aarch64-linux-gnu/ulogd/ulogd_output_JSON.so"
 ```
 
-Define the raind NFLOG stacks:
+Define the Raind NFLOG stacks near the other `stack=` declarations, before the input/output instance sections. Using Raind-prefixed instance names avoids collisions with existing ulogd instances:
 
 ```conf
-stack=log10:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
-stack=log11:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
-stack=log12:NFLOG,base:BASE,ifi:IFINDEX,ip2str:IP2STR,print:PRINTPKT,json:JSON
+stack=raind_log10:NFLOG,raind_base:BASE,raind_ifi:IFINDEX,raind_ip2str:IP2STR,raind_print:PRINTPKT,raind_json:JSON
+stack=raind_log11:NFLOG,raind_base:BASE,raind_ifi:IFINDEX,raind_ip2str:IP2STR,raind_print:PRINTPKT,raind_json:JSON
+stack=raind_log12:NFLOG,raind_base:BASE,raind_ifi:IFINDEX,raind_ip2str:IP2STR,raind_print:PRINTPKT,raind_json:JSON
 ```
 
-Add the instances:
+Add the instances after the stack declarations:
 
 ```conf
-[log10]
+[raind_log10]
 group=10
 
-[log11]
+[raind_log11]
 group=11
 
-[log12]
+[raind_log12]
 group=12
 
-[base]
-[ifi]
-[ip2str]
-[print]
+[raind_base]
+[raind_ifi]
+[raind_ip2str]
+[raind_print]
 
-[json]
+[raind_json]
 file="/var/log/ulog/raind.jsonl"
 sync=1
 ```
@@ -201,11 +228,4 @@ Restart ulogd:
 ```sh
 sudo systemctl restart ulogd
 sudo systemctl status ulogd --no-pager
-```
-
-Inspect the enriched log output:
-
-```sh
-sudo cat /var/log/raind/raind_netflow.jsonl | jq .
-raind logs netflow --line 20
 ```

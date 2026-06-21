@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+missing=0
+arch=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+command -v ulogd >/dev/null || missing=1
+
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_inppkt_NFLOG.so" ]; then
+  missing=1
+fi
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_filter_IFINDEX.so" ]; then
+  missing=1
+fi
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_filter_IP2STR.so" ]; then
+  missing=1
+fi
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_filter_PRINTPKT.so" ]; then
+  missing=1
+fi
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_raw2packet_BASE.so" ]; then
+  missing=1
+fi
+if [ ! -f "/usr/lib/${arch}/ulogd/ulogd_output_JSON.so" ]; then
+  missing=1
+fi
+
+if [ "$missing" -eq 0 ]; then
+  workshopctl set-health okay
+else
+  workshopctl set-health waiting "Raind environment is still missing toolchain artifacts"
+fi

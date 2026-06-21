@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	coreConfigMap "raind/internal/condenser/core/configmap"
@@ -18,9 +19,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type deleteManifestDocument struct {
+	RawBytes []byte
+	Header   Header
+}
+
 func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 	var result DeleteResult
-	var pendingNamespaceDeletes []string
+
+	docs, warnings, err := decodeDeleteManifestDocuments(body)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	result.Warnings = append(result.Warnings, warnings...)
+
+	for _, doc := range sortDeleteManifestDocuments(docs) {
+		if err := s.deleteManifestDocument(doc, &result); err != nil {
+			return DeleteResult{}, err
+		}
+	}
+
+	return result, nil
+}
+
+func decodeDeleteManifestDocuments(body []byte) ([]deleteManifestDocument, []Warning, error) {
+	var docs []deleteManifestDocument
+	var warnings []Warning
 
 	dec := yaml.NewDecoder(bytes.NewReader(body))
 	for {
@@ -29,137 +53,178 @@ func (s *ResourceService) Delete(body []byte) (DeleteResult, error) {
 			if err == io.EOF {
 				break
 			}
-			return DeleteResult{}, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+			return nil, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 		}
 		if len(raw) == 0 {
 			continue
 		}
 		rawBytes, err := yaml.Marshal(raw)
 		if err != nil {
-			return DeleteResult{}, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+			return nil, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 		}
 		header, err := decodeHeader(rawBytes)
 		if err != nil {
-			return DeleteResult{}, statusMessage(http.StatusBadRequest, err.Error())
+			return nil, nil, statusMessage(http.StatusBadRequest, err.Error())
 		}
-		result.Warnings = append(result.Warnings, collectHeaderWarnings(header, raw)...)
-
-		switch header.Kind {
-		case "Namespace":
-			manifest, err := decodeNamespaceManifest(rawBytes)
-			if err != nil {
-				return DeleteResult{}, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
-			}
-			pendingNamespaceDeletes = append(pendingNamespaceDeletes, manifest.Metadata.Name)
-
-		case "Service":
-			serviceResults, err := s.deleteService(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.Services = append(result.Services, serviceResults...)
-
-		case "Ingress":
-			ingressResults, err := s.deleteIngress(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.Ingresses = append(result.Ingresses, ingressResults...)
-
-		case "ConfigMap":
-			configMapResults, err := s.deleteConfigMap(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
-
-		case "Secret":
-			secretResults, err := s.deleteSecret(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.Secrets = append(result.Secrets, secretResults...)
-
-		case "NetworkPolicy":
-			networkPolicyResults, err := s.deleteNetworkPolicy(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResults...)
-
-		case "PersistentVolumeClaim":
-			pvcResults, err := s.deletePVC(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.PersistentVolumeClaims = append(result.PersistentVolumeClaims, pvcResults...)
-
-		case "Deployment":
-			deployResults, err := s.deleteDeployment(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.Deployments = append(result.Deployments, deployResults...)
-
-		case "ReplicaSet":
-			rsResults, err := s.deleteReplicaSet(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.ReplicaSets = append(result.ReplicaSets, rsResults...)
-
-		case "Pod":
-			podResults, err := s.deletePod(rawBytes)
-			if err != nil {
-				if appendDeleteNotFoundWarning(&result, header, err) {
-					continue
-				}
-				return DeleteResult{}, err
-			}
-			result.Pods = append(result.Pods, podResults...)
-
-		default:
-			return DeleteResult{}, statusError(http.StatusBadRequest, "unsupported kind: %s", header.Kind)
-		}
+		warnings = append(warnings, collectHeaderWarnings(header, raw)...)
+		docs = append(docs, deleteManifestDocument{RawBytes: rawBytes, Header: header})
 	}
 
-	for _, name := range pendingNamespaceDeletes {
-		if _, err := s.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: name}); err != nil {
-			header := Header{Kind: "Namespace"}
-			header.Metadata.Name = name
-			if appendDeleteNotFoundWarning(&result, header, err) {
-				continue
-			}
-			return DeleteResult{}, statusError(http.StatusInternalServerError, "namespace remove failed: %v", err)
+	return docs, warnings, nil
+}
+
+func sortDeleteManifestDocuments(docs []deleteManifestDocument) []deleteManifestDocument {
+	ordered := append([]deleteManifestDocument(nil), docs...)
+	stableSortDeleteDocuments(ordered)
+	return ordered
+}
+
+func stableSortDeleteDocuments(docs []deleteManifestDocument) {
+	sort.SliceStable(docs, func(i, j int) bool {
+		return deleteKindPriority(docs[i].Header.Kind) < deleteKindPriority(docs[j].Header.Kind)
+	})
+}
+
+func deleteKindPriority(kind string) int {
+	switch kind {
+	case "Deployment":
+		return 10
+	case "ReplicaSet":
+		return 20
+	case "Pod":
+		return 30
+	case "Ingress":
+		return 40
+	case "NetworkPolicy":
+		return 50
+	case "Service":
+		return 60
+	case "ConfigMap":
+		return 70
+	case "Secret":
+		return 80
+	case "PersistentVolumeClaim":
+		return 90
+	case "Namespace":
+		return 1000
+	default:
+		return 500
+	}
+}
+
+func (s *ResourceService) deleteManifestDocument(doc deleteManifestDocument, result *DeleteResult) error {
+	rawBytes := doc.RawBytes
+	header := doc.Header
+
+	switch header.Kind {
+	case "Namespace":
+		manifest, err := decodeNamespaceManifest(rawBytes)
+		if err != nil {
+			return statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 		}
-		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: name})
+		if _, err := s.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: manifest.Metadata.Name}); err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return statusError(http.StatusInternalServerError, "namespace remove failed: %v", err)
+		}
+		result.Namespaces = append(result.Namespaces, DeleteNamespaceResult{Name: manifest.Metadata.Name})
+
+	case "Service":
+		serviceResults, err := s.deleteService(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.Services = append(result.Services, serviceResults...)
+
+	case "Ingress":
+		ingressResults, err := s.deleteIngress(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.Ingresses = append(result.Ingresses, ingressResults...)
+
+	case "ConfigMap":
+		configMapResults, err := s.deleteConfigMap(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.ConfigMaps = append(result.ConfigMaps, configMapResults...)
+
+	case "Secret":
+		secretResults, err := s.deleteSecret(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.Secrets = append(result.Secrets, secretResults...)
+
+	case "NetworkPolicy":
+		networkPolicyResults, err := s.deleteNetworkPolicy(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.NetworkPolicies = append(result.NetworkPolicies, networkPolicyResults...)
+
+	case "PersistentVolumeClaim":
+		pvcResults, err := s.deletePVC(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.PersistentVolumeClaims = append(result.PersistentVolumeClaims, pvcResults...)
+
+	case "Deployment":
+		deployResults, err := s.deleteDeployment(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.Deployments = append(result.Deployments, deployResults...)
+
+	case "ReplicaSet":
+		rsResults, err := s.deleteReplicaSet(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.ReplicaSets = append(result.ReplicaSets, rsResults...)
+
+	case "Pod":
+		podResults, err := s.deletePod(rawBytes)
+		if err != nil {
+			if appendDeleteNotFoundWarning(result, header, err) {
+				return nil
+			}
+			return err
+		}
+		result.Pods = append(result.Pods, podResults...)
+
+	default:
+		return statusError(http.StatusBadRequest, "unsupported kind: %s", header.Kind)
 	}
 
-	return result, nil
+	return nil
 }
 
 func appendDeleteNotFoundWarning(result *DeleteResult, header Header, err error) bool {

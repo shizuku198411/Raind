@@ -57,10 +57,10 @@ func (s *ServicePolicyList) List(param ListRequestModel) error {
 	return nil
 }
 
-func (s *ServicePolicyList) requestGetList(chainName string, chainFlag bool) error {
+func (s *ServicePolicyList) Get(chainName string) (ListDataModel, error) {
 	httpClient, err := httpclient.NewHttpClient()
 	if err != nil {
-		return err
+		return ListDataModel{}, err
 	}
 	httpClient.NewRequest(
 		http.MethodGet,
@@ -69,7 +69,7 @@ func (s *ServicePolicyList) requestGetList(chainName string, chainFlag bool) err
 	)
 	resp, err := httpClient.Client.Do(httpClient.Request)
 	if err != nil {
-		return fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
+		return ListDataModel{}, fmt.Errorf("Cannot connect to the Raind daemon. Is the raind daemon running?")
 	}
 	defer resp.Body.Close()
 
@@ -78,16 +78,25 @@ func (s *ServicePolicyList) requestGetList(chainName string, chainFlag bool) err
 	if !httpClient.IsStatusOk(resp) {
 		decodeErr := json.NewDecoder(resp.Body).Decode(&respModel)
 		if decodeErr != nil {
-			return fmt.Errorf("decode response: %w", decodeErr)
+			return ListDataModel{}, fmt.Errorf("decode response: %w", decodeErr)
 		}
-		return fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
+		return ListDataModel{}, fmt.Errorf("unexpected status: %s: %s", resp.Status, respModel.Message)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respModel); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return ListDataModel{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	s.printPolicyList(chainName, respModel.Data.Mode, respModel.Data.Policies, chainFlag)
+	return respModel.Data, nil
+}
+
+func (s *ServicePolicyList) requestGetList(chainName string, chainFlag bool) error {
+	data, err := s.Get(chainName)
+	if err != nil {
+		return err
+	}
+
+	s.printPolicyList(chainName, data.Mode, data.Policies, chainFlag)
 
 	return nil
 }

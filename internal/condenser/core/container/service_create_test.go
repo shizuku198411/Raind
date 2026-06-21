@@ -3,6 +3,8 @@ package container
 import (
 	"testing"
 
+	"raind/internal/condenser/store/psm"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +64,29 @@ func TestContainerServiceBuildCommandQuotesArguments(t *testing.T) {
 	got := service.buildCommand([]string{"/bin/sh", "-c"}, []string{"echo hello"})
 
 	assert.Equal(t, "/bin/sh -c 'echo hello'", got)
+}
+
+func TestContainerServiceResolvSearchDomainsForPlainContainer(t *testing.T) {
+	service := &ContainerService{}
+
+	got := service.resolvSearchDomains("raind0", "")
+
+	assert.Equal(t, []string{"raind0.raind"}, got)
+}
+
+func TestContainerServiceResolvSearchDomainsForPodContainer(t *testing.T) {
+	service := &ContainerService{
+		psmHandler: &fakePsmHandler{pods: map[string]psm.PodInfo{
+			"pod-1": {PodId: "pod-1", Namespace: "default"},
+		}},
+	}
+
+	got := service.resolvSearchDomains("raind0", "pod-1")
+
+	assert.Equal(t, []string{
+		"default.svc.cluster.local",
+		"svc.cluster.local",
+		"cluster.local",
+		"raind0.raind",
+	}, got)
 }

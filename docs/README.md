@@ -18,8 +18,9 @@ This documentation is organized by reader intent:
 2. [Installation](getting-started/installation.md)
 3. [Quickstart](getting-started/quickstart.md)
 4. [Container workflows](guides/containers.md)
-5. [Rootless containers](guides/rootless-containers.md)
-6. [Rootless implementation](architecture/rootless.md)
+5. [Promote workflow](guides/promote.md)
+6. [Rootless containers](guides/rootless-containers.md)
+7. [Rootless implementation](architecture/rootless.md)
 
 ## Current scope
 

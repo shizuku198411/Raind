@@ -14,6 +14,7 @@ docs/
     containers.md                   day-to-day container workflows
     rootless-containers.md          rootless user guide
     dockerfile-build.md             image build guide
+    promote.md                      container-to-Dripfile promotion workflow
   architecture/
     runtime-stack.md                raind/condenser/droplet overview
     container.md                    container lifecycle internals

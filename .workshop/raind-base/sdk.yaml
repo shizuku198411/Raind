@@ -1,0 +1,7 @@
+name: raind-base
+version: "0.1.0"
+summary: Raind development toolchain
+description: |
+  Provides the toolchain and runtime dependencies needed to build,
+  test, and run Raind inside a Workshop environment.
+license: MIT

@@ -7,8 +7,10 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"raind/internal/condenser/store/bsm"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
+	"raind/internal/condenser/store/ssm"
 	"raind/internal/condenser/utils"
 	"strconv"
 	"strings"
@@ -94,6 +96,8 @@ type DnsProxy struct {
 
 	csmHandler  csm.CsmHandler
 	ipamHandler ipam.IpamHandler
+	bsmHandler  bsm.BsmHandler
+	ssmHandler  ssm.SsmHandler
 
 	logger *DnsLogger
 }
@@ -117,6 +121,8 @@ func NewDnsProxy(upstreams []string, timeout time.Duration, cache *DnsCache) *Dn
 		},
 		csmHandler:  csm.NewCsmManager(csm.NewCsmStore(utils.CsmStorePath)),
 		ipamHandler: ipam.NewIpamManager(ipam.NewIpamStore(utils.IpamStorePath)),
+		bsmHandler:  bsm.NewBsmManager(bsm.NewBsmStore(utils.BsmStorePath)),
+		ssmHandler:  ssm.NewSsmManager(ssm.NewSsmStore(utils.SsmStorePath)),
 
 		logger: dnsLogger,
 	}
@@ -186,6 +192,12 @@ func (f *DnsProxy) ServeDns(w dns.ResponseWriter, r *dns.Msg) {
 
 	if r == nil || len(r.Question) == 0 {
 		fail(dns.RcodeFormatError)
+		return
+	}
+
+	if msg, ok := f.resolveRaindLocal(r); ok {
+		_ = w.WriteMsg(msg)
+		f.logLine(now, network, clientIp, clientPort, r, msg, "raind-local", 0, "ok", "local-zone", cacheHit)
 		return
 	}
 

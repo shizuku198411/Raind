@@ -65,6 +65,30 @@ Common create and run flags:
 --rm
 ```
 
+## Promote
+
+Generate reviewable drafts from existing runtime state:
+
+```sh
+raind promote container <container-id-or-name> --to bottle -o bottle.yaml
+raind promote container <container-a> <container-b> --to bottle -o bottle.yaml
+raind promote container <container-id-or-name> --to bottle --stdout
+raind promote container <container-id-or-name> --to bottle -o bottle.yaml --force
+```
+
+Useful flags:
+
+```sh
+--service-name <name>
+--bottle-name <name>
+--include-image-env
+-o, --output <path>
+--stdout
+--force
+```
+
+The generated bottle.yaml is a draft. Secret-like environment variables are redacted into TODO comments. When multiple containers are promoted, service names are derived from container names and simple service-name references in environment values are converted into `depends_on` entries while keeping the environment values unchanged.
+
 ## Networks
 
 ```sh

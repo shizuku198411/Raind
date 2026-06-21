@@ -22,6 +22,19 @@ func (s *ContainerService) InspectContainer(target string) (ContainerInspect, er
 		securityProfile = "default"
 	}
 
+	address, networkState, err := s.ipamHandler.GetNetworkInfoById(containerId)
+	if err != nil {
+		address = ""
+	}
+	forwards := make([]ForwardInfo, 0, len(networkState.Forwards))
+	for _, f := range networkState.Forwards {
+		forwards = append(forwards, ForwardInfo{
+			HostPort:      f.HostPort,
+			ContainerPort: f.ContainerPort,
+			Protocol:      f.Protocol,
+		})
+	}
+
 	return ContainerInspect{
 		ContainerId:     info.ContainerId,
 		Name:            info.ContainerName,
@@ -32,6 +45,8 @@ func (s *ContainerService) InspectContainer(target string) (ContainerInspect, er
 		ImageRepository: info.Repository,
 		ImageReference:  info.Reference,
 		Command:         info.Command,
+		Address:         address,
+		Forwards:        forwards,
 		SecurityProfile: securityProfile,
 		LogPath:         info.LogPath,
 		Tty:             info.Tty,

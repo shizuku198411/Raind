@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A local deployment validation runtime for containers and Kubernetes-style workloads.</strong>
+  <strong>Promote what actually ran: containers → compose → Kubernetes-style resources in one local runtime.</strong>
 </p>
 
 <p align="center">
@@ -13,81 +13,297 @@
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange.svg">
   <img alt="Go" src="https://img.shields.io/badge/go-1.25%2B-00ADD8.svg">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux-lightgrey.svg">
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-OCI--style-5C6BC0.svg">
-  <img alt="Kubernetes-style" src="https://img.shields.io/badge/resources-Kubernetes--style-326CE5.svg">
+  <img alt="Promote" src="https://img.shields.io/badge/workflow-runtime--promote-6A5ACD.svg">
+  <img alt="Resources" src="https://img.shields.io/badge/resources-Kubernetes--style-326CE5.svg">
 </p>
 
 > [!WARNING]
-> Raind is under active development. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It supports a growing subset of Kubernetes-style resources for local deployment testing.
+> Raind is experimental. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It focuses on a growing local subset that is useful for validating application deployment shape before a real cluster.
 
-Raind is an experimental runtime stack that runs **single containers**, **local multi-container groups**, and **Kubernetes-style resources** through one runtime path.
+Raind is a **runtime-promoted deployment workflow**.
 
-It is designed for local pre-deployment checks where you want to validate how an application behaves with containers, Pods, Services, Ingress, PVCs, Secrets, and NetworkPolicy-like traffic control, without starting a full Kubernetes cluster.
-
-## Demo
-
-<!-- TODO: Place GIF here.
-Recommended file: ./assets/demo/raind-quickstart.gif
-
-Suggested content:
-1. Start Raind.
-2. Run a single nginx container.
-3. Apply a Kubernetes-style Deployment + Service.
-4. Show `raind resource get deploy`, `raind resource get service`.
-5. Access the service locally.
--->
-
-![Raind quickstart demo](./assets/demo/raind-quickstart.gif)
+Instead of translating configuration files in isolation, Raind lets you start with something real: a running container, observed runtime state, opened ports, environment, service relationships, traffic policy, and netflow. From there, Raind can generate the next reviewable draft:
 
 ## Why Raind?
 
-Local container workflows often jump between different tools and mental models:
+Application deployment usually moves through several disconnected stages:
 
-- one tool for single containers,
-- another model for Pod-style workloads,
-- another layer for Services and Ingress,
-- another place to inspect traffic and policy.
+```text
+container run
+  → compose.yaml
+  → kind / minikube / Kubernetes manifests
+  → cluster validation
+```
 
-Raind tries to keep those concerns in one runtime.
+That workflow often turns into copy-and-edit drift. Ports, secrets, service names, volumes, and network rules are repeated across files, and generated manifests often do not know whether the application ever worked.
 
-With Raind, you can:
+Raind takes a different path:
 
-- run Docker-like single containers,
-- apply Kubernetes-style manifests,
-- run Pod-like workloads through an infra-container model,
-- reconcile ReplicaSet and Deployment resources,
-- route traffic with Service and Ingress resources,
-- mount PVC-backed local volumes,
-- inject ConfigMap and Secret values,
-- generate runtime security policy from NetworkPolicy resources,
-- inspect observed network flows from the runtime itself.
+```text
+actual run
+  → observed runtime state
+  → reviewable deployment draft
+```
 
-Raind is useful when you want a lightweight local runtime for checking deployment behavior before moving to Docker, Compose, Kubernetes, or a real cluster.
+Raind gives you one local runtime for:
 
-## What Raind is not
+- single-container application tests(Docker-style),
+- multi-service Bottle stacks(Compose-style),
+- Deployments, Services, Ingress, PVCs, Secrets, ConfigMaps, and NetworkPolicies(Kubernetes-style),
+- runtime security policy and netflow logs,
+- promotion from one stage to the next.
 
-Raind is intentionally not positioned as a full replacement for Docker, containerd, kind, minikube, or Kubernetes.
+## Promote workflow
 
-| Tool | Primary role |
-|---|---|
-| Docker / Podman | Run and manage containers |
-| kind / minikube | Run a real local Kubernetes cluster |
-| Kubernetes | Production-grade orchestration platform |
-| Raind | Local runtime for container and Kubernetes-style deployment validation |
+Raind's signature workflow is **Promote**.
 
-Raind focuses on the space between single-container testing and full-cluster testing.
+Promote does not try to generate perfect production configuration. It generates useful, reviewable drafts from known runtime state and tells you what still needs review.
 
-## Features
+### 1. Test real containers (Docker-style)
 
-### Runtime foundation
+Run the application the simplest way first.
 
-- Low-level OCI-style runtime layer
-- Container lifecycle: create, start, exec, stop, kill, remove
-- Namespace, mount, cgroup, capability, seccomp, and AppArmor-related runtime paths
-- Rootful and rootless-oriented runtime work
-- Runtime state managed through the Raind stack
+```sh
+raind container run --name mysql \
+  -e MYSQL_ROOT_PASSWORD=root-password \
+  -e MYSQL_DATABASE=wordpress-db \
+  -e MYSQL_USER=wordpress-user \
+  -e MYSQL_PASSWORD=wordpress-password \
+  mysql:8.0
 
-### Container workflows
+raind container run --name wordpress \
+  -e WORDPRESS_DB_HOST=mysql \
+  -e WORDPRESS_DB_NAME=wordpress-db \
+  -e WORDPRESS_DB_USER=wordpress-user \
+  -e WORDPRESS_DB_PASSWORD=wordpress-password \
+  -p 9850:80 \
+  wordpress:latest
+```
+
+Add the traffic relationship that actually worked.
+
+```sh
+raind security policy add --type ew \
+  -s wordpress \
+  -d mysql \
+  -p tcp --dport 3306 \
+  --comment "wordpress -> db 3306/tcp"
+
+raind security policy commit
+```
+
+### 2. Promote containers to a Bottle (Compose-style)
+
+`Bottle` is a multi-container application unit like Docker Compose.
+
+Once the containers work, generate a Bottle draft from the running containers.
+
+```sh
+raind promote container wordpress mysql \
+  --to bottle \
+  --bottle-name wordpress \
+  -o bottle/bottle.yaml
+```
+
+Raind preserves runtime intent such as images, commands, ports, dependencies, and security policy. Secret-like environment values are redacted into review comments.
+
+```yaml
+bottle:
+  name: "wordpress"
+
+services:
+  mysql:
+    image: "mysql:8.0"
+    command:
+      - "docker-entrypoint.sh"
+      - "mysqld"
+    # TODO: secret candidate redacted from container env: MYSQL_PASSWORD
+    env:
+      - "MYSQL_DATABASE=wordpress-db"
+      - "MYSQL_USER=wordpress-user"
+
+  wordpress:
+    image: "wordpress:latest"
+    command:
+      - "docker-entrypoint.sh"
+      - "apache2-foreground"
+    env:
+      - "WORDPRESS_DB_HOST=mysql"
+      - "WORDPRESS_DB_NAME=wordpress-db"
+      - "WORDPRESS_DB_USER=wordpress-user"
+    ports:
+      - "9850:80"
+    depends_on:
+      - "mysql"
+
+policies:
+  - type: "east-west"
+    source: "wordpress"
+    destination: "mysql"
+    protocol: "tcp"
+    dest_port: 3306
+```
+
+The promotion also writes `REVIEW_BOTTLE.md`, because the generated Bottlefile is a draft, not a claim of production readiness.
+
+### 3. Run the Bottle
+
+A Bottle is a local multi-service application shape.
+
+```sh
+cd bottle
+raind bottle up
+raind bottle show wordpress
+```
+
+`raind bottle up` is a convenience wrapper for creating the Bottle from `bottle.yaml` or `compose.yaml` and starting it.
+
+### 4. Promote the running Bottle to resources (Kubernetes-style)
+
+Raind promotes Bottles only after the Bottle is running. That keeps Promote runtime-aware instead of becoming a static file converter.
+
+```sh
+raind promote bottle bottle.yaml \
+  --to resources \
+  -o manifests \
+  --ingress-host wordpress.raind.local
+```
+
+Generated output is ordered and reviewable:
+
+```text
+manifests/
+  00-namespace.yaml
+  01-configmap.yaml
+  02-secret.example.yaml
+  04-deployments.yaml
+  05-services.yaml
+  06-ingress.yaml
+  07-networkpolicies.yaml
+  REVIEW.md
+  all.yaml
+```
+
+Example generated resource shape:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "wordpress-config"
+  namespace: "wordpress"
+data:
+  WORDPRESS_DB_HOST: "mysql.wordpress.svc.cluster.local"
+  WORDPRESS_DB_NAME: "wordpress-db"
+  WORDPRESS_DB_USER: "wordpress-user"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "wordpress"
+  namespace: "wordpress"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "wordpress"
+  template:
+    metadata:
+      labels:
+        app: "wordpress"
+    spec:
+      containers:
+        - name: "wordpress"
+          image: "wordpress:latest"
+          command:
+            - "docker-entrypoint.sh"
+            - "apache2-foreground"
+          envFrom:
+            - configMapRef:
+                name: "wordpress-config"
+            - secretRef:
+                name: "wordpress-secret"
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "mysql"
+  namespace: "wordpress"
+spec:
+  type: ClusterIP
+  selector:
+    app: "mysql"
+  ports:
+    - port: 3306
+      targetPort: 3306
+      protocol: "TCP"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-wordpress-to-mysql"
+  namespace: "wordpress"
+spec:
+  podSelector:
+    matchLabels:
+      app: "wordpress"
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: "mysql"
+      ports:
+        - protocol: "TCP"
+          port: 3306
+```
+
+Raind maps service references into Kubernetes-style ClusterIP DNS names, generates internal Services from observed/policy-based relationships, and keeps secret values in example Secret manifests with placeholders.
+
+### 5. Apply and validate locally
+
+```sh
+raind resource apply -f manifests/all.yaml
+
+raind resource get -n wordpress deploy
+raind resource get -n wordpress service
+raind resource get -n wordpress ingress
+raind security policy ls --type ew
+raind logs netflow
+```
+
+At this point the same application has moved through three local validation shapes:
+
+```text
+containers worked (Docker-style)
+  → multi containers service worked (Compose-style)
+  → resources worked (Kubernetes-style)
+```
+
+That is the Raind loop.
+
+## Design principles
+
+### Runtime-aware, not static translation
+
+Promote starts from things Raind has actually run or observed.
+
+### Reviewable, not magical
+
+Generated files are drafts. Raind writes review reports and TODOs where production decisions are still required.
+
+### Preserve intent
+
+Names, images, commands, ports, service boundaries, and traffic relationships are kept whenever possible.
+
+### Avoid leaking secrets
+
+Secret-like environment variables are redacted from Bottle promotion and emitted as placeholder Secret examples for resource promotion.
+
+## Core capabilities
+
+### Containers
 
 ```sh
 raind container run --name web -p 8080:80 nginx:latest
@@ -97,124 +313,94 @@ raind container stop web
 raind container rm web
 ```
 
-### Kubernetes-style resources
-
-Raind supports a growing subset of Kubernetes-style resources.  
-
-Example manifest:
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: web
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web-deploy
-  namespace: web
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: web-server
-  template:
-    metadata:
-      labels:
-        app: web-server
-    spec:
-      containers:
-        - name: nginx-web
-          image: nginx:latest
-          ports:
-            - containerPort: 80
-```
-
-Typical workflow:
+### Bottles
 
 ```sh
-raind resource apply -f app.yaml
+raind bottle up
+raind bottle show wordpress
+raind bottle down
+```
 
-raind resource get ns
+Default file discovery:
+
+1. `bottle.yaml`
+2. `compose.yaml`
+3. explicit `-f <path>`
+
+### Kubernetes-style resources
+
+Raind supports a growing local subset including:
+
+- Namespace
+- Pod
+- Deployment
+- ReplicaSet
+- Service
+- Ingress
+- ConfigMap
+- Secret
+- PersistentVolumeClaim
+- NetworkPolicy
+
+```sh
+raind resource apply -f manifests/all.yaml
 raind resource get pod
 raind resource get deploy
 raind resource get service
-raind resource get ingress
+raind resource delete -f manifests/all.yaml
 ```
 
 ### Network visibility and policy
 
-Raind connects Kubernetes-style NetworkPolicy resources to runtime-managed security policy.
+Raind connects NetworkPolicy-style manifests and Bottle policies to runtime-managed east-west security policy.
 
 ```sh
-raind resource apply -f networkpolicy.yaml
-
-raind security policy ls
+raind security policy ls --type ew
 raind logs netflow
 ```
 
-Example output:
+Example:
 
 ```text
 POLICY TYPE : East-West
 CURRENT MODE: deny_by_default
 
-FLAG  SRC CONTAINER       DST CONTAINER   PROTOCOL  DST PORT  ACTION
-[*]   nextcloud-01kvfymx  mysql-01kvfyms  tcp       3306      ALLOW
+FLAG  SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION
+[*]   wordpress      mysql          tcp       3306      ALLOW
   >> DENY ALL EAST-WEST TRAFFIC <<
 ```
 
-```text
-ALLOW   FROM: nextcloud-01kvfymx => TO: mysql-01kvfyms {TCP/3306}
-```
+## What Raind is not
 
-## Quickstart
+Raind is not a replacement for Docker, Podman, kind, minikube, or Kubernetes.
 
-See the full quickstart guide:
+| Tool | Primary role |
+|---|---|
+| Docker / Podman | General container engine |
+| kind / minikube | Run a real Kubernetes cluster locally |
+| Kubernetes | Production-grade orchestration platform |
+| Raind | Runtime-promoted local deployment validation |
 
-- [Installation](./docs/getting-started/installation.md)
-- [Quickstart](./docs/getting-started/quickstart.md)
-- [Testing](./docs/getting-started/testing.md)
+Raind is for the space where you want to know:
 
-Minimal example:
+- Did the container actually run?
+- Did the multi-service stack actually communicate?
+- What should the next deployment draft look like?
+- Can the Kubernetes-style shape be validated locally before a real cluster?
 
-```sh
-# Run a single container
-raind container run --name web -p 8080:80 nginx:latest
-raind container ls
+## Demo
 
-# Apply Kubernetes-style resources
-raind resource apply -f examples/quickstart/web.yaml
-raind resource get deploy
-raind resource get service
-```
+Raind Promote is the main story, but the same runtime can also be used for normal development checks.  
+You can run containers, start Bottle stacks, and apply Kubernetes-style resources directly, then promote the working runtime state when the application shape is ready.
 
-## Architecture
-
-Raind is split into three main layers.
-
-### `droplet`
-
-`droplet` is the low-level OCI-style container runtime layer.
-
-It handles container lifecycle and low-level Linux runtime operations such as namespaces, mounts, capabilities, cgroups, hooks, and runtime state.
-
-### `condenser`
-
-`condenser` is the high-level runtime controller layer.
-
-It manages images, containers, resources, networking, security policy, logs, and state, then delegates low-level execution to `droplet`.
-
-### `raind`
-
-`raind` is the user-facing CLI.
-
-It exposes container, image, bottle, resource, policy, network, and log workflows through a single command surface.
+![Raind quickstart demo](./assets/demo/raind-quickstart.gif)
 
 ## Documentation
 
 - [Documentation index](./docs/)
+- [Promote workflow](./docs/guides/promote.md)
+- [Bottles](./docs/guides/bottles.md)
+- [Containers](./docs/guides/containers.md)
 - [Architecture](./docs/architecture/)
 - [Resource reference](./docs/resources/)
 - [CLI reference](./docs/reference/cli.md)
@@ -228,32 +414,13 @@ Raind is experimental and evolving quickly.
 
 Current focus areas include:
 
-- expanding Kubernetes-style resource support,
-- improving manifest validation and unsupported-field warnings,
-- strengthening reconciliation behavior,
-- improving Service and Ingress behavior,
-- improving NetworkPolicy reconciliation,
-- improving runtime observability and troubleshooting output,
-- hardening state management and security-sensitive paths.
+- strengthening the Promote workflow,
+- expanding the Kubernetes-style resource subset,
+- improving validation and review reports,
+- improving Service, DNS, and Ingress behavior,
+- improving NetworkPolicy reconciliation and netflow visibility,
+- hardening runtime state management and security-sensitive paths.
 
 ## Contributing
 
-Contributions, bug reports, compatibility reports, and runtime investigations are welcome.
-
-Useful starting points:
-
-- [CONTRIBUTING.md](./CONTRIBUTING.md)
-- [SUPPORT.md](./SUPPORT.md)
-- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
-
-Good issues include:
-
-- adding small manifest examples,
-- improving resource documentation,
-- improving unsupported-field warnings,
-- adding tests for controllers and resource behavior,
-- reporting manifests that work on Kubernetes but not yet on Raind.
-
-## License
-
-Raind is licensed under the [MIT License](./LICENSE).
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md), [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md), and [SECURITY.md](./SECURITY.md).

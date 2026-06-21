@@ -24,6 +24,27 @@ func TestNewAppContainsExpectedTopLevelCommands(t *testing.T) {
 	assert.False(t, names["policy"], "policy command should be nested under security")
 }
 
+func TestBottleContainsLifecycleWrapperCommands(t *testing.T) {
+	app := NewApp()
+	var bottleCmd *cli.Command
+	for _, cmd := range app.Commands {
+		if cmd.Name == "bottle" {
+			bottleCmd = cmd
+			break
+		}
+	}
+	require.NotNil(t, bottleCmd)
+
+	names := map[string]bool{}
+	for _, cmd := range bottleCmd.Subcommands {
+		names[cmd.Name] = true
+	}
+
+	for _, name := range []string{"create", "start", "stop", "rm", "up", "down"} {
+		assert.True(t, names[name], "missing bottle subcommand %s", name)
+	}
+}
+
 func TestSecurityContainsPolicyAndProfileCommands(t *testing.T) {
 	app := NewApp()
 	var securityCmd *cli.Command
