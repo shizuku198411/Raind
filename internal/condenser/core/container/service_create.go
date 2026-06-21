@@ -164,7 +164,7 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 	rollbackFlag.DirectoryEnv = true
 
 	// 8. setup etc files
-	if err := s.setupEtcFiles(containerId, containerAddr, containerGateway, bridgeInterface); err != nil {
+	if err := s.setupEtcFiles(containerId, containerAddr, containerGateway, bridgeInterface, createParameter.PodId); err != nil {
 		return "", fmt.Errorf("setup etc files failed: %w", err)
 	}
 
@@ -416,7 +416,7 @@ func rootlessRuntimeHostRootID(createParameter ServiceCreateModel) (uid int, gid
 	return uidBase, gidBase
 }
 
-func (s *ContainerService) setupEtcFiles(containerId string, containerAddr string, containerGateway string, networkName string) error {
+func (s *ContainerService) setupEtcFiles(containerId string, containerAddr string, containerGateway string, networkName string, podId string) error {
 	etcDir := filepath.Join(utils.ContainerRootDir, containerId, "etc")
 
 	// /etc/hosts
@@ -439,14 +439,46 @@ func (s *ContainerService) setupEtcFiles(containerId string, containerAddr strin
 	}
 	resolvPath := filepath.Join(etcDir, "resolv.conf")
 	resolvData := "nameserver " + containerGateway + "\n"
-	if networkName != "" {
-		resolvData += "search " + networkName + ".raind\n"
+	searchDomains := s.resolvSearchDomains(networkName, podId)
+	if len(searchDomains) > 0 {
+		resolvData += "search " + strings.Join(searchDomains, " ") + "\n"
 	}
 	if err := s.filesystemHandler.WriteFile(resolvPath, []byte(resolvData), 0o644); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *ContainerService) resolvSearchDomains(networkName string, podId string) []string {
+	seen := map[string]struct{}{}
+	domains := []string{}
+	add := func(domain string) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			return
+		}
+		if _, ok := seen[domain]; ok {
+			return
+		}
+		seen[domain] = struct{}{}
+		domains = append(domains, domain)
+	}
+
+	if podId != "" && s != nil && s.psmHandler != nil {
+		if podInfo, err := s.psmHandler.GetPodById(podId); err == nil {
+			namespace := strings.TrimSpace(podInfo.Namespace)
+			if namespace != "" {
+				add(namespace + ".svc.cluster.local")
+			}
+			add("svc.cluster.local")
+			add("cluster.local")
+		}
+	}
+	if networkName != "" {
+		add(networkName + ".raind")
+	}
+	return domains
 }
 
 func (s *ContainerService) setupCgroupSubtree(containerId string) error {

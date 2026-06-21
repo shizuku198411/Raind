@@ -10,6 +10,7 @@ import (
 	"raind/internal/condenser/store/bsm"
 	"raind/internal/condenser/store/csm"
 	"raind/internal/condenser/store/ipam"
+	"raind/internal/condenser/store/ssm"
 
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,106 @@ func TestParseRaindLocalNameRejectsInvalidLabels(t *testing.T) {
 			assert.False(t, ok)
 		})
 	}
+}
+
+func TestParseClusterServiceName(t *testing.T) {
+	serviceName, namespace, ok := parseClusterServiceName("db.default.svc.cluster.local.")
+
+	require.True(t, ok)
+	assert.Equal(t, "db", serviceName)
+	assert.Equal(t, "default", namespace)
+
+	serviceName, namespace, ok = parseClusterServiceName("api.demo.svc.")
+	require.True(t, ok)
+	assert.Equal(t, "api", serviceName)
+	assert.Equal(t, "demo", namespace)
+}
+
+func TestParseClusterServiceNameRejectsInvalidLabels(t *testing.T) {
+	for _, name := range []string{
+		"db.default.cluster.local.",
+		"db.svc.cluster.local.",
+		"db.default.svc.example.local.",
+		"db.my_namespace.svc.cluster.local.",
+		"db.-default.svc.cluster.local.",
+		"db.default-.svc.cluster.local.",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, ok := parseClusterServiceName(name)
+			assert.False(t, ok)
+		})
+	}
+}
+
+func TestResolveClusterServiceReturnsClusterIPARecord(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("db.default.svc.cluster.local.", dns.TypeA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeSuccess, resp.Rcode)
+	require.Len(t, resp.Answer, 1)
+	a, ok := resp.Answer[0].(*dns.A)
+	require.True(t, ok)
+	assert.Equal(t, "10.166.255.10", a.A.String())
+	assert.Equal(t, uint32(clusterServiceDNSTTL), a.Hdr.Ttl)
+}
+
+func TestResolveClusterServiceReturnsClusterIPForShortSvcDomain(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("db.default.svc.", dns.TypeA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeSuccess, resp.Rcode)
+	require.Len(t, resp.Answer, 1)
+	a, ok := resp.Answer[0].(*dns.A)
+	require.True(t, ok)
+	assert.Equal(t, "10.166.255.10", a.A.String())
+}
+
+func TestResolveClusterServiceReturnsNXDOMAINForMissingService(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("missing.default.svc.cluster.local.", dns.TypeA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeNameError, resp.Rcode)
+	assert.Empty(t, resp.Answer)
+}
+
+func TestResolveClusterServiceReturnsNXDOMAINForNonClusterIPService(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("node.default.svc.cluster.local.", dns.TypeA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeNameError, resp.Rcode)
+	assert.Empty(t, resp.Answer)
+}
+
+func TestResolveClusterServiceDoesNotForwardUnsupportedQueryTypes(t *testing.T) {
+	proxy := newTestDnsProxy(t)
+	req := new(dns.Msg)
+	req.SetQuestion("db.default.svc.cluster.local.", dns.TypeAAAA)
+
+	resp, ok := proxy.resolveRaindLocal(req)
+
+	require.True(t, ok)
+	require.NotNil(t, resp)
+	assert.Equal(t, dns.RcodeNameError, resp.Rcode)
 }
 
 func TestResolveRaindLocalReturnsARecordFromIPAMAndCSM(t *testing.T) {
@@ -115,6 +216,7 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 	ipamPath := filepath.Join(dir, "ipam.json")
 	csmPath := filepath.Join(dir, "csm.json")
 	bsmPath := filepath.Join(dir, "bsm.json")
+	ssmPath := filepath.Join(dir, "ssm.json")
 
 	writeJSON(t, ipamPath, ipam.IpamState{
 		Version:       "test",
@@ -152,6 +254,31 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 			},
 		},
 	})
+	writeJSON(t, ssmPath, ssm.ServiceState{
+		Version: "test",
+		Services: map[string]ssm.ServiceInfo{
+			"svc-db": {
+				ServiceId: "svc-db",
+				Name:      "db",
+				Namespace: "default",
+				Type:      ssm.ServiceTypeClusterIP,
+				ClusterIP: "10.166.255.10",
+			},
+			"svc-default-type": {
+				ServiceId: "svc-default-type",
+				Name:      "api",
+				Namespace: "default",
+				ClusterIP: "10.166.255.11",
+			},
+			"svc-node": {
+				ServiceId: "svc-node",
+				Name:      "node",
+				Namespace: "default",
+				Type:      ssm.ServiceTypeNodePort,
+			},
+		},
+	})
+
 	writeJSON(t, bsmPath, bsm.BottleState{
 		Version: "test",
 		Bottles: map[string]bsm.BottleInfo{
@@ -173,6 +300,7 @@ func newTestDnsProxy(t *testing.T) *DnsProxy {
 		csmHandler:  csm.NewCsmManager(csm.NewCsmStore(csmPath)),
 		ipamHandler: ipam.NewIpamManager(ipam.NewIpamStore(ipamPath)),
 		bsmHandler:  bsm.NewBsmManager(bsm.NewBsmStore(bsmPath)),
+		ssmHandler:  ssm.NewSsmManager(ssm.NewSsmStore(ssmPath)),
 	}
 }
 
