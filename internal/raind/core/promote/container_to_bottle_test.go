@@ -390,3 +390,127 @@ func TestBottleReviewPathForOutputUsesOutputDirectory(t *testing.T) {
 		t.Fatalf("unexpected review path: %s", got)
 	}
 }
+
+func TestBuildBottleDraftFromContainersCoversRuntimeFieldCombinations(t *testing.T) {
+	inspects := []container.ContainerInspectModel{
+		{
+			ContainerId:     "ctr-db",
+			Name:            "DB_Service",
+			ImageRepository: "mysql",
+			ImageReference:  "8",
+			SecurityProfile: "strict",
+			Tty:             true,
+			Config: map[string]any{
+				"process": map[string]any{
+					"args": []any{"mysqld", "--skip-name-resolve"},
+					"env":  []any{"MYSQL_ROOT_PASSWORD=root-secret", "MYSQL_DATABASE=app", "PATH=/usr/bin", "MYSQL_DATABASE=ignored-duplicate"},
+				},
+				"mounts": []any{
+					map[string]any{"type": "bind", "source": "/host/mysql", "destination": "/var/lib/mysql", "options": []any{"bind", "ro"}},
+					map[string]any{"type": "tmpfs", "source": "tmpfs", "destination": "/tmp"},
+				},
+			},
+		},
+		{
+			ContainerId:     "ctr-web",
+			Name:            "web",
+			ImageRepository: "example.com/web",
+			ImageReference:  "sha256:abcdef",
+			Command:         []string{"/app/server"},
+			Config: map[string]any{
+				"process": map[string]any{
+					"env": []any{"MYSQL_HOST=db-service", "APP_ENV=dev", "HOME=/root"},
+				},
+			},
+			Forwards: []container.ForwardInfoModel{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+				{HostPort: 5353, ContainerPort: 53, Protocol: "udp"},
+				{HostPort: 0, ContainerPort: 9999, Protocol: "tcp"},
+			},
+		},
+	}
+
+	draft, err := BuildBottleDraftFromContainers(inspects, ContainerToBottleOptions{BottleName: "My_App"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.BottleName != "My_App" {
+		t.Fatalf("expected explicit bottle name to be preserved, got %q", draft.BottleName)
+	}
+	if draft.SourceContainer != "container/DB_Service, container/web" {
+		t.Fatalf("unexpected source container string: %q", draft.SourceContainer)
+	}
+	if len(draft.Services) != 2 || draft.Services[0].Name != "db-service" || draft.Services[1].Name != "web" {
+		t.Fatalf("unexpected services: %#v", draft.Services)
+	}
+	db := draft.Services[0]
+	if db.Image != "mysql:8" || !db.Tty {
+		t.Fatalf("unexpected db image/tty: %#v", db)
+	}
+	if len(db.Command) != 2 || db.Command[0] != "mysqld" || db.Command[1] != "--skip-name-resolve" {
+		t.Fatalf("expected command from process args, got %#v", db.Command)
+	}
+	if len(db.Env) != 2 || db.Env[0].Key != "MYSQL_DATABASE" || db.Env[1].Key != "MYSQL_ROOT_PASSWORD" || !db.Env[1].Sensitive {
+		t.Fatalf("expected sorted env with secret classification and duplicate/default filtering, got %#v", db.Env)
+	}
+	if len(db.Mounts) != 1 || db.Mounts[0].Destination != "/var/lib/mysql" || !db.Mounts[0].ReadOnly {
+		t.Fatalf("unexpected db mounts: %#v", db.Mounts)
+	}
+	web := draft.Services[1]
+	if web.Image != "example.com/web@sha256:abcdef" {
+		t.Fatalf("expected digest image format, got %q", web.Image)
+	}
+	if len(web.Ports) != 2 || web.Ports[0].HostPort != 5353 || web.Ports[0].Protocol != "udp" || web.Ports[1].HostPort != 8080 || web.Ports[1].Protocol != "tcp" {
+		t.Fatalf("expected deduplicated and sorted ports, got %#v", web.Ports)
+	}
+	if len(web.DependsOn) != 1 || web.DependsOn[0] != "db-service" {
+		t.Fatalf("expected dependency inferred from MYSQL_HOST, got %#v", web.DependsOn)
+	}
+	if len(draft.Warnings) != 1 || draft.Warnings[0].Code != "security-profile" {
+		t.Fatalf("expected security profile warning, got %#v", draft.Warnings)
+	}
+}
+
+func TestBuildBottleDraftFromContainerAllowsPodContainerWhenExplicit(t *testing.T) {
+	draft, err := BuildBottleDraftFromContainer(
+		container.ContainerInspectModel{Name: "pod-app", PodId: "pod1", ImageRepository: "alpine", ImageReference: "latest"},
+		ContainerToBottleOptions{AllowPodContainer: true, ServiceName: "app"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.ServiceName != "app" || draft.Image != "alpine:latest" {
+		t.Fatalf("unexpected draft: %#v", draft)
+	}
+}
+
+func TestRenderBottleReviewIncludesPoliciesAndWarnings(t *testing.T) {
+	draft := BottleDraft{
+		SourceContainer: "container/web, container/db",
+		BottleName:      "myapp",
+		Services: []ServiceDraft{
+			{Name: "db", Image: "mysql:8"},
+			{Name: "web", Image: "web:dev", DependsOn: []string{"db"}},
+		},
+		Policies: []PolicyDraft{{Type: "east-west", Source: "web", Destination: "db", Protocol: "tcp", DestPort: 3306}},
+		Warnings: []Warning{{Code: "missing-image", Message: "image missing"}},
+	}
+
+	out, err := RenderBottleReview(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"Services generated: 2",
+		"Service `web`",
+		"Inferred dependencies: `db`",
+		"`web` -> `db` (type `east-west`, protocol `tcp`, destination port `3306`)",
+		"image missing",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered review missing %q:\n%s", want, text)
+		}
+	}
+}
