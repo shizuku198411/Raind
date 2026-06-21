@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Promote what actually ran: containers → compose → Kubernetes-style resources in one local runtime.</strong>
+  <strong>Validate how your application actually runs before turning it into Docker or Kubernetes deployment.</strong>
 </p>
 
 <p align="center">
@@ -20,7 +20,26 @@
 > [!WARNING]
 > Raind is experimental. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It focuses on a growing local subset that is useful for validating application deployment shape before a real cluster.
 
-Raind is a local pre-Docker/pre-Kubernetes validation and promotion tool that runs applications as containers/Bottles, verifies basic runtime behavior, and generates reviewable Kubernetes-style deployment drafts.
+Raind is a local application validation workflow for the stage before Docker and Kubernetes deployment.
+It runs your application as real containers, promotes the working runtime state into a Bottle(Compose-style), then promotes the running Bottle into Kubernetes-style resource drafts.
+
+The main workflow is **Promote Strategy**: one `raind-strategy.yaml` describes the seed containers and the health checks for each stage.
+Raind then runs the whole flow for you:
+
+```text
+container run
+  → health check
+  → generate Bottle draft
+  → bottle up
+  → health check
+  → generate Kubernetes-style resource drafts
+  → resource apply
+  → health check
+```
+
+![raind-promote-strategy](./assets/demo/raind-promote-strategy.gif)
+
+Generated files are drafts. They are meant to be reviewed before being used outside Raind.
 
 ## Why Raind?
 
@@ -40,7 +59,8 @@ Raind takes a different path:
 ```text
 actual run
   → observed runtime state
-  → reviewable deployment draft
+  → health-checked promotion
+  → reviewable deployment drafts
 ```
 
 Raind gives you one local runtime for:
@@ -49,243 +69,186 @@ Raind gives you one local runtime for:
 - multi-service Bottle stacks(Compose-style),
 - Deployments, Services, Ingress, PVCs, Secrets, ConfigMaps, and NetworkPolicies(Kubernetes-style),
 - runtime security policy and netflow logs,
-- promotion from one stage to the next.
+- automated promotion from one stage to the next.
 
-## Promote workflow
+## Quickstart: Promote Strategy
 
-Raind's signature workflow is **Promote**.
-
-Promote does not try to generate perfect production configuration. It generates useful, reviewable drafts from known runtime state and tells you what still needs review.
-
-### 1. Test real containers (Docker-style)
-
-Run the application the simplest way first.
-
-```sh
-raind container run --name mysql \
-  -e MYSQL_ROOT_PASSWORD=root-password \
-  -e MYSQL_DATABASE=wordpress-db \
-  -e MYSQL_USER=wordpress-user \
-  -e MYSQL_PASSWORD=wordpress-password \
-  mysql:8.0
-
-raind container run --name wordpress \
-  -e WORDPRESS_DB_HOST=mysql \
-  -e WORDPRESS_DB_NAME=wordpress-db \
-  -e WORDPRESS_DB_USER=wordpress-user \
-  -e WORDPRESS_DB_PASSWORD=wordpress-password \
-  -p 9850:80 \
-  wordpress:latest
-```
-
-Add the traffic relationship that actually worked.
-
-```sh
-raind security policy add --type ew \
-  -s wordpress \
-  -d mysql \
-  -p tcp --dport 3306 \
-  --comment "wordpress -> db 3306/tcp"
-
-raind security policy commit
-```
-
-### 2. Promote containers to a Bottle (Compose-style)
-
-`Bottle` is a multi-container application unit like Docker Compose.
-
-Once the containers work, generate a Bottle draft from the running containers.
-
-```sh
-raind promote container wordpress mysql \
-  --to bottle \
-  --bottle-name wordpress \
-  -o bottle/bottle.yaml
-```
-
-Raind preserves runtime intent such as images, commands, ports, dependencies, and security policy. Secret-like environment values are redacted into review comments.
+Create `raind-strategy.yaml`.
 
 ```yaml
-bottle:
-  name: "wordpress"
+apiVersion: raind.io/v1alpha1
+kind: PromoteStrategy
 
-services:
-  mysql:
-    image: "mysql:8.0"
-    command:
-      - "docker-entrypoint.sh"
-      - "mysqld"
-    # TODO: secret candidate redacted from container env: MYSQL_PASSWORD
-    env:
-      - "MYSQL_DATABASE=wordpress-db"
-      - "MYSQL_USER=wordpress-user"
-
-  wordpress:
-    image: "wordpress:latest"
-    command:
-      - "docker-entrypoint.sh"
-      - "apache2-foreground"
-    env:
-      - "WORDPRESS_DB_HOST=mysql"
-      - "WORDPRESS_DB_NAME=wordpress-db"
-      - "WORDPRESS_DB_USER=wordpress-user"
-    ports:
-      - "9850:80"
-    depends_on:
-      - "mysql"
-
-policies:
-  - type: "east-west"
-    source: "wordpress"
-    destination: "mysql"
-    protocol: "tcp"
-    dest_port: 3306
-```
-
-The promotion also writes `REVIEW_BOTTLE.md`, because the generated Bottlefile is a draft, not a claim of production readiness.
-
-### 3. Run the Bottle
-
-A Bottle is a local multi-service application shape.
-
-```sh
-cd bottle
-raind bottle up
-raind bottle show wordpress
-```
-
-`raind bottle up` is a convenience wrapper for creating the Bottle from `bottle.yaml` or `compose.yaml` and starting it.
-
-### 4. Promote the running Bottle to resources (Kubernetes-style)
-
-Raind promotes Bottles only after the Bottle is running. That keeps Promote runtime-aware instead of becoming a static file converter.
-
-```sh
-raind promote bottle bottle.yaml \
-  --to resources \
-  -o manifests \
-  --ingress-host wordpress.raind.local
-```
-
-Generated output is ordered and reviewable:
-
-```text
-manifests/
-  00-namespace.yaml
-  01-configmap.yaml
-  02-secret.example.yaml
-  04-deployments.yaml
-  05-services.yaml
-  06-ingress.yaml
-  07-networkpolicies.yaml
-  REVIEW.md
-  all.yaml
-```
-
-Example generated resource shape:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
 metadata:
-  name: "wordpress-config"
-  namespace: "wordpress"
-data:
-  WORDPRESS_DB_HOST: "mysql.wordpress.svc.cluster.local"
-  WORDPRESS_DB_NAME: "wordpress-db"
-  WORDPRESS_DB_USER: "wordpress-user"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: "wordpress"
-  namespace: "wordpress"
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: "wordpress"
-  template:
-    metadata:
-      labels:
-        app: "wordpress"
-    spec:
-      containers:
-        - name: "wordpress"
-          image: "wordpress:latest"
-          command:
-            - "docker-entrypoint.sh"
-            - "apache2-foreground"
-          envFrom:
-            - configMapRef:
-                name: "wordpress-config"
-            - secretRef:
-                name: "wordpress-secret"
-          ports:
-            - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: "mysql"
-  namespace: "wordpress"
-spec:
-  type: ClusterIP
-  selector:
-    app: "mysql"
-  ports:
-    - port: 3306
-      targetPort: 3306
-      protocol: "TCP"
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: "allow-wordpress-to-mysql"
-  namespace: "wordpress"
-spec:
-  podSelector:
-    matchLabels:
-      app: "wordpress"
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app: "mysql"
+  name: web-stack
+
+source:
+  mode: create
+  containers:
+    - name: mysql
+      image: mysql:8
+      env:
+        MYSQL_ROOT_PASSWORD: root-password
+        MYSQL_DATABASE: app
+        MYSQL_USER: app
+        MYSQL_PASSWORD: app-password
       ports:
-        - protocol: "TCP"
-          port: 3306
+        - "3306:3306"
+
+    - name: nginx
+      image: nginx:latest
+      ports:
+        - "9980:80"
+
+stages:
+  container:
+    checks:
+      runtime:
+        - name: mysql-running
+          type: containerStatus
+          target: mysql
+          expect:
+            state: running
+
+        - name: nginx-running
+          type: containerStatus
+          target: nginx
+          expect:
+            state: running
+
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+          timeout: 60s
+          interval: 2s
+
+    promote:
+      to: bottle
+      output: raind_promote/bottle/bottle.yaml
+
+  bottle:
+    checks:
+      runtime:
+        - name: bottle-running
+          type: bottleStatus
+          target: web-stack
+          expect:
+            state: running
+
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+          timeout: 60s
+          interval: 2s
+
+    promote:
+      to: resources
+      output: raind_promote/resources
+
+  resources:
+    apply:
+      file: raind_promote/resources/all.yaml
+
+    checks:
+      application:
+        - name: nginx-http
+          type: http
+          target: http://127.0.0.1:9980
+          expect:
+            status: 200
+          timeout: 60s
+          interval: 2s
 ```
 
-Raind maps service references into Kubernetes-style ClusterIP DNS names, generates internal Services from observed/policy-based relationships, and keeps secret values in example Secret manifests with placeholders.
-
-### 5. Apply and validate locally
+Run the strategy.
 
 ```sh
-raind resource apply -f manifests/all.yaml
-
-raind resource get -n wordpress deploy
-raind resource get -n wordpress service
-raind resource get -n wordpress ingress
-raind security policy ls --type ew
-raind logs netflow
+raind promote strategy
 ```
 
-At this point the same application has moved through three local validation shapes:
+Raind prints the current stage and task while it works.
 
 ```text
-containers worked (Docker-style)
-  → multi containers service worked (Compose-style)
-  → resources worked (Kubernetes-style)
+Promote Strategy: web-stack
+[container] create::mysql ... ok
+[container] create::nginx ... ok
+[container] runtime ... ok
+[container] checks::runtime::mysql-running ... ok
+[container] checks::runtime::nginx-running ... ok
+[container] checks::application::nginx-http ... ok
+[container] promote ... raind_promote/bottle/bottle.yaml
+[container] delete ... ok
+[bottle] apply ... web-stack
+[bottle] checks::runtime::bottle-running ... ok
+[bottle] checks::application::nginx-http ... ok
+[bottle] promote ... raind_promote/resources
+[bottle] delete ... ok
+[resources] apply ... raind_promote/resources/all.yaml
+[resources] checks::application::nginx-http ... ok
+[resources] delete ... ok
+bottle draft: raind_promote/bottle/bottle.yaml
+resource drafts: raind_promote/resources
 ```
 
-That is the Raind loop.
+Review the generated drafts.
+
+```text
+raind_promote/
+  bottle/
+    bottle.yaml
+    REVIEW_BOTTLE.md
+  resources/
+    00-namespace.yaml
+    01-configmap.yaml
+    02-secret.example.yaml
+    04-deployments.yaml
+    05-services.yaml
+    REVIEW.md
+    all.yaml
+```
+
+`raind promote strategy` is intentionally runtime-aware. Each stage is created, checked, promoted, and then cleaned up before the next stage begins. This avoids port conflicts while still ensuring that the generated drafts came from something that actually ran.
+
+For the complete Strategy schema, all check types, optional fields, and manual Promote commands, see [Promote workflow](./docs/guides/promote.md).
+
+## What Promote Strategy validates
+
+A strategy file defines two things:
+
+1. **The seed runtime**: the containers Raind should create first.
+2. **The checks for each stage**: runtime and application checks for containers, Bottle, and resources.
+
+Supported check types include:
+
+| Check type | Purpose |
+|---|---|
+| `containerStatus` | Confirm that a named container reached the expected state. |
+| `bottleStatus` | Confirm that a Bottle is running and has runtime container state. |
+| `http` | Confirm that an HTTP endpoint responds with the expected status/body. |
+| `tcp` | Confirm that a host and port can accept TCP connections. |
+
+The default output layout is stable and repo-friendly:
+
+```text
+raind_promote/bottle/bottle.yaml
+raind_promote/bottle/REVIEW_BOTTLE.md
+raind_promote/resources/all.yaml
+raind_promote/resources/REVIEW.md
+```
+
+Strategy-generated drafts overwrite previous drafts by default because they are generated review artifacts.
 
 ## Design principles
 
 ### Runtime-aware, not static translation
 
-Promote starts from things Raind has actually run or observed.
+Promote starts from things Raind has actually run or observed. Strategy promotes only after each stage passes its checks.
 
 ### Reviewable, not magical
 
@@ -293,13 +256,23 @@ Generated files are drafts. Raind writes review reports and TODOs where producti
 
 ### Preserve intent
 
-Names, images, commands, ports, service boundaries, and traffic relationships are kept whenever possible.
+Names, images, commands, ports, service boundaries, environment variables, volumes, and traffic relationships are kept whenever possible.
 
-### Avoid leaking secrets
+### Validate before deployment
 
-Secret-like environment variables are redacted from Bottle promotion and emitted as placeholder Secret examples for resource promotion.
+Raind focuses on the local workflow before a real Docker Compose or Kubernetes deployment: run it, check it, generate a draft, and review the result.
 
 ## Core capabilities
+
+### Promote Strategy
+
+```sh
+raind promote strategy
+raind promote strategy -f raind-strategy.yaml
+raind promote strategy --dry-run
+raind promote strategy --until bottle
+raind promote strategy --namespace web-stack --ingress-host web.raind.local
+```
 
 ### Containers
 
@@ -315,7 +288,7 @@ raind container rm web
 
 ```sh
 raind bottle up
-raind bottle show wordpress
+raind bottle show web-stack
 raind bottle down
 ```
 
@@ -341,11 +314,11 @@ Raind supports a growing local subset including:
 - NetworkPolicy
 
 ```sh
-raind resource apply -f manifests/all.yaml
+raind resource apply -f raind_promote/resources/all.yaml
 raind resource get pod
 raind resource get deploy
 raind resource get service
-raind resource delete -f manifests/all.yaml
+raind resource delete -f raind_promote/resources/all.yaml
 ```
 
 ### Network visibility and policy
@@ -377,7 +350,7 @@ Raind is not a replacement for Docker, Podman, kind, minikube, or Kubernetes.
 | Docker / Podman | General container engine |
 | kind / minikube | Run a real Kubernetes cluster locally |
 | Kubernetes | Production-grade orchestration platform |
-| Raind | Runtime-promoted local deployment validation |
+| Raind | Runtime-promoted local deployment validation before Docker/Kubernetes deployment |
 
 Raind is for the space where you want to know:
 
@@ -388,7 +361,7 @@ Raind is for the space where you want to know:
 
 ## Demo
 
-Raind Promote is the main story, but the same runtime can also be used for normal development checks.  
+Raind Promote Strategy is the main story, but the same runtime can also be used for normal development checks.
 You can run containers, start Bottle stacks, and apply Kubernetes-style resources directly, then promote the working runtime state when the application shape is ready.
 
 ![Raind quickstart demo](./assets/demo/raind-quickstart.gif)
@@ -396,7 +369,7 @@ You can run containers, start Bottle stacks, and apply Kubernetes-style resource
 ## Documentation
 
 - [Documentation index](./docs/)
-- [Promote workflow](./docs/guides/promote.md)
+- [Promote Strategy and manual Promote workflow](./docs/guides/promote.md)
 - [Bottles](./docs/guides/bottles.md)
 - [Containers](./docs/guides/containers.md)
 - [Architecture](./docs/architecture/)
@@ -412,7 +385,7 @@ Raind is experimental and evolving quickly.
 
 Current focus areas include:
 
-- strengthening the Promote workflow,
+- strengthening Promote Strategy,
 - expanding the Kubernetes-style resource subset,
 - improving validation and review reports,
 - improving Service, DNS, and Ingress behavior,
