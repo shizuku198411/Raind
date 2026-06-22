@@ -14,9 +14,10 @@ type ResourceFile struct {
 }
 
 type RenderResourcesOptions struct {
-	IngressHost       string
-	ServiceType       string
-	PreserveHostPorts bool
+	IngressHost           string
+	ServiceType           string
+	PreserveHostPorts     bool
+	PreserveSensitiveData bool
 }
 
 func RenderResourceFiles(d BottleDraft, opt RenderResourcesOptions) ([]ResourceFile, error) {
@@ -32,8 +33,12 @@ func RenderResourceFiles(d BottleDraft, opt RenderResourcesOptions) ([]ResourceF
 	if data := renderConfigMaps(namespace, services); len(data) > 0 {
 		files = append(files, ResourceFile{Name: "01-configmap.yaml", Data: data})
 	}
-	if data := renderSecrets(namespace, services); len(data) > 0 {
-		files = append(files, ResourceFile{Name: "02-secret.example.yaml", Data: data})
+	if data := renderSecrets(namespace, services, opt); len(data) > 0 {
+		name := "02-secret.example.yaml"
+		if opt.PreserveSensitiveData {
+			name = "02-secret.yaml"
+		}
+		files = append(files, ResourceFile{Name: name, Data: data})
 	}
 	if data := renderPVCs(namespace, services); len(data) > 0 {
 		files = append(files, ResourceFile{Name: "03-pvcs.yaml", Data: data})
@@ -198,7 +203,7 @@ func renderConfigMaps(namespace string, services []ServiceDraft) []byte {
 	return b.Bytes()
 }
 
-func renderSecrets(namespace string, services []ServiceDraft) []byte {
+func renderSecrets(namespace string, services []ServiceDraft, opt RenderResourcesOptions) []byte {
 	var b bytes.Buffer
 	for _, svc := range services {
 		items := secretEnv(svc.Env)
@@ -206,7 +211,11 @@ func renderSecrets(namespace string, services []ServiceDraft) []byte {
 			continue
 		}
 		writeDocSeparator(&b)
-		fmt.Fprintln(&b, "# Example secret only. Replace placeholders before applying.")
+		if opt.PreserveSensitiveData {
+			fmt.Fprintln(&b, "# Generated for promote strategy runtime validation. Do not share this file.")
+		} else {
+			fmt.Fprintln(&b, "# Example secret only. Replace placeholders before applying.")
+		}
 		fmt.Fprintln(&b, "apiVersion: v1")
 		fmt.Fprintln(&b, "kind: Secret")
 		fmt.Fprintln(&b, "metadata:")
@@ -215,7 +224,11 @@ func renderSecrets(namespace string, services []ServiceDraft) []byte {
 		fmt.Fprintln(&b, "type: Opaque")
 		fmt.Fprintln(&b, "stringData:")
 		for _, env := range items {
-			fmt.Fprintf(&b, "  %s: %s\n", quoteYAMLKey(env.Key), quoteYAMLString("<replace-me>"))
+			value := "<replace-me>"
+			if opt.PreserveSensitiveData {
+				value = env.Value
+			}
+			fmt.Fprintf(&b, "  %s: %s\n", quoteYAMLKey(env.Key), quoteYAMLString(value))
 		}
 	}
 	return b.Bytes()

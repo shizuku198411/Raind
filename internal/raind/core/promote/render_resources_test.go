@@ -138,6 +138,36 @@ policies:
 	}
 }
 
+func TestRenderResourceFilesCanPreserveSensitiveDataForStrategyRuntime(t *testing.T) {
+	draft := BottleDraft{
+		BottleName: "myapp",
+		Services: []ServiceDraft{{
+			Name:  "db",
+			Image: "mysql:8",
+			Env: []EnvVar{
+				{Key: "MYSQL_DATABASE", Value: "app"},
+				{Key: "MYSQL_ROOT_PASSWORD", Value: "root-secret", Sensitive: true},
+			},
+		}},
+	}
+
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{PreserveSensitiveData: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := resourceFilesByName(files)
+	secret := string(byName["02-secret.yaml"])
+	if !strings.Contains(secret, `MYSQL_ROOT_PASSWORD: "root-secret"`) {
+		t.Fatalf("runtime secret manifest did not preserve sensitive value:\n%s", secret)
+	}
+	if strings.Contains(secret, "<replace-me>") {
+		t.Fatalf("runtime secret manifest still contains placeholder:\n%s", secret)
+	}
+	all := string(byName["all.yaml"])
+	if !strings.Contains(all, `MYSQL_ROOT_PASSWORD: "root-secret"`) {
+		t.Fatalf("combined runtime manifest did not include real secret value:\n%s", all)
+	}
+}
 func TestRenderResourceFilesCoversGeneratedManifestCombinations(t *testing.T) {
 	draft := BottleDraft{
 		SourceContainer: "running bottle/myapp",

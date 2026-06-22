@@ -107,7 +107,6 @@ type StrategySpec struct {
 	Source     StrategySource      `yaml:"source"`
 	Containers []StrategyContainer `yaml:"containers"`
 	Stages     StrategyStages      `yaml:"stages"`
-	Outputs    StrategyOutputs     `yaml:"outputs"`
 }
 
 type StrategyMetadata struct {
@@ -194,13 +193,7 @@ type StrategyCheckExpect struct {
 }
 
 type StrategyPromote struct {
-	To     string `yaml:"to"`
-	Output string `yaml:"output"`
-}
-
-type StrategyOutputs struct {
-	Bottle    string `yaml:"bottle"`
-	Resources string `yaml:"resources"`
+	To string `yaml:"to"`
 }
 
 type StrategyRunResult struct {

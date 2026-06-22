@@ -17,7 +17,12 @@ import (
 	resourcecore "raind/internal/raind/core/resource"
 )
 
-const strategyRaindCommandSettleDelay = 500 * time.Millisecond
+const (
+	strategyRaindCommandSettleDelay = 500 * time.Millisecond
+	strategyTemporaryOutputDir      = ".raind_promote_strategy"
+	strategyTemporaryBottleOutput   = ".raind_promote_strategy/bottle/bottle.yaml"
+	strategyTemporaryResourceOutput = ".raind_promote_strategy/resources"
+)
 
 type StrategyRunner struct {
 	spec       StrategySpec
@@ -39,6 +44,7 @@ func (r *StrategyRunner) Run() (StrategyRunResult, error) {
 		r.addStep("plan", "ok")
 		return r.result, nil
 	}
+	defer r.cleanupTemporaryOutputs()
 
 	if err := r.runContainerStage(); err != nil {
 		return r.result, err
@@ -305,26 +311,32 @@ func (r *StrategyRunner) promoteContainersToBottle() error {
 		inspects = append(inspects, inspect)
 	}
 
-	draft, err := BuildBottleDraftFromContainers(inspects, ContainerToBottleOptions{
-		BottleName:           r.spec.Metadata.Name,
-		PreserveSensitiveEnv: true,
-	})
+	runtimeDraft, err := r.buildBottleDraftFromInspects(inspects, true)
 	if err != nil {
 		r.failStep(step, err)
 		return err
 	}
-	if policyData, err := policycore.NewServicePolicyList().Get("RAIND-EW"); err == nil {
-		AttachSecurityPoliciesFromPolicyList(&draft, inspects, policyData.Policies)
-	} else {
-		draft.Warnings = append(draft.Warnings, Warning{Code: "security-policy", Message: fmt.Sprintf("could not load running security policies from condenser API: %v", err)})
+	runtimeBottleData, err := RenderBottlefile(runtimeDraft)
+	if err != nil {
+		r.failStep(step, err)
+		return err
+	}
+	if err := WriteOutput(r.temporaryBottleOutput(), runtimeBottleData, true); err != nil {
+		r.failStep(step, err)
+		return err
 	}
 
-	bottleData, err := RenderBottlefile(draft)
+	maskedDraft, err := r.buildBottleDraftFromInspects(inspects, false)
 	if err != nil {
 		r.failStep(step, err)
 		return err
 	}
-	reviewData, err := RenderBottleReview(draft)
+	bottleData, err := RenderBottlefile(maskedDraft)
+	if err != nil {
+		r.failStep(step, err)
+		return err
+	}
+	reviewData, err := RenderBottleReview(maskedDraft)
 	if err != nil {
 		r.failStep(step, err)
 		return err
@@ -337,6 +349,22 @@ func (r *StrategyRunner) promoteContainersToBottle() error {
 	r.result.BottleOutput = output
 	r.addStep(step, output)
 	return nil
+}
+
+func (r *StrategyRunner) buildBottleDraftFromInspects(inspects []container.ContainerInspectModel, preserveSensitiveEnv bool) (BottleDraft, error) {
+	draft, err := BuildBottleDraftFromContainers(inspects, ContainerToBottleOptions{
+		BottleName:           r.spec.Metadata.Name,
+		PreserveSensitiveEnv: preserveSensitiveEnv,
+	})
+	if err != nil {
+		return BottleDraft{}, err
+	}
+	if policyData, err := policycore.NewServicePolicyList().Get("RAIND-EW"); err == nil {
+		AttachSecurityPoliciesFromPolicyList(&draft, inspects, policyData.Policies)
+	} else {
+		draft.Warnings = append(draft.Warnings, Warning{Code: "security-policy", Message: fmt.Sprintf("could not load running security policies from condenser API: %v", err)})
+	}
+	return draft, nil
 }
 
 func (r *StrategyRunner) deleteContainers(ids []string) error {
@@ -377,7 +405,7 @@ func (r *StrategyRunner) applyBottle() (string, error) {
 	r.beginStep(step)
 	path := r.spec.Stages.Bottle.Apply.File
 	if strings.TrimSpace(path) == "" {
-		path = r.bottleOutput()
+		path = r.temporaryBottleOutput()
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -409,7 +437,7 @@ func (r *StrategyRunner) applyBottle() (string, error) {
 func (r *StrategyRunner) promoteBottleToResources() error {
 	step := "bottle/promote"
 	r.beginStep(step)
-	draft, err := BuildResourceDraftFromRunningBottleFile(r.bottleOutput(), BottleToResourcesOptions{
+	draft, err := BuildResourceDraftFromRunningBottleFile(r.temporaryBottleOutput(), BottleToResourcesOptions{
 		Namespace:   firstNonEmpty(r.opt.Namespace, r.spec.Metadata.Name),
 		IngressHost: r.ingressHost(),
 	})
@@ -417,6 +445,22 @@ func (r *StrategyRunner) promoteBottleToResources() error {
 		r.failStep(step, err)
 		return err
 	}
+
+	runtimeFiles, err := RenderResourceFiles(draft, RenderResourcesOptions{
+		IngressHost:           r.ingressHost(),
+		ServiceType:           "NodePort",
+		PreserveHostPorts:     true,
+		PreserveSensitiveData: true,
+	})
+	if err != nil {
+		r.failStep(step, err)
+		return err
+	}
+	if err := WriteResourceFiles(r.temporaryResourcesOutput(), runtimeFiles, true); err != nil {
+		r.failStep(step, err)
+		return err
+	}
+
 	files, err := RenderResourceFiles(draft, RenderResourcesOptions{
 		IngressHost:       r.ingressHost(),
 		ServiceType:       "NodePort",
@@ -459,7 +503,7 @@ func (r *StrategyRunner) applyResources() (string, error) {
 	r.beginStep(step)
 	path := strings.TrimSpace(r.spec.Stages.Resources.Apply.File)
 	if path == "" {
-		path = filepath.Join(r.resourcesOutput(), "all.yaml")
+		path = filepath.Join(r.temporaryResourcesOutput(), "all.yaml")
 	}
 	if strings.TrimSpace(r.spec.Stages.Resources.Apply.Path) != "" {
 		path = filepath.Join(r.spec.Stages.Resources.Apply.Path, "all.yaml")
@@ -529,39 +573,23 @@ func (r *StrategyRunner) runCheckGroup(stageName, group string, checks []Strateg
 }
 
 func (r *StrategyRunner) bottleOutput() string {
-	return strategyDefaultedOutput(
-		DefaultBottlePromotionOutput,
-		[]string{"bottle.yaml"},
-		r.spec.Stages.Container.Promote.Output,
-		r.spec.Outputs.Bottle,
-	)
+	return DefaultBottlePromotionOutput
 }
 
 func (r *StrategyRunner) resourcesOutput() string {
-	return strategyDefaultedOutput(
-		DefaultResourcePromotionOutput,
-		[]string{"manifests", "manifests/"},
-		r.spec.Stages.Bottle.Promote.Output,
-		r.spec.Outputs.Resources,
-	)
+	return DefaultResourcePromotionOutput
 }
 
-func strategyDefaultedOutput(defaultValue string, legacyDefaults []string, values ...string) string {
-	value := firstNonEmpty(values...)
-	if value == "" || isLegacyStrategyDefaultOutput(value, legacyDefaults) {
-		return defaultValue
-	}
-	return value
+func (r *StrategyRunner) temporaryBottleOutput() string {
+	return strategyTemporaryBottleOutput
 }
 
-func isLegacyStrategyDefaultOutput(value string, legacyDefaults []string) bool {
-	normalized := filepath.Clean(strings.TrimSpace(value))
-	for _, legacy := range legacyDefaults {
-		if normalized == filepath.Clean(legacy) {
-			return true
-		}
-	}
-	return false
+func (r *StrategyRunner) temporaryResourcesOutput() string {
+	return strategyTemporaryResourceOutput
+}
+
+func (r *StrategyRunner) cleanupTemporaryOutputs() {
+	_ = os.RemoveAll(strategyTemporaryOutputDir)
 }
 
 func (r *StrategyRunner) ingressHost() string {
