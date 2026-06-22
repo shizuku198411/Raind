@@ -69,19 +69,37 @@ func (r *StrategyRunner) runContainerStage() error {
 		return err
 	}
 
+	policyIDs, err := r.applySourcePolicies()
+	if err != nil {
+		if cleanupErr := r.deletePolicies(policyIDs); cleanupErr != nil {
+			r.addStep("container/policies-delete", "warning: "+cleanupErr.Error())
+		}
+		if cleanupErr := r.deleteContainers(ids); cleanupErr != nil {
+			r.addStep("container/delete", "warning: "+cleanupErr.Error())
+		}
+		return err
+	}
+
 	err = r.runStageChecks("container", r.spec.Stages.Container)
 	if err == nil {
 		err = r.promoteContainersToBottle()
 	}
 
-	cleanupErr := r.deleteContainers(ids)
+	policyCleanupErr := r.deletePolicies(policyIDs)
+	containerCleanupErr := r.deleteContainers(ids)
 	if err != nil {
-		if cleanupErr != nil {
-			r.addStep("container/delete", "warning: "+cleanupErr.Error())
+		if policyCleanupErr != nil {
+			r.addStep("container/policies-delete", "warning: "+policyCleanupErr.Error())
+		}
+		if containerCleanupErr != nil {
+			r.addStep("container/delete", "warning: "+containerCleanupErr.Error())
 		}
 		return err
 	}
-	return cleanupErr
+	if policyCleanupErr != nil {
+		return policyCleanupErr
+	}
+	return containerCleanupErr
 }
 
 func (r *StrategyRunner) runBottleStage() error {
@@ -191,6 +209,86 @@ func (r *StrategyRunner) waitContainersRunning() error {
 		}
 		time.Sleep(defaultStrategyInterval)
 	}
+}
+
+func (r *StrategyRunner) applySourcePolicies() ([]string, error) {
+	if len(r.spec.Source.Policies) == 0 {
+		return nil, nil
+	}
+	createdIDs := []string{}
+	for _, sourcePolicy := range r.spec.Source.Policies {
+		step := "container/policies::" + strategyPolicyName(sourcePolicy)
+		r.beginStep(step)
+		var id string
+		err := r.captureInternalOutput(step, func() error {
+			r.waitBeforeRaindCommand()
+			createdID, err := policycore.NewServicePolicyCreate().CreateWithID(policycore.ServiceCreateModel{
+				Chain:       "ew",
+				Source:      strings.TrimSpace(sourcePolicy.Source),
+				Destination: strings.TrimSpace(sourcePolicy.Destination),
+				Protocol:    strings.ToLower(strings.TrimSpace(sourcePolicy.Protocol)),
+				DestPort:    sourcePolicy.EffectiveDestPort(),
+				Comment:     strings.TrimSpace(sourcePolicy.Comment),
+			})
+			if err != nil {
+				return fmt.Errorf("create policy %s: %w", strategyPolicyName(sourcePolicy), err)
+			}
+			id = createdID
+			return nil
+		})
+		if err != nil {
+			r.failStep(step, err)
+			return createdIDs, err
+		}
+		createdIDs = append(createdIDs, id)
+		r.addStep(step, "ok")
+	}
+	step := "container/policies-commit"
+	r.beginStep(step)
+	if err := r.captureInternalOutput(step, func() error {
+		r.waitBeforeRaindCommand()
+		return policycore.NewServicePolicyCommit().Commit()
+	}); err != nil {
+		r.failStep(step, err)
+		return createdIDs, err
+	}
+	r.addStep(step, "ok")
+	return createdIDs, nil
+}
+
+func (r *StrategyRunner) deletePolicies(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	step := "container/policies-delete"
+	r.beginStep(step)
+	var errs []string
+	_ = r.captureInternalOutput(step, func() error {
+		for i := len(ids) - 1; i >= 0; i-- {
+			id := strings.TrimSpace(ids[i])
+			if id == "" {
+				continue
+			}
+			r.waitBeforeRaindCommand()
+			if err := policycore.NewServicePolicyRemove().Remove(policycore.RemoveRequestModel{Id: id}); err != nil {
+				errs = append(errs, fmt.Sprintf("remove policy %s: %v", id, err))
+			}
+		}
+		if len(errs) == 0 {
+			r.waitBeforeRaindCommand()
+			if err := policycore.NewServicePolicyCommit().Commit(); err != nil {
+				errs = append(errs, fmt.Sprintf("commit policy removals: %v", err))
+			}
+		}
+		return nil
+	})
+	if len(errs) > 0 {
+		err := errors.New(strings.Join(errs, "; "))
+		r.failStep(step, err)
+		return err
+	}
+	r.addStep(step, "ok")
+	return nil
 }
 
 func (r *StrategyRunner) promoteContainersToBottle() error {
@@ -554,7 +652,10 @@ func (r *StrategyRunner) captureInternalOutput(step string, fn func() error) err
 }
 
 func estimateStrategyStepCount(spec StrategySpec, opt StrategyOptions) int {
-	containerSteps := len(spec.Source.Containers) + 1 + strategyCheckCount(spec.Stages.Container) + 1 + 1
+	containerSteps := len(spec.Source.Containers) + 1 + len(spec.Source.Policies) + strategyCheckCount(spec.Stages.Container) + 1 + 1
+	if len(spec.Source.Policies) > 0 {
+		containerSteps += 2
+	}
 	bottleSteps := 1 + strategyCheckCount(spec.Stages.Bottle) + 1 + 1
 	resourceSteps := 1 + strategyCheckCount(spec.Stages.Resources) + 1
 	switch strings.ToLower(strings.TrimSpace(opt.Until)) {
@@ -595,4 +696,24 @@ func normalizeEnv(values []string) []string {
 		}
 	}
 	return out
+}
+
+func strategyPolicyName(policy StrategyPolicy) string {
+	parts := []string{
+		strings.TrimSpace(policy.Source),
+		"to",
+		strings.TrimSpace(policy.Destination),
+	}
+	protocol := strings.ToLower(strings.TrimSpace(policy.Protocol))
+	if protocol != "" || policy.EffectiveDestPort() > 0 {
+		port := ""
+		if policy.EffectiveDestPort() > 0 {
+			port = fmt.Sprintf("%d", policy.EffectiveDestPort())
+		}
+		suffix := strings.Trim(strings.Join([]string{protocol, port}, ":"), ":")
+		if suffix != "" {
+			parts = append(parts, suffix)
+		}
+	}
+	return strings.Join(parts, "-")
 }

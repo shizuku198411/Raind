@@ -117,6 +117,24 @@ type StrategyMetadata struct {
 type StrategySource struct {
 	Mode       string              `yaml:"mode"`
 	Containers []StrategyContainer `yaml:"containers"`
+	Policies   []StrategyPolicy    `yaml:"policies"`
+}
+
+type StrategyPolicy struct {
+	Type        string `yaml:"type"`
+	Source      string `yaml:"source"`
+	Destination string `yaml:"destination"`
+	Protocol    string `yaml:"protocol"`
+	DestPort    int    `yaml:"destPort"`
+	DPort       int    `yaml:"dport"`
+	Comment     string `yaml:"comment"`
+}
+
+func (p StrategyPolicy) EffectiveDestPort() int {
+	if p.DestPort != 0 {
+		return p.DestPort
+	}
+	return p.DPort
 }
 
 type StrategyContainer struct {

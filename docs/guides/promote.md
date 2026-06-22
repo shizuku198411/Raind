@@ -85,6 +85,14 @@ source:
       dependsOn:
         - mysql
 
+  policies:
+    - type: ew
+      source: nginx
+      destination: mysql
+      protocol: tcp
+      destPort: 3306
+      comment: allow nginx to reach mysql during Strategy validation
+
 stages:
   container:
     checks:
@@ -178,10 +186,13 @@ Promote Strategy: web-stack
 [container] create::mysql ... ok
 [container] create::nginx ... ok
 [container] runtime ... ok
+[container] policies::nginx-to-mysql-tcp:3306 ... ok
+[container] policies-commit ... ok
 [container] checks::runtime::mysql-running ... ok
 [container] checks::runtime::nginx-running ... ok
 [container] checks::application::nginx-http ... ok
 [container] promote ... raind_promote/bottle/bottle.yaml
+[container] policies-delete ... ok
 [container] delete ... ok
 [bottle] apply ... web-stack
 [bottle] checks::runtime::bottle-running ... ok
@@ -226,6 +237,7 @@ resource drafts: raind_promote/resources
 | --- | --- | --- | --- |
 | `source.mode` | No | empty or `create` | Source mode. `create` is the only supported mode in this release. Empty defaults to `create`. |
 | `source.containers` | Yes | List of container definitions | Containers that Strategy creates, checks, promotes, and then removes before the Bottle stage. |
+| `source.policies` | No | List of policy definitions | Temporary seed policies applied after the source containers are running and before container checks. These policies are included in the Bottle draft during `container -> bottle` promotion, then removed before the Bottle stage starts. |
 
 #### `source.containers[]`
 
@@ -274,6 +286,35 @@ command:
   - -g
   - daemon off;
 ```
+
+#### `source.policies[]`
+
+Use `source.policies` when the seed containers need east-west connectivity during Strategy validation. This is especially important for multi-service applications such as WordPress -> MySQL. Without an explicit east-west policy, Raind may deny the connection before the application health check can pass.
+
+Strategy currently supports temporary EW policies only. The runner creates these policies after all seed containers reach `running`, runs the container-stage checks, promotes the observed runtime state to a Bottle draft, and then removes the temporary policies before deleting the seed containers. Because promotion reads the running policy list, these policies are also carried into the generated Bottle draft.
+
+```yaml
+source:
+  policies:
+    - type: ew
+      source: wordpress
+      destination: mysql
+      protocol: tcp
+      destPort: 3306
+      comment: allow wordpress to reach mysql
+```
+
+| Field | Required | Supported values | Description |
+| --- | --- | --- | --- |
+| `type` | No | empty or `ew` | Policy type. Empty defaults to `ew`. Only EW policies are supported by Strategy in this release. |
+| `source` | Yes | Container name | Source container name, for example `wordpress`. |
+| `destination` | Yes | Container name | Destination container name, for example `mysql`. |
+| `protocol` | No | empty, `tcp`, `udp`, or any protocol string accepted by Raind policy create | Protocol passed to the Raind EW policy API. Empty defaults to `tcp`. |
+| `destPort` | Yes | Integer greater than `0` | Destination port. Use this canonical field in new Strategy files. |
+| `dport` | Yes if `destPort` is omitted | Integer greater than `0` | Backward-compatible alias for `destPort`. Prefer `destPort`. |
+| `comment` | No | String | Optional policy comment. |
+
+`destPort` and `dport` refer to the same value. When both are set, `destPort` wins.
 
 ### Stage lifecycle
 
@@ -480,6 +521,14 @@ source:
         - MKNOD
       dependsOn:
         - mysql
+
+  policies:
+    - type: ew
+      source: wordpress
+      destination: mysql
+      protocol: tcp
+      destPort: 3306
+      comment: allow wordpress database access
 
 stages:
   container:

@@ -64,5 +64,27 @@ func ParseStrategy(data []byte) (StrategySpec, error) {
 			return StrategySpec{}, fmt.Errorf("source.containers[%d].image is required", i)
 		}
 	}
+	for i, policy := range spec.Source.Policies {
+		policyType := strings.TrimSpace(policy.Type)
+		if policyType == "" {
+			spec.Source.Policies[i].Type = "ew"
+			policyType = "ew"
+		}
+		if !strings.EqualFold(policyType, "ew") {
+			return StrategySpec{}, fmt.Errorf("unsupported source.policies[%d].type %q; only ew is supported in this release", i, policy.Type)
+		}
+		if strings.TrimSpace(policy.Source) == "" {
+			return StrategySpec{}, fmt.Errorf("source.policies[%d].source is required", i)
+		}
+		if strings.TrimSpace(policy.Destination) == "" {
+			return StrategySpec{}, fmt.Errorf("source.policies[%d].destination is required", i)
+		}
+		if strings.TrimSpace(policy.Protocol) == "" {
+			spec.Source.Policies[i].Protocol = "tcp"
+		}
+		if policy.EffectiveDestPort() <= 0 {
+			return StrategySpec{}, fmt.Errorf("source.policies[%d].destPort is required", i)
+		}
+	}
 	return spec, nil
 }

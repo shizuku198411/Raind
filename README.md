@@ -100,6 +100,14 @@ source:
       ports:
         - "9980:80"
 
+  policies:
+    - type: ew
+      source: nginx
+      destination: mysql
+      protocol: tcp
+      destPort: 3306
+      comment: allow nginx to reach mysql during Strategy validation
+
 stages:
   container:
     checks:
@@ -179,10 +187,13 @@ Promote Strategy: web-stack
 [container] create::mysql ... ok
 [container] create::nginx ... ok
 [container] runtime ... ok
+[container] policies::nginx-to-mysql-tcp:3306 ... ok
+[container] policies-commit ... ok
 [container] checks::runtime::mysql-running ... ok
 [container] checks::runtime::nginx-running ... ok
 [container] checks::application::nginx-http ... ok
 [container] promote ... raind_promote/bottle/bottle.yaml
+[container] policies-delete ... ok
 [container] delete ... ok
 [bottle] apply ... web-stack
 [bottle] checks::runtime::bottle-running ... ok
