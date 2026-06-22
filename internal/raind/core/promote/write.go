@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	DefaultBottlePromotionOutput = "raind_promote/bottle/bottle.yaml"
-	BottleReviewFileName         = "REVIEW_BOTTLE.md"
+	DefaultBottlePromotionOutput  = "raind_promote/bottle/bottle.yaml"
+	DefaultComposePromotionOutput = "raind_promote/compose/compose.yaml"
+	BottleReviewFileName          = "REVIEW_BOTTLE.md"
 )
 
 func WriteOutput(path string, data []byte, force bool) error {
@@ -36,6 +37,13 @@ func WriteBottlePromotionOutputs(path string, bottleData, reviewData []byte, for
 		return err
 	}
 	return os.WriteFile(reviewPath, reviewData, 0644)
+}
+
+func WriteComposePromotionOutput(data []byte, force bool) error {
+	if err := ensureParentDir(DefaultComposePromotionOutput); err != nil {
+		return err
+	}
+	return os.WriteFile(DefaultComposePromotionOutput, data, 0644)
 }
 
 func BottleReviewPathForOutput(path string) string {

@@ -50,11 +50,8 @@ func ParseStrategy(data []byte) (StrategySpec, error) {
 	if len(spec.Source.Containers) == 0 {
 		return StrategySpec{}, fmt.Errorf("source.containers is required")
 	}
-	if to := strings.TrimSpace(spec.Stages.Container.Promote.To); to != "" && !strings.EqualFold(to, "bottle") {
-		return StrategySpec{}, fmt.Errorf("unsupported container promote target %q; only bottle is supported", to)
-	}
-	if to := strings.TrimSpace(spec.Stages.Bottle.Promote.To); to != "" && !strings.EqualFold(to, "resources") {
-		return StrategySpec{}, fmt.Errorf("unsupported bottle promote target %q; only resources is supported", to)
+	if strategyResourcesStageDefined(spec) && !strategyBottleStageDefined(spec) {
+		return StrategySpec{}, fmt.Errorf("stages.bottle is required when stages.resources is defined")
 	}
 	for i, c := range spec.Source.Containers {
 		if strings.TrimSpace(c.Name) == "" {

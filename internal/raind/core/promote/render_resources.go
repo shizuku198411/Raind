@@ -363,10 +363,7 @@ func renderServices(namespace string, services []ServiceDraft, opt RenderResourc
 		fmt.Fprintf(&b, "  name: %s\n", quoteYAMLString(svc.Name))
 		fmt.Fprintf(&b, "  namespace: %s\n", quoteYAMLString(namespace))
 		fmt.Fprintln(&b, "spec:")
-		serviceType := strings.TrimSpace(opt.ServiceType)
-		if serviceType == "" {
-			serviceType = "ClusterIP"
-		}
+		serviceType := resourceServiceType(svc, opt)
 		fmt.Fprintf(&b, "  type: %s\n", serviceType)
 		fmt.Fprintln(&b, "  selector:")
 		fmt.Fprintf(&b, "    app: %s\n", quoteYAMLString(svc.Name))
@@ -386,6 +383,26 @@ func renderServices(namespace string, services []ServiceDraft, opt RenderResourc
 		}
 	}
 	return b.Bytes()
+}
+
+func resourceServiceType(svc ServiceDraft, opt RenderResourcesOptions) string {
+	serviceType := strings.TrimSpace(opt.ServiceType)
+	if serviceType == "" {
+		return "ClusterIP"
+	}
+	if opt.PreserveHostPorts && !serviceHasHostPort(svc) {
+		return "ClusterIP"
+	}
+	return serviceType
+}
+
+func serviceHasHostPort(svc ServiceDraft) bool {
+	for _, port := range svc.Ports {
+		if port.HostPort > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func renderIngress(namespace string, services []ServiceDraft, host string) []byte {
@@ -499,10 +516,7 @@ func RenderResourceReview(d BottleDraft, files []ResourceFile, opt RenderResourc
 	for _, svc := range bottleDraftServices(d) {
 		fmt.Fprintf(&b, "- Deployment/%s with replicas=1 and image `%s`.\n", svc.Name, svc.Image)
 		if len(svc.Ports) > 0 {
-			serviceType := strings.TrimSpace(opt.ServiceType)
-			if serviceType == "" {
-				serviceType = "ClusterIP"
-			}
+			serviceType := resourceServiceType(svc, opt)
 			fmt.Fprintf(&b, "- Service/%s as %s using", svc.Name, serviceType)
 			if opt.PreserveHostPorts {
 				fmt.Fprint(&b, " host-published ports when available")

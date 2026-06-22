@@ -158,13 +158,38 @@ type StrategyStages struct {
 	Container StrategyStage `yaml:"container"`
 	Bottle    StrategyStage `yaml:"bottle"`
 	Resources StrategyStage `yaml:"resources"`
+
+	containerDefined bool
+	bottleDefined    bool
+	resourcesDefined bool
+}
+
+func (s *StrategyStages) UnmarshalYAML(value *yaml.Node) error {
+	type strategyStagesAlias StrategyStages
+	var out strategyStagesAlias
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	if value != nil && value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			switch strings.TrimSpace(value.Content[i].Value) {
+			case "container":
+				out.containerDefined = true
+			case "bottle":
+				out.bottleDefined = true
+			case "resources":
+				out.resourcesDefined = true
+			}
+		}
+	}
+	*s = StrategyStages(out)
+	return nil
 }
 
 type StrategyStage struct {
-	Apply   StrategyApply   `yaml:"apply"`
-	Checks  StrategyChecks  `yaml:"checks"`
-	Promote StrategyPromote `yaml:"promote"`
-	Health  []StrategyCheck `yaml:"healthChecks"`
+	Apply  StrategyApply   `yaml:"apply"`
+	Checks StrategyChecks  `yaml:"checks"`
+	Health []StrategyCheck `yaml:"healthChecks"`
 }
 
 type StrategyApply struct {
@@ -192,13 +217,10 @@ type StrategyCheckExpect struct {
 	BodyContains string `yaml:"bodyContains"`
 }
 
-type StrategyPromote struct {
-	To string `yaml:"to"`
-}
-
 type StrategyRunResult struct {
 	Name            string
 	BottleOutput    string
+	ComposeOutput   string
 	ResourcesOutput string
 	Steps           []StrategyStepResult
 }

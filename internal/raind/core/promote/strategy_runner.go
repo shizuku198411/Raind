@@ -49,14 +49,14 @@ func (r *StrategyRunner) Run() (StrategyRunResult, error) {
 	if err := r.runContainerStage(); err != nil {
 		return r.result, err
 	}
-	if r.reached("container") || r.reached("bottle-draft") {
+	if r.reached("container") || r.reached("bottle-draft") || !r.hasBottleStage() {
 		return r.result, nil
 	}
 
 	if err := r.runBottleStage(); err != nil {
 		return r.result, err
 	}
-	if r.reached("bottle") || r.reached("resources-draft") {
+	if r.reached("bottle") || r.reached("resources-draft") || !r.hasResourcesStage() {
 		return r.result, nil
 	}
 
@@ -87,7 +87,7 @@ func (r *StrategyRunner) runContainerStage() error {
 	}
 
 	err = r.runStageChecks("container", r.spec.Stages.Container)
-	if err == nil {
+	if err == nil && r.hasBottleStage() {
 		err = r.promoteContainersToBottle()
 	}
 
@@ -115,7 +115,7 @@ func (r *StrategyRunner) runBottleStage() error {
 	}
 
 	err = r.runStageChecks("bottle", r.spec.Stages.Bottle)
-	if err == nil {
+	if err == nil && r.hasResourcesStage() {
 		err = r.promoteBottleToResources()
 	}
 
@@ -336,6 +336,11 @@ func (r *StrategyRunner) promoteContainersToBottle() error {
 		r.failStep(step, err)
 		return err
 	}
+	composeData, err := RenderComposefile(maskedDraft)
+	if err != nil {
+		r.failStep(step, err)
+		return err
+	}
 	reviewData, err := RenderBottleReview(maskedDraft)
 	if err != nil {
 		r.failStep(step, err)
@@ -346,7 +351,13 @@ func (r *StrategyRunner) promoteContainersToBottle() error {
 		r.failStep(step, err)
 		return err
 	}
+	composeOutput := r.composeOutput()
+	if err := WriteComposePromotionOutput(composeData, true); err != nil {
+		r.failStep(step, err)
+		return err
+	}
 	r.result.BottleOutput = output
+	r.result.ComposeOutput = composeOutput
 	r.addStep(step, output)
 	return nil
 }
@@ -576,6 +587,10 @@ func (r *StrategyRunner) bottleOutput() string {
 	return DefaultBottlePromotionOutput
 }
 
+func (r *StrategyRunner) composeOutput() string {
+	return DefaultComposePromotionOutput
+}
+
 func (r *StrategyRunner) resourcesOutput() string {
 	return DefaultResourcePromotionOutput
 }
@@ -590,6 +605,14 @@ func (r *StrategyRunner) temporaryResourcesOutput() string {
 
 func (r *StrategyRunner) cleanupTemporaryOutputs() {
 	_ = os.RemoveAll(strategyTemporaryOutputDir)
+}
+
+func (r *StrategyRunner) hasBottleStage() bool {
+	return strategyBottleStageDefined(r.spec)
+}
+
+func (r *StrategyRunner) hasResourcesStage() bool {
+	return strategyResourcesStageDefined(r.spec)
 }
 
 func (r *StrategyRunner) ingressHost() string {
@@ -680,12 +703,27 @@ func (r *StrategyRunner) captureInternalOutput(step string, fn func() error) err
 }
 
 func estimateStrategyStepCount(spec StrategySpec, opt StrategyOptions) int {
-	containerSteps := len(spec.Source.Containers) + 1 + len(spec.Source.Policies) + strategyCheckCount(spec.Stages.Container) + 1 + 1
+	containerSteps := len(spec.Source.Containers) + 1 + len(spec.Source.Policies) + strategyCheckCount(spec.Stages.Container) + 1
+	if strategyBottleStageDefined(spec) {
+		containerSteps++
+	}
 	if len(spec.Source.Policies) > 0 {
 		containerSteps += 2
 	}
-	bottleSteps := 1 + strategyCheckCount(spec.Stages.Bottle) + 1 + 1
-	resourceSteps := 1 + strategyCheckCount(spec.Stages.Resources) + 1
+
+	bottleSteps := 0
+	if strategyBottleStageDefined(spec) {
+		bottleSteps = 1 + strategyCheckCount(spec.Stages.Bottle) + 1
+		if strategyResourcesStageDefined(spec) {
+			bottleSteps++
+		}
+	}
+
+	resourceSteps := 0
+	if strategyResourcesStageDefined(spec) {
+		resourceSteps = 1 + strategyCheckCount(spec.Stages.Resources) + 1
+	}
+
 	switch strings.ToLower(strings.TrimSpace(opt.Until)) {
 	case "container", "bottle-draft":
 		return containerSteps
@@ -694,6 +732,20 @@ func estimateStrategyStepCount(spec StrategySpec, opt StrategyOptions) int {
 	default:
 		return containerSteps + bottleSteps + resourceSteps
 	}
+}
+
+func strategyBottleStageDefined(spec StrategySpec) bool {
+	return spec.Stages.bottleDefined || strategyStageConfigured(spec.Stages.Bottle)
+}
+
+func strategyResourcesStageDefined(spec StrategySpec) bool {
+	return spec.Stages.resourcesDefined || strategyStageConfigured(spec.Stages.Resources)
+}
+
+func strategyStageConfigured(stage StrategyStage) bool {
+	return strings.TrimSpace(stage.Apply.File) != "" ||
+		strings.TrimSpace(stage.Apply.Path) != "" ||
+		strategyCheckCount(stage) > 0
 }
 
 func strategyCheckCount(stage StrategyStage) int {

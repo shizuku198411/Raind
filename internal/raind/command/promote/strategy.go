@@ -216,6 +216,9 @@ func printStrategyResult(result promote.StrategyRunResult, dryRun bool) {
 	if result.BottleOutput != "" {
 		fmt.Printf("bottle draft: %s\n", result.BottleOutput)
 	}
+	if result.ComposeOutput != "" {
+		fmt.Printf("compose draft: %s\n", result.ComposeOutput)
+	}
 	if result.ResourcesOutput != "" {
 		fmt.Printf("resource drafts: %s\n", result.ResourcesOutput)
 	}
