@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Validate how your application actually runs before turning it into Docker or Kubernetes deployment.</strong>
+  <strong>An application container validation runtime for pre-Kubernetes deployment workflows</strong>
 </p>
 
 <p align="center">
@@ -18,69 +18,51 @@
 </p>
 
 > [!WARNING]
-> Raind is experimental. It is not a Kubernetes distribution and does not aim to be fully Kubernetes-compatible. It focuses on a growing local subset that is useful for validating application deployment shape before a real cluster.
+> Raind is not intended for production use, nor is it designed to be a replacement for Docker or Kubernetes, or to provide full compatibility with either platform.
 
-Raind is a local application validation workflow for the stage before Docker and Kubernetes deployment.
-It runs your application as real containers, promotes the working runtime state into a Bottle(Compose-style), then promotes the running Bottle into Kubernetes-style resource drafts.
+Raind is a runtime focused on local startup validation before deploying applications to production environments such as Docker or Kubernetes. It helps verify whether an application can run as a container or Pod, and supports tuning runtime parameters before deployment.
 
-The main workflow is **Promote Strategy**: one `raind-strategy.yaml` describes the seed containers and the health checks for each stage.
-Raind then runs the whole flow for you:
+Raind provides an end-to-end startup validation flow from containers to Pods, and generates reviewable Docker/Kubernetes configuration drafts based on the runtime state.
 
-```text
-container run
-  → health check
-  → generate Bottle draft
-  → bottle up
-  → health check
-  → generate Kubernetes-style resource drafts
-  → resource apply
-  → health check
+1. Can the application start as a single container? (Docker-style application startup validation)
+2. Can multiple containers start and communicate with each other? (Compose-style application integration validation)
+3. Can the application start as a Pod? (Kubernetes-style application startup validation)
+
+## Motivation
+
+When deploying applications to Kubernetes, developers often validate single containers locally with Docker and then test Pods with Kubernetes. However, runtime behavior is not automatically guaranteed across different runtimes.  
+In other words, even if an application works with Docker or Compose, manually creating Kubernetes manifests from that working state does not guarantee that the values match the Docker/Compose runtime state, or that the application will work correctly in a different structure such as a Pod.  
+These gaps often surface during production deployment and require additional tuning.
+
+Raind is being developed as a runtime that aims to provide **consistent validation from Containers (Docker-style) to Pods (Kubernetes-style)**.
+
+## Promote Strategy
+
+One of Raind's most important features is **Promote Strategy**.  
+It defines a strategy for validating an application across the full promotion flow: from single-container startup validation (Docker-style), to multi-container collaboration (Compose-style), and finally to Pod-based startup validation (Kubernetes-style).
+
+A strategy describes:
+
+- what containers should be started
+- what communication should be allowed between containers
+- what criteria should be used to determine whether startup succeeded
+
+Raind then runs the validation automatically according to that strategy.
+
+```bash
+raind promote strategy
 ```
 
-![raind-promote-strategy](./assets/demo/raind-promote-strategy.gif)
+![promote-strategy](./assets/demo/promote-strategy.gif)
 
-Generated files are drafts. They are meant to be reviewed before being used outside Raind.
-
-## Why Raind?
-
-Application deployment usually moves through several disconnected stages:
-
-```text
-container run
-  → compose.yaml
-  → kind / minikube / Kubernetes manifests
-  → cluster validation
-```
-
-That workflow often turns into copy-and-edit drift. Ports, secrets, service names, volumes, and network rules are repeated across files, and generated manifests often do not know whether the application ever worked.
-
-Raind takes a different path:
-
-```text
-actual run
-  → observed runtime state
-  → health-checked promotion
-  → reviewable deployment drafts
-```
-
-Raind gives you one local runtime for:
-
-- single-container application tests(Docker-style),
-- multi-service Bottle stacks(Compose-style),
-- Deployments, Services, Ingress, PVCs, Secrets, ConfigMaps, and NetworkPolicies(Kubernetes-style),
-- runtime security policy and netflow logs,
-- automated promotion from one stage to the next.
-
-## Quickstart: Promote Strategy
-
-Create `raind-strategy.yaml`.
+<details><summary>Example strategy definition file</summary>
 
 ```yaml
 apiVersion: raind.io/v1alpha1
 kind: PromoteStrategy
 
 metadata:
-  name: web-stack
+  name: wordpress-stack
 
 source:
   mode: create
@@ -89,24 +71,29 @@ source:
       image: mysql:8
       env:
         MYSQL_ROOT_PASSWORD: root-password
-        MYSQL_DATABASE: app
-        MYSQL_USER: app
-        MYSQL_PASSWORD: app-password
-      ports:
-        - "3306:3306"
+        MYSQL_DATABASE: wordpress-db
+        MYSQL_USER: wordpress-user
+        MYSQL_PASSWORD: wordpress-password
+      volume:
+        - /mnt/mysql:/var/lib/mysql
 
-    - name: nginx
-      image: nginx:latest
+    - name: wordpress
+      image: wordpress:latest
+      env:
+        WORDPRESS_DB_HOST: mysql
+        WORDPRESS_DB_NAME: wordpress-db
+        WORDPRESS_DB_USER: wordpress-user
+        WORDPRESS_DB_PASSWORD: wordpress-password
       ports:
-        - "9980:80"
+        - "9850:80"
 
   policies:
     - type: ew
-      source: nginx
+      source: wordpress
       destination: mysql
       protocol: tcp
       destPort: 3306
-      comment: allow nginx to reach mysql during Strategy validation
+      comment: allow wordpress database access
 
 stages:
   container:
@@ -117,231 +104,363 @@ stages:
           target: mysql
           expect:
             state: running
-
-        - name: nginx-running
-          type: containerStatus
-          target: nginx
-          expect:
-            state: running
-
-      application:
-        - name: nginx-http
-          type: http
-          target: http://127.0.0.1:9980
-          expect:
-            status: 200
           timeout: 60s
           interval: 2s
 
-    promote:
-      to: bottle
-      output: raind_promote/bottle/bottle.yaml
+        - name: wordpress-running
+          type: containerStatus
+          target: wordpress
+          expect:
+            state: running
+          timeout: 60s
+          interval: 2s
 
   bottle:
     checks:
       runtime:
         - name: bottle-running
           type: bottleStatus
-          target: web-stack
-          expect:
-            state: running
-
-      application:
-        - name: nginx-http
-          type: http
-          target: http://127.0.0.1:9980
-          expect:
-            status: 200
+          target: wordpress-stack
           timeout: 60s
           interval: 2s
 
-    promote:
-      to: resources
-      output: raind_promote/resources
+      application:
+        - name: wordpress-http
+          type: http
+          target: http://127.0.0.1:9850/wp-admin/login.php
+          expect:
+            status: 200
+          timeout: 90s
+          interval: 2s
 
   resources:
-    apply:
-      file: raind_promote/resources/all.yaml
-
     checks:
       application:
-        - name: nginx-http
+        - name: wordpress-http
           type: http
-          target: http://127.0.0.1:9980
+          target: http://127.0.0.1:9850/wp-admin/login.php
           expect:
             status: 200
-          timeout: 60s
+          timeout: 90s
           interval: 2s
 ```
 
-Run the strategy.
+</details>
 
-```sh
-raind promote strategy
+### Generating reviewable configuration files
+
+Promote Strategy is more than a runtime validation feature.  
+When promoting from a single container to multiple containers (Docker-style → Compose-style), and from multiple containers to Pods (Compose-style → Kubernetes-style), Raind generates **reviewable configuration files based on the actual running runtime state**.
+
+<details><summary>Example generated Compose file:</summary>
+
+```yaml
+# Generated by Raind Promote from container/mysql, container/wordpress.
+# This compose.yaml is a reviewable draft, not production configuration.
+# Review env, mounts, ports, and dependencies before sharing.
+
+services:
+  mysql:
+    image: "mysql:8"
+    command:
+      - "docker-entrypoint.sh"
+      - "mysqld"
+    # TODO: secret candidate redacted from container env: MYSQL_PASSWORD
+    # env example: MYSQL_PASSWORD=<redacted>
+    # TODO: secret candidate redacted from container env: MYSQL_ROOT_PASSWORD
+    # env example: MYSQL_ROOT_PASSWORD=<redacted>
+    env:
+      - "GOSU_VERSION=1.19"
+      - "LANG=C.UTF-8"
+      - "MYSQL_DATABASE=wordpress-db"
+      - "MYSQL_MAJOR=8.4"
+      - "MYSQL_SHELL_VERSION=8.4.10-1.el9"
+      - "MYSQL_USER=wordpress-user"
+      - "MYSQL_VERSION=8.4.10-1.el9"
+    mount:
+      - "/mnt/mysql:/var/lib/mysql"
+  wordpress:
+    image: "wordpress:latest"
+    command:
+      - "docker-entrypoint.sh"
+      - "apache2-foreground"
+    # TODO: secret candidate redacted from container env: WORDPRESS_DB_PASSWORD
+    # env example: WORDPRESS_DB_PASSWORD=<redacted>
+    env:
+      - "APACHE_CONFDIR=/etc/apache2"
+      - "APACHE_ENVVARS=/etc/apache2/envvars"
+      - "GPG_KEYS=1198C0117593497A5EC5C199286AF1F9897469DC C28D937575603EB4ABB725861C0779DC5C0A9DE4 AFD8691FDAEDF03BDF6E460563F15A9B715376CA"
+      - "LANG=C.UTF-8"
+      - "PHPIZE_DEPS=autoconf \t\tdpkg-dev \t\tfile \t\tg++ \t\tgcc \t\tlibc-dev \t\tmake \t\tpkg-config \t\tre2c"
+      - "PHP_ASC_URL=https://www.php.net/distributions/php-8.3.31.tar.xz.asc"
+      - "PHP_CFLAGS=-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+      - "PHP_CPPFLAGS=-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+      - "PHP_INI_DIR=/usr/local/etc/php"
+      - "PHP_LDFLAGS=-Wl,-O1 -pie"
+      - "PHP_SHA256=66410cee07f4b2baeb0843140bb2a2b52ef930b5cf9b3d6e6d158b33aae8fa37"
+      - "PHP_URL=https://www.php.net/distributions/php-8.3.31.tar.xz"
+      - "PHP_VERSION=8.3.31"
+      - "WORDPRESS_DB_HOST=mysql"
+      - "WORDPRESS_DB_NAME=wordpress-db"
+      - "WORDPRESS_DB_USER=wordpress-user"
+    ports:
+      - "9850:80"
+    depends_on:
+      - "mysql"
 ```
 
-Raind prints the current stage and task while it works.
+</details>
 
-```text
-Promote Strategy: web-stack
-[container] create::mysql ... ok
-[container] create::nginx ... ok
-[container] runtime ... ok
-[container] policies::nginx-to-mysql-tcp:3306 ... ok
-[container] policies-commit ... ok
-[container] checks::runtime::mysql-running ... ok
-[container] checks::runtime::nginx-running ... ok
-[container] checks::application::nginx-http ... ok
-[container] promote ... raind_promote/bottle/bottle.yaml
-[container] policies-delete ... ok
-[container] delete ... ok
-[bottle] apply ... web-stack
-[bottle] checks::runtime::bottle-running ... ok
-[bottle] checks::application::nginx-http ... ok
-[bottle] promote ... raind_promote/resources
-[bottle] delete ... ok
-[resources] apply ... raind_promote/resources/all.yaml
-[resources] checks::application::nginx-http ... ok
-[resources] delete ... ok
-bottle draft: raind_promote/bottle/bottle.yaml
-resource drafts: raind_promote/resources
+<details><summary>Example generated manifest file:</summary>
+
+```yaml
+# Generated by Raind Promote from a Bottlefile.
+# Review generated manifests before applying them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: "wordpress-stack"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "mysql-config"
+  namespace: "wordpress-stack"
+data:
+  GOSU_VERSION: "1.19"
+  LANG: "C.UTF-8"
+  MYSQL_DATABASE: "wordpress-db"
+  MYSQL_MAJOR: "8.4"
+  MYSQL_SHELL_VERSION: "8.4.10-1.el9"
+  MYSQL_USER: "wordpress-user"
+  MYSQL_VERSION: "8.4.10-1.el9"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "wordpress-config"
+  namespace: "wordpress-stack"
+data:
+  APACHE_CONFDIR: "/etc/apache2"
+  APACHE_ENVVARS: "/etc/apache2/envvars"
+  GPG_KEYS: "1198C0117593497A5EC5C199286AF1F9897469DC C28D937575603EB4ABB725861C0779DC5C0A9DE4 AFD8691FDAEDF03BDF6E460563F15A9B715376CA"
+  LANG: "C.UTF-8"
+  PHPIZE_DEPS: "autoconf \t\tdpkg-dev \t\tfile \t\tg++ \t\tgcc \t\tlibc-dev \t\tmake \t\tpkg-config \t\tre2c"
+  PHP_ASC_URL: "https://www.php.net/distributions/php-8.3.31.tar.xz.asc"
+  PHP_CFLAGS: "-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+  PHP_CPPFLAGS: "-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+  PHP_INI_DIR: "/usr/local/etc/php"
+  PHP_LDFLAGS: "-Wl,-O1 -pie"
+  PHP_SHA256: "66410cee07f4b2baeb0843140bb2a2b52ef930b5cf9b3d6e6d158b33aae8fa37"
+  PHP_URL: "https://www.php.net/distributions/php-8.3.31.tar.xz"
+  PHP_VERSION: "8.3.31"
+  WORDPRESS_DB_HOST: "mysql.wordpress-stack.svc.cluster.local"
+  WORDPRESS_DB_NAME: "wordpress-db"
+  WORDPRESS_DB_USER: "wordpress-user"
+---
+# Example secret only. Replace placeholders before applying.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "mysql-secret"
+  namespace: "wordpress-stack"
+type: Opaque
+stringData:
+  MYSQL_PASSWORD: "<replace-me>"
+  MYSQL_ROOT_PASSWORD: "<replace-me>"
+---
+# Example secret only. Replace placeholders before applying.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "wordpress-secret"
+  namespace: "wordpress-stack"
+type: Opaque
+stringData:
+  WORDPRESS_DB_PASSWORD: "<replace-me>"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "mysql-mysql"
+  namespace: "wordpress-stack"
+  annotations:
+    "raind.dev/reclaimPolicy": "Retain"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "mysql"
+  namespace: "wordpress-stack"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "mysql"
+  template:
+    metadata:
+      labels:
+        app: "mysql"
+    spec:
+      volumes:
+        - name: "mysql-mysql"
+          persistentVolumeClaim:
+            claimName: "mysql-mysql"
+      containers:
+        - name: "mysql"
+          image: "mysql:8"
+          command:
+            - "docker-entrypoint.sh"
+            - "mysqld"
+          envFrom:
+            - configMapRef:
+                name: "mysql-config"
+            - secretRef:
+                name: "mysql-secret"
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: "mysql-mysql"
+              mountPath: "/var/lib/mysql"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "wordpress"
+  namespace: "wordpress-stack"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "wordpress"
+  template:
+    metadata:
+      labels:
+        app: "wordpress"
+    spec:
+      containers:
+        - name: "wordpress"
+          image: "wordpress:latest"
+          command:
+            - "docker-entrypoint.sh"
+            - "apache2-foreground"
+          envFrom:
+            - configMapRef:
+                name: "wordpress-config"
+            - secretRef:
+                name: "wordpress-secret"
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "mysql"
+  namespace: "wordpress-stack"
+spec:
+  type: ClusterIP
+  selector:
+    app: "mysql"
+  ports:
+    - port: 3306
+      targetPort: 3306
+      protocol: "TCP"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "wordpress"
+  namespace: "wordpress-stack"
+spec:
+  type: NodePort
+  selector:
+    app: "wordpress"
+  ports:
+    - port: 9850
+      targetPort: 80
+      protocol: "TCP"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "allow-wordpress-to-mysql"
+  namespace: "wordpress-stack"
+spec:
+  podSelector:
+    matchLabels:
+      app: "wordpress"
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: "mysql"
+      ports:
+        - protocol: "TCP"
+          port: 3306
 ```
 
-Review the generated drafts.
+</details><br>
 
-```text
-raind_promote/
-  bottle/
-    bottle.yaml
-    REVIEW_BOTTLE.md
-  resources/
-    00-namespace.yaml
-    01-configmap.yaml
-    02-secret.example.yaml
-    04-deployments.yaml
-    05-services.yaml
-    REVIEW.md
-    all.yaml
+These files are not just static conversions of configuration files. They are generated from runtime state, including:
+
+- whether the application containers started correctly
+- what environment variables the containers are actually running with
+- what communication occurred between containers
+
+The generated files are not meant to be used directly in production.  
+This is intentional: real deployments also require important operational settings such as readiness probes and jobs.  
+Raind's goal is to generate **a validated foundation for application startup** before those deployment-specific settings are added.
+
+## Local container and Pod startup
+
+Raind is being developed as a runtime that can handle both containers (Docker-style) and Pods (Kubernetes-style).  
+Promote Strategy is one feature that benefits greatly from this design, but Raind can also be used without Promote Strategy to start and validate single containers or Pods directly.
+
+### Starting a single container
+
+Just like Docker, Raind can start an application as a single container with a simple command.
+
+```bash
+raind container run -p 9980:80 nginx
 ```
 
-`raind promote strategy` is intentionally runtime-aware. Each stage is created, checked, promoted, and then cleaned up before the next stage begins. This avoids port conflicts while still ensuring that the generated drafts came from something that actually ran.
+![run-single-container](./assets/demo/run-single-container.gif)
 
-For the complete Strategy schema, all check types, optional fields, and manual Promote commands, see [Promote workflow](./docs/guides/promote.md).
+When a port is published, the application running inside the container can of course be accessed from outside the container.
 
-## What Promote Strategy validates
+### Building images
 
-A strategy file defines two things:
+Raind can also build images.
 
-1. **The seed runtime**: the containers Raind should create first.
-2. **The checks for each stage**: runtime and application checks for containers, Bottle, and resources.
+![image-build](./assets/demo/image-build.gif)
 
-Supported check types include:
+Multi-stage builds are supported as well, making it possible to validate whether a Dockerfile is written correctly.
 
-| Check type | Purpose |
-|---|---|
-| `containerStatus` | Confirm that a named container reached the expected state. |
-| `bottleStatus` | Confirm that a Bottle is running and has runtime container state. |
-| `http` | Confirm that an HTTP endpoint responds with the expected status/body. |
-| `tcp` | Confirm that a host and port can accept TCP connections. |
+### Starting Pods
 
-The default output layout is stable and repo-friendly:
+Like Kubernetes, Raind can start various resources and Pods from manifest files.
 
-```text
-raind_promote/bottle/bottle.yaml
-raind_promote/bottle/REVIEW_BOTTLE.md
-raind_promote/resources/all.yaml
-raind_promote/resources/REVIEW.md
+```bash
+raind resource apply -f manifest.yaml
 ```
 
-Strategy-generated drafts overwrite previous drafts by default because they are generated review artifacts.
+![resource-apply](./assets/demo/resource-apply.gif)
 
-## Design principles
+Raind provides core application startup features such as ReplicaSets and Ingress, so you can validate Pod startup and access applications by hostname using Raind alone before deploying to production.
 
-### Runtime-aware, not static translation
+### Traffic control and visibility
 
-Promote starts from things Raind has actually run or observed. Strategy promotes only after each stage passes its checks.
+Raind includes built-in runtime-level traffic control and visibility for communication between containers and Pods.
 
-### Reviewable, not magical
-
-Generated files are drafts. Raind writes review reports and TODOs where production decisions are still required.
-
-### Preserve intent
-
-Names, images, commands, ports, service boundaries, environment variables, volumes, and traffic relationships are kept whenever possible.
-
-### Validate before deployment
-
-Raind focuses on the local workflow before a real Docker Compose or Kubernetes deployment: run it, check it, generate a draft, and review the result.
-
-## Core capabilities
-
-### Promote Strategy
-
-```sh
-raind promote strategy
-raind promote strategy -f raind-strategy.yaml
-raind promote strategy --dry-run
-raind promote strategy --until bottle
-raind promote strategy --namespace web-stack --ingress-host web.raind.local
+```bash
+raind policy security ls
 ```
-
-### Containers
-
-```sh
-raind container run --name web -p 8080:80 nginx:latest
-raind container exec web /bin/sh
-raind container logs web
-raind container stop web
-raind container rm web
-```
-
-### Bottles
-
-```sh
-raind bottle up
-raind bottle show web-stack
-raind bottle down
-```
-
-Default file discovery:
-
-1. `bottle.yaml`
-2. `compose.yaml`
-3. explicit `-f <path>`
-
-### Kubernetes-style resources
-
-Raind supports a growing local subset including:
-
-- Namespace
-- Pod
-- Deployment
-- ReplicaSet
-- Service
-- Ingress
-- ConfigMap
-- Secret
-- PersistentVolumeClaim
-- NetworkPolicy
-
-```sh
-raind resource apply -f raind_promote/resources/all.yaml
-raind resource get pod
-raind resource get deploy
-raind resource get service
-raind resource delete -f raind_promote/resources/all.yaml
-```
-
-### Network visibility and policy
-
-Raind connects NetworkPolicy-style manifests and Bottle policies to runtime-managed east-west security policy.
-
-```sh
-raind security policy ls --type ew
-raind logs netflow
-```
-
-Example:
 
 ```text
 POLICY TYPE : East-West
@@ -352,57 +471,47 @@ FLAG  SRC CONTAINER  DST CONTAINER  PROTOCOL  DST PORT  ACTION
   >> DENY ALL EAST-WEST TRAFFIC <<
 ```
 
-## What Raind is not
+Traffic between containers and Pods is denied by default unless it is explicitly allowed.  
+While this may seem inconvenient at first, it is an important step before moving to production: it helps you understand actual communication patterns and decide which traffic should be allowed as policy.
 
-Raind is not a replacement for Docker, Podman, kind, minikube, or Kubernetes.
+```bash
+raind logs netflow
+```
 
-| Tool | Primary role |
-|---|---|
-| Docker / Podman | General container engine |
-| kind / minikube | Run a real Kubernetes cluster locally |
-| Kubernetes | Production-grade orchestration platform |
-| Raind | Runtime-promoted local deployment validation before Docker/Kubernetes deployment |
-
-Raind is for the space where you want to know:
-
-- Did the container actually run?
-- Did the multi-service stack actually communicate?
-- What should the next deployment draft look like?
-- Can the Kubernetes-style shape be validated locally before a real cluster?
-
-## Demo
-
-Raind Promote Strategy is the main story, but the same runtime can also be used for normal development checks.
-You can run containers, start Bottle stacks, and apply Kubernetes-style resources directly, then promote the working runtime state when the application shape is ready.
-
-![Raind quickstart demo](./assets/demo/raind-quickstart.gif)
+```text
+2026-06-22 07:19:05     DENY    FROM: wordpress => TO: mysql {TCP/3306}
+2026-06-22 07:19:05     DENY    FROM: wordpress => TO: mysql {TCP/3306}
+2026-06-22 07:19:05     DENY    FROM: wordpress => TO: mysql {TCP/3306}
+2026-06-22 10:40:46     ALLOW   FROM: wordpress => TO: mysql {TCP/3306}
+2026-06-22 10:40:46     ALLOW   FROM: wordpress => TO: mysql {TCP/3306}
+2026-06-22 10:40:47     ALLOW   FROM: wordpress => TO: 198.143.164.251 {TCP/443}
+```
 
 ## Documentation
 
+Raind includes many more features.  
+For installation instructions and usage details, see the documentation below.
+
 - [Documentation index](./docs/)
-- [Promote Strategy and manual Promote workflow](./docs/guides/promote.md)
-- [Bottles](./docs/guides/bottles.md)
-- [Containers](./docs/guides/containers.md)
-- [Architecture](./docs/architecture/)
-- [Resource reference](./docs/resources/)
 - [CLI reference](./docs/reference/cli.md)
+- [Promote Strategy and manual Promote workflow](./docs/guides/promote.md)
+- [Containers](./docs/guides/containers.md)
+- [Bottles](./docs/guides/bottles.md)
+- [Resource reference](./docs/resources/)
 - [Manifest schema](./docs/reference/manifest-schema.md)
-- [Security](./SECURITY.md)
-- [Contributing](./CONTRIBUTING.md)
 
 ## Project status
 
-Raind is experimental and evolving quickly.
-
-Current focus areas include:
-
-- strengthening Promote Strategy,
-- expanding the Kubernetes-style resource subset,
-- improving validation and review reports,
-- improving Service, DNS, and Ingress behavior,
-- improving NetworkPolicy reconciliation and netflow visibility,
-- hardening runtime state management and security-sensitive paths.
+Raind is currently under active development.  
+It is not intended for production use, nor is it designed to be fully compatible with Docker or Kubernetes.
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md), [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md), and [SECURITY.md](./SECURITY.md).
+Contributions are very welcome.  
+Small bugs, improvement requests, and other issues you find while using Raind are also very welcome.
+
+Before contributing, please read the following documents:
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [SECURITY.md](./SECURITY.md)
