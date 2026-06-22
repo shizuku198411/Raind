@@ -77,6 +77,7 @@ func NewApp() *cli.App {
 				Subcommands: []*cli.Command{
 					promotecommand.CommandContainer(),
 					promotecommand.CommandBottle(),
+					promotecommand.CommandStrategy(),
 				},
 			},
 			{

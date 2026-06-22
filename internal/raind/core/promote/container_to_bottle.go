@@ -44,7 +44,7 @@ func BuildBottleDraftFromContainers(inspects []container.ContainerInspectModel, 
 			Name:    serviceName,
 			Image:   formatImage(inspect.ImageRepository, inspect.ImageReference),
 			Command: commandFromInspect(inspect),
-			Env:     envFromInspect(inspect, opt.IncludeImageEnv),
+			Env:     envFromInspect(inspect, opt.IncludeImageEnv, opt.PreserveSensitiveEnv),
 			Ports:   portsFromInspect(inspect),
 			Mounts:  mountsFromInspect(inspect),
 			Tty:     inspect.Tty,
@@ -231,7 +231,7 @@ func commandFromInspect(inspect container.ContainerInspectModel) []string {
 	return nil
 }
 
-func envFromInspect(inspect container.ContainerInspectModel, includeImageEnv bool) []EnvVar {
+func envFromInspect(inspect container.ContainerInspectModel, includeImageEnv bool, preserveSensitiveEnv bool) []EnvVar {
 	process, _ := inspect.Config["process"].(map[string]any)
 	envStrings, ok := stringSliceFromAny(process["env"])
 	if !ok || len(envStrings) == 0 {
@@ -255,7 +255,7 @@ func envFromInspect(inspect container.ContainerInspectModel, includeImageEnv boo
 			continue
 		}
 		seen[key] = struct{}{}
-		vars = append(vars, EnvVar{Key: key, Value: value, Sensitive: IsSecretLikeKey(key)})
+		vars = append(vars, EnvVar{Key: key, Value: value, Sensitive: !preserveSensitiveEnv && IsSecretLikeKey(key)})
 	}
 	sort.SliceStable(vars, func(i, j int) bool { return vars[i].Key < vars[j].Key })
 	return vars

@@ -14,7 +14,7 @@ import (
 func CommandContainer() *cli.Command {
 	return &cli.Command{
 		Name:      "container",
-		Usage:     "promote a container to a bottle.yaml draft",
+		Usage:     "promote a container to bottle.yaml and compose.yaml drafts",
 		ArgsUsage: "<id|name> [id|name ...]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -25,8 +25,8 @@ func CommandContainer() *cli.Command {
 			&cli.StringFlag{
 				Name:    "output",
 				Aliases: []string{"o"},
-				Usage:   "output bottle.yaml path",
-				Value:   "bottle.yaml",
+				Usage:   "output bottle.yaml path; compose.yaml is also written to raind_promote/compose/compose.yaml",
+				Value:   promote.DefaultBottlePromotionOutput,
 			},
 			&cli.StringFlag{
 				Name:  "service-name",
@@ -43,13 +43,8 @@ func CommandContainer() *cli.Command {
 				Value: false,
 			},
 			&cli.BoolFlag{
-				Name:  "force",
-				Usage: "overwrite output file if it already exists",
-				Value: false,
-			},
-			&cli.BoolFlag{
 				Name:  "stdout",
-				Usage: "write generated bottle.yaml to stdout instead of a file",
+				Usage: "write generated bottle.yaml to stdout instead of files",
 				Value: false,
 			},
 		},
@@ -113,11 +108,18 @@ func runPromoteContainer(ctx *cli.Context) error {
 		return err
 	}
 
+	composeData, err := promote.RenderComposefile(draft)
+	if err != nil {
+		return err
+	}
 	reviewData, err := promote.RenderBottleReview(draft)
 	if err != nil {
 		return err
 	}
-	return promote.WriteBottlePromotionOutputs(opts.Output, bottleData, reviewData, opts.Force)
+	if err := promote.WriteBottlePromotionOutputs(opts.Output, bottleData, reviewData, true); err != nil {
+		return err
+	}
+	return promote.WriteComposePromotionOutput(composeData, true)
 }
 
 type containerOptions struct {
@@ -129,7 +131,6 @@ type containerOptions struct {
 	ServiceNameSet  bool
 	BottleName      string
 	IncludeImageEnv bool
-	Force           bool
 	Stdout          bool
 }
 
@@ -143,7 +144,6 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 		ServiceNameSet:  ctx.IsSet("service-name"),
 		BottleName:      ctx.String("bottle-name"),
 		IncludeImageEnv: ctx.Bool("include-image-env"),
-		Force:           ctx.Bool("force"),
 		Stdout:          ctx.Bool("stdout"),
 	}
 	args := ctx.Args().Slice()
@@ -184,8 +184,6 @@ func parseContainerOptions(ctx *cli.Context) (containerOptions, error) {
 			i = next
 		case "--include-image-env":
 			opts.IncludeImageEnv = true
-		case "--force":
-			opts.Force = true
 		case "--stdout":
 			opts.Stdout = true
 		default:

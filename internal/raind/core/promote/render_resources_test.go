@@ -138,6 +138,77 @@ policies:
 	}
 }
 
+func TestRenderResourceFilesCanPreserveSensitiveDataForStrategyRuntime(t *testing.T) {
+	draft := BottleDraft{
+		BottleName: "myapp",
+		Services: []ServiceDraft{{
+			Name:  "db",
+			Image: "mysql:8",
+			Env: []EnvVar{
+				{Key: "MYSQL_DATABASE", Value: "app"},
+				{Key: "MYSQL_ROOT_PASSWORD", Value: "root-secret", Sensitive: true},
+			},
+		}},
+	}
+
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{PreserveSensitiveData: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := resourceFilesByName(files)
+	secret := string(byName["02-secret.yaml"])
+	if !strings.Contains(secret, `MYSQL_ROOT_PASSWORD: "root-secret"`) {
+		t.Fatalf("runtime secret manifest did not preserve sensitive value:\n%s", secret)
+	}
+	if strings.Contains(secret, "<replace-me>") {
+		t.Fatalf("runtime secret manifest still contains placeholder:\n%s", secret)
+	}
+	all := string(byName["all.yaml"])
+	if !strings.Contains(all, `MYSQL_ROOT_PASSWORD: "root-secret"`) {
+		t.Fatalf("combined runtime manifest did not include real secret value:\n%s", all)
+	}
+}
+
+func TestRenderResourceFilesUsesNodePortOnlyForHostPublishedServices(t *testing.T) {
+	draft := BottleDraft{
+		BottleName: "wordpress-stack",
+		Services: []ServiceDraft{
+			{
+				Name:  "mysql",
+				Image: "mysql:8",
+				Ports: []PortMapping{{ContainerPort: 3306, Protocol: "tcp"}},
+			},
+			{
+				Name:  "wordpress",
+				Image: "wordpress:latest",
+				Ports: []PortMapping{{HostPort: 9850, ContainerPort: 80, Protocol: "tcp"}},
+			},
+		},
+	}
+
+	files, err := RenderResourceFiles(draft, RenderResourcesOptions{
+		ServiceType:       "NodePort",
+		PreserveHostPorts: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := string(resourceFilesByName(files)["05-services.yaml"])
+
+	mysql := serviceManifestBlock(services, "mysql")
+	if !strings.Contains(mysql, "type: ClusterIP") || !strings.Contains(mysql, "port: 3306") {
+		t.Fatalf("internal mysql service should stay ClusterIP on its container port:\n%s", mysql)
+	}
+	if strings.Contains(mysql, "type: NodePort") {
+		t.Fatalf("internal mysql service must not become NodePort:\n%s", mysql)
+	}
+
+	wordpress := serviceManifestBlock(services, "wordpress")
+	if !strings.Contains(wordpress, "type: NodePort") || !strings.Contains(wordpress, "port: 9850") || !strings.Contains(wordpress, "targetPort: 80") {
+		t.Fatalf("host-published wordpress service should preserve host port as NodePort:\n%s", wordpress)
+	}
+}
+
 func TestRenderResourceFilesCoversGeneratedManifestCombinations(t *testing.T) {
 	draft := BottleDraft{
 		SourceContainer: "running bottle/myapp",
@@ -363,6 +434,23 @@ func TestBuildResourceDraftFromBottleDetailRejectsNonRunningBottleStates(t *test
 	if _, err := BuildResourceDraftFromBottleDetail(base, BottleToResourcesOptions{}); err == nil {
 		t.Fatalf("expected error when runtime container is not running")
 	}
+}
+
+func serviceManifestBlock(manifests string, name string) string {
+	needle := `name: "` + name + `"`
+	start := strings.Index(manifests, needle)
+	if start < 0 {
+		return ""
+	}
+	blockStart := strings.LastIndex(manifests[:start], "---")
+	if blockStart < 0 {
+		blockStart = 0
+	}
+	blockEnd := strings.Index(manifests[start:], "---")
+	if blockEnd < 0 {
+		return manifests[blockStart:]
+	}
+	return manifests[blockStart : start+blockEnd]
 }
 
 func resourceFilesByName(files []ResourceFile) map[string][]byte {

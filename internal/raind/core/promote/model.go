@@ -1,10 +1,11 @@
 package promote
 
 type ContainerToBottleOptions struct {
-	BottleName        string
-	ServiceName       string
-	IncludeImageEnv   bool
-	AllowPodContainer bool
+	BottleName           string
+	ServiceName          string
+	IncludeImageEnv      bool
+	AllowPodContainer    bool
+	PreserveSensitiveEnv bool
 }
 
 type BottleDraft struct {

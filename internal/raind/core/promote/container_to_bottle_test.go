@@ -538,3 +538,48 @@ func TestPromoteImageOutputOmitsDefaultLibraryPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderComposefileOmitsPolicies(t *testing.T) {
+	draft := BottleDraft{
+		SourceContainer: "container/app",
+		BottleName:      "stack",
+		Services: []ServiceDraft{{
+			Name:      "app",
+			Image:     "wordpress:latest",
+			Env:       []EnvVar{{Key: "APP_ENV", Value: "dev"}, {Key: "DB_PASSWORD", Value: "P@ssw0rd", Sensitive: true}},
+			Ports:     []PortMapping{{HostPort: 9850, ContainerPort: 80}},
+			DependsOn: []string{"mysql"},
+		}},
+		Policies: []PolicyDraft{{Type: "ew", Source: "app", Destination: "mysql", Protocol: "tcp", DestPort: 3306}},
+	}
+
+	out, err := RenderComposefile(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if strings.Contains(text, "policies:") || strings.Contains(text, "dest_port:") {
+		t.Fatalf("rendered compose.yaml included Raind-only policies:\n%s", text)
+	}
+	for _, want := range []string{
+		"compose.yaml",
+		"services:",
+		"  app:",
+		"    image: \"wordpress:latest\"",
+		"    depends_on:",
+		"      - \"mysql\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered compose.yaml missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "P@ssw0rd") {
+		t.Fatalf("rendered compose.yaml leaked secret value:\n%s", text)
+	}
+}
+
+func TestDefaultComposePromotionOutput(t *testing.T) {
+	if DefaultComposePromotionOutput != "raind_promote/compose/compose.yaml" {
+		t.Fatalf("unexpected compose output path: %s", DefaultComposePromotionOutput)
+	}
+}

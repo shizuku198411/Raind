@@ -158,6 +158,7 @@ func TestNetworkServiceCreateForwardingRuleSkipsExistingRules(t *testing.T) {
 		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "eth0", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
 		{name: "iptables", args: []string{"-t", "nat", "-C", "OUTPUT", "-m", "addrtype", "--dst-type", "LOCAL", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
 		{name: "iptables", args: []string{"-t", "nat", "-C", "PREROUTING", "-i", "raind1", "-m", "addrtype", "--dst-type", "LOCAL", "-p", "tcp", "--dport", "8080", "-j", "DNAT", "--to-destination", "10.166.1.2:80"}},
+		{name: "iptables", args: []string{"-t", "nat", "-C", "POSTROUTING", "-s", "127.0.0.0/8", "-d", "10.166.1.2", "-p", "tcp", "--dport", "80", "-j", "MASQUERADE"}},
 		{name: "iptables", args: []string{"-C", "FORWARD", "-i", "eth0", "-o", "raind1", "-p", "tcp", "--dport", "8080", "-d", "10.166.1.2", "-j", "ACCEPT"}},
 		{name: "iptables", args: []string{"-C", "FORWARD", "-i", "raind1", "-o", "raind1", "-p", "tcp", "-m", "conntrack", "--ctstate", "DNAT", "--dport", "80", "-d", "10.166.1.2", "-j", "ACCEPT"}},
 		{name: "iptables", args: []string{"-C", "FORWARD", "-o", "eth0", "-i", "raind1", "-p", "tcp", "--sport", "8080", "-s", "10.166.1.2", "-j", "ACCEPT"}},
@@ -175,6 +176,7 @@ func TestNetworkServiceRemoveForwardingRuleIgnoresMissingRules(t *testing.T) {
 			errors.New("dnat rule not found"),
 			errors.New("output rule not found"),
 			errors.New("bridge rule not found"),
+			errors.New("localhost masquerade rule not found"),
 			errors.New("forward in rule not found"),
 			errors.New("hairpin rule not found"),
 			errors.New("forward out rule not found"),
@@ -185,7 +187,7 @@ func TestNetworkServiceRemoveForwardingRuleIgnoresMissingRules(t *testing.T) {
 	err := service.RemoveForwardingRule("cid-1", ServiceNetworkModel{HostPort: "8080", ContainerPort: "80", Protocol: "tcp"})
 
 	require.NoError(t, err)
-	assert.Len(t, commands.calls, 6)
+	assert.Len(t, commands.calls, 7)
 	for _, call := range commands.calls {
 		assert.Contains(t, call.args, "-C")
 		assert.NotContains(t, call.args, "-D")

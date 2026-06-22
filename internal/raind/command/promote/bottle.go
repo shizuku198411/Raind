@@ -24,7 +24,7 @@ func CommandBottle() *cli.Command {
 				Name:    "output",
 				Aliases: []string{"o"},
 				Usage:   "output manifest directory",
-				Value:   "manifests",
+				Value:   promote.DefaultResourcePromotionOutput,
 			},
 			&cli.StringFlag{
 				Name:  "namespace",
@@ -33,11 +33,6 @@ func CommandBottle() *cli.Command {
 			&cli.StringFlag{
 				Name:  "ingress-host",
 				Usage: "generate an Ingress draft for the first TCP service port using this host",
-			},
-			&cli.BoolFlag{
-				Name:  "force",
-				Usage: "overwrite generated files if they already exist",
-				Value: false,
 			},
 		},
 		Action: runPromoteBottle,
@@ -50,7 +45,6 @@ type promoteBottleCLIOptions struct {
 	Output      string
 	Namespace   string
 	IngressHost string
-	Force       bool
 }
 
 func runPromoteBottle(ctx *cli.Context) error {
@@ -78,7 +72,7 @@ func runPromoteBottle(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return promote.WriteResourceFiles(opts.Output, files, opts.Force)
+	return promote.WriteResourceFiles(opts.Output, files, true)
 }
 
 func parsePromoteBottleCLIOptions(ctx *cli.Context) (promoteBottleCLIOptions, error) {
@@ -88,7 +82,6 @@ func parsePromoteBottleCLIOptions(ctx *cli.Context) (promoteBottleCLIOptions, er
 		Output:      ctx.String("output"),
 		Namespace:   ctx.String("namespace"),
 		IngressHost: ctx.String("ingress-host"),
-		Force:       ctx.Bool("force"),
 	}
 
 	// urfave/cli stops parsing command flags after the first positional argument.
@@ -101,8 +94,6 @@ func parsePromoteBottleCLIOptions(ctx *cli.Context) (promoteBottleCLIOptions, er
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "--force":
-			opts.Force = true
 		case arg == "--to":
 			value, next, err := trailingFlagValue(args, i, arg)
 			if err != nil {
