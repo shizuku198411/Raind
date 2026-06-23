@@ -1,9 +1,14 @@
 package container
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"raind/internal/droplet/spec"
 	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // fifoCreator creates a FIFO (named pipe) at the given path.
@@ -57,6 +62,11 @@ func newContainerFifoHandler() *containerFifoHandler {
 // interface required for their role.
 type containerFifoHandler struct{}
 
+const (
+	fifoWriteTimeout       = 5 * time.Second
+	fifoWriteRetryInterval = 20 * time.Millisecond
+)
+
 // createFifo creates a named pipe (FIFO) at the specified path.
 //
 // The FIFO is created with mode 0600 to limit access to the owner.
@@ -105,17 +115,45 @@ func (c *containerFifoHandler) readFifo(path string) error {
 //
 // This unblocks the reader side, which is waiting in readFifo.
 func (c *containerFifoHandler) writeFifo(path string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	return c.writeFifoWithTimeout(path, fifoWriteTimeout)
+}
 
-	if _, err := f.Write([]byte{1}); err != nil {
-		return err
-	}
+// writeFifoWithTimeout waits until the FIFO has a reader and writes the start
+// signal. Opening a FIFO with O_WRONLY blocks forever when no reader is present,
+// so this method uses O_NONBLOCK and retries ENXIO until timeout.
+func (c *containerFifoHandler) writeFifoWithTimeout(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 
-	return nil
+	for {
+		fd, err := unix.Open(path, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if err == nil {
+			defer unix.Close(fd)
+
+			for {
+				n, err := unix.Write(fd, []byte{1})
+				if err == nil {
+					if n != 1 {
+						return fmt.Errorf("fifo write %s: short write: wrote %d bytes", path, n)
+					}
+					return nil
+				}
+				if errors.Is(err, unix.EINTR) {
+					continue
+				}
+				return fmt.Errorf("fifo write %s: %w", path, err)
+			}
+		}
+
+		if !errors.Is(err, unix.ENXIO) && !errors.Is(err, unix.EINTR) {
+			return fmt.Errorf("fifo open %s: %w", path, err)
+		}
+
+		if timeout <= 0 || time.Now().After(deadline) {
+			return fmt.Errorf("fifo open %s: timed out waiting for reader after %s", path, timeout)
+		}
+
+		time.Sleep(fifoWriteRetryInterval)
+	}
 }
 
 // prepareRootlessFifo makes the startup FIFO accessible to the container init

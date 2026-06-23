@@ -51,3 +51,38 @@ func TestContainerFifoHandlerReadBlocksUntilWrite(t *testing.T) {
 	// == assert ==
 	require.NoError(t, <-errCh)
 }
+
+func TestContainerFifoHandlerWriteTimesOutWhenNoReader(t *testing.T) {
+	// == setup ==
+	handler := &containerFifoHandler{}
+	fifoPath := filepath.Join(t.TempDir(), "exec.fifo")
+	require.NoError(t, handler.createFifo(fifoPath))
+
+	// == exercise ==
+	start := time.Now()
+	err := handler.writeFifoWithTimeout(fifoPath, 50*time.Millisecond)
+
+	// == assert ==
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out waiting for reader")
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}
+
+func TestContainerFifoHandlerWriteWaitsForDelayedReader(t *testing.T) {
+	// == setup ==
+	handler := &containerFifoHandler{}
+	fifoPath := filepath.Join(t.TempDir(), "exec.fifo")
+	require.NoError(t, handler.createFifo(fifoPath))
+	errCh := make(chan error, 1)
+
+	// == exercise ==
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		errCh <- handler.readFifo(fifoPath)
+	}()
+	err := handler.writeFifoWithTimeout(fifoPath, 500*time.Millisecond)
+
+	// == assert ==
+	require.NoError(t, err)
+	require.NoError(t, <-errCh)
+}
