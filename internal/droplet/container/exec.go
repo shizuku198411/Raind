@@ -132,8 +132,8 @@ func (c *ContainerExec) executeNsenter(containerPid int, containerSpec spec.Spec
 	cmd.SetEnv(containerSpec.Process.Env)
 
 	// set stdout/stderr to log files
-	logPath := utils.ExecLogPath(opt.ContainerId)
-	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+	logPath := utils.ContainerLogPath(opt.ContainerId)
+	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return err
 	}

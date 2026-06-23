@@ -2,7 +2,6 @@ package container
 
 import (
 	"fmt"
-	"path/filepath"
 	"raind/internal/condenser/utils"
 )
 
@@ -18,17 +17,9 @@ func (s *ContainerService) GetLogWithTailLines(target string, n int) ([]byte, er
 		return nil, fmt.Errorf("container: %s not found", target)
 	}
 
-	// check the container running tty/non tty
-	containerInfo, err := s.csmHandler.GetContainerById(containerId)
+	logPath, err := s.csmHandler.GetLogPath(containerId)
 	if err != nil {
 		return nil, err
-	}
-	var logPath string
-	switch containerInfo.Tty {
-	case true:
-		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "console.log")
-	case false:
-		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "init.log")
 	}
 
 	if n > maxTailLines {

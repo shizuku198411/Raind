@@ -132,12 +132,7 @@ func (s *ContainerService) Create(createParameter ServiceCreateModel) (id string
 	}
 	createParameter.SecurityProfile = resolvedSecurityProfile.Name
 
-	logPath := ""
-	if createParameter.Tty {
-		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "console.log")
-	} else {
-		logPath = filepath.Join(utils.ContainerRootDir, containerId, "logs", "init.log")
-	}
+	logPath := filepath.Join(utils.ContainerRootDir, containerId, "logs", "container.log")
 	if err := s.csmHandler.StoreContainer(csm.StoreContainerRequest{
 		ContainerId:     containerId,
 		State:           "creating",

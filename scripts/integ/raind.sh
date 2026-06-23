@@ -31,7 +31,7 @@ fail() {
   fi
   if sudo_cmd test -d /etc/raind/container 2>/dev/null; then
     printf '%s\n' '--- recent container logs ---' >&2
-    sudo_cmd find /etc/raind/container -maxdepth 3 \( -path '*/logs/init.log' -o -path '*/logs/console.log' \) -type f -printf '%T@ %p\n' 2>/dev/null \
+    sudo_cmd find /etc/raind/container -maxdepth 3 -path '*/logs/container.log' -type f -printf '%T@ %p\n' 2>/dev/null \
       | sort -nr \
       | head -8 \
       | awk '{ $1=""; sub(/^ /, ""); print }' \

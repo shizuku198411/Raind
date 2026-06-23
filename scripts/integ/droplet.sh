@@ -143,8 +143,8 @@ dump_runtime_debug() {
   echo "----- container files -----" >&2
   sudo_cmd find "${container_dir}" -maxdepth 4 -type f -print >&2 2>/dev/null || true
 
-  echo "----- init.log -----" >&2
-  sudo_cmd cat "${container_dir}/logs/init.log" >&2 2>/dev/null || true
+  echo "----- container.log -----" >&2
+  sudo_cmd cat "${container_dir}/logs/container.log" >&2 2>/dev/null || true
 
   echo "----- droplet audit log -----" >&2
   sudo_cmd tail -n 100 /etc/raind/log/droplet_audit.log >&2 2>/dev/null || true
@@ -627,14 +627,14 @@ run_runtime_lifecycle_e2e() {
   sudo_cmd test -d "/proc/${pid}"
   assert_sudo_path_absent "/etc/raind/container/${cid}/exec.fifo"
   assert_sudo_path_absent "/etc/raind/container/${cid}/config_hash.json"
-  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/init.log"
+  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/container.log"
   assert_audit_event "${cid}" "start"
   assert_command_fails droplet-start-twice sudo_droplet start "${cid}"
   assert_command_fails droplet-delete-running sudo_droplet delete "${cid}"
 
   log "droplet exec"
   sudo_droplet exec "${cid}" /bin/sh -c "echo exec-ok"
-  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/exec.log"
+  assert_sudo_file_exists "/etc/raind/container/${cid}/logs/container.log"
   assert_audit_event "${cid}" "exec"
 
   log "droplet kill"
@@ -692,7 +692,7 @@ run_rootless_runtime_lifecycle_e2e() {
     fail "unexpected rootless uid_map"
   }
   sudo_droplet exec "${cid}" /bin/sh -c "echo rootless-ok > /tmp/rootless-test && cat /tmp/rootless-test"
-  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/exec.log" "rootless-ok" || {
+  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/container.log" "rootless-ok" || {
     dump_runtime_debug "${cid}"
     fail "rootless exec/write check failed"
   }
@@ -776,7 +776,7 @@ run_login_rootless_runtime_lifecycle_e2e() {
   }
 
   sudo_droplet exec "${cid}" /bin/sh -c "echo login-root-ok > /data/hello.txt && cat /data/hello.txt"
-  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/exec.log" "login-root-ok" || {
+  wait_sudo_file_contains "/etc/raind/container/${cid}/logs/container.log" "login-root-ok" || {
     dump_runtime_debug "${cid}"
     fail "login-root rootless bind write check failed"
   }

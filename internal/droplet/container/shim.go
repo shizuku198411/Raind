@@ -135,11 +135,11 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		}
 		defer ln.Close()
 
-		consoleLog, err := os.OpenFile(utils.ConsoleLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+		containerLog, err := os.OpenFile(utils.ContainerLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 		if err != nil {
 			return err
 		}
-		defer consoleLog.Close()
+		defer containerLog.Close()
 
 		cmd.SetStdin(tty)
 		cmd.SetStdout(tty)
@@ -147,13 +147,13 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 
 		// Start accepting attach connections before init starts. The attach client
 		// may connect immediately after create/start returns.
-		h := newHub(ptmx, consoleLog, logger)
+		h := newHub(ptmx, containerLog, logger)
 		h.startPump()
 		go c.acceptLoop(ln, h, logger)
 	} else {
 		stage = "open_init_log"
-		logPath := utils.InitLogPath(containerId)
-		initLog, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+		logPath := utils.ContainerLogPath(containerId)
+		initLog, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 		if err != nil {
 			return err
 		}

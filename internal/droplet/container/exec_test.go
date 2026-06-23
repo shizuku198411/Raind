@@ -89,7 +89,7 @@ func TestContainerExecNonTTYStartsNsenterAndRedirectsLogs(t *testing.T) {
 	assert.Equal(t, 1, cmd.starts)
 	assert.NotNil(t, cmd.stdout)
 	assert.NotNil(t, cmd.stderr)
-	assert.Equal(t, []string{utils.ExecLogPath("container-1")}, syscalls.openFiles)
+	assert.Equal(t, []string{utils.ContainerLogPath("container-1")}, syscalls.openFiles)
 }
 
 func TestContainerExecTTYStartsExecShim(t *testing.T) {

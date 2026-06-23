@@ -273,7 +273,7 @@ func readInitLogTail(containerId string, maxBytes int) string {
 	if maxBytes <= 0 {
 		maxBytes = 4096
 	}
-	data, err := os.ReadFile(utils.InitLogPath(containerId))
+	data, err := os.ReadFile(utils.ContainerLogPath(containerId))
 	if err != nil {
 		return fmt.Sprintf("read init log failed: %v", err)
 	}
