@@ -133,12 +133,12 @@ func (c *ContainerExecShim) Execute(containerId string, containerPid string, ent
 	_ = tty.Close()
 
 	// 7. accept and proxy
-	consoleLog, err := os.OpenFile(utils.ExecConsoleLogPath(containerId), os.O_CREATE|os.O_WRONLY, 0640)
+	containerLog, err := os.OpenFile(utils.ContainerLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return err
 	}
-	defer consoleLog.Close()
-	h := newExecHub(ptmx, consoleLog, logger)
+	defer containerLog.Close()
+	h := newExecHub(ptmx, containerLog, logger)
 	h.startPump()
 	go c.acceptLoop(ln, h, logger)
 

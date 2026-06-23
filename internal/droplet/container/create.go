@@ -335,7 +335,7 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	initArgs := append([]string{"init", containerId, fifo}, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
 	// set stdout/stderr to log files
-	logPath := utils.InitLogPath(containerId)
+	logPath := utils.ContainerLogPath(containerId)
 	f, err := c.syscallHandler.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0640)
 	if err != nil {
 		return -1, err
@@ -403,8 +403,8 @@ func (c *ContainerCreator) wrapInitPidWaitError(containerId string, err error) e
 	if tail := tailFileForError(utils.ShimLogPath(containerId), 12); tail != "" {
 		details = append(details, "shim log:\n"+tail)
 	}
-	if tail := tailFileForError(utils.InitLogPath(containerId), 12); tail != "" {
-		details = append(details, "init log:\n"+tail)
+	if tail := tailFileForError(utils.ContainerLogPath(containerId), 12); tail != "" {
+		details = append(details, "container log:\n"+tail)
 	}
 	if len(details) == 0 {
 		return err

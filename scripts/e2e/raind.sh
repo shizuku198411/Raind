@@ -38,10 +38,10 @@ fail() {
     sudo_cmd tail -120 /etc/raind/log/droplet_audit.log >&2 || true
   fi
   if sudo_cmd test -d /etc/raind/container 2>/dev/null; then
-    printf '%s\n' '--- recent container init logs ---' >&2
-    sudo_cmd find /etc/raind/container -maxdepth 3 -path '*/logs/init.log' -type f -printf '%T@ %p\n' 2>/dev/null       | sort -nr       | head -8       | awk '{ $1=""; sub(/^ /, ""); print }'       | while IFS= read -r init_log; do
-          printf '%s\n' "----- ${init_log} -----" >&2
-          sudo_cmd tail -40 "${init_log}" >&2 || true
+    printf '%s\n' '--- recent container logs ---' >&2
+    sudo_cmd find /etc/raind/container -maxdepth 3 -path '*/logs/container.log' -type f -printf '%T@ %p\n' 2>/dev/null       | sort -nr       | head -8       | awk '{ $1=""; sub(/^ /, ""); print }'       | while IFS= read -r container_log; do
+          printf '%s\n' "----- ${container_log} -----" >&2
+          sudo_cmd tail -40 "${container_log}" >&2 || true
         done
   fi
   exit 1

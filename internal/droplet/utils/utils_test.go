@@ -63,5 +63,7 @@ func TestPathHelpersUseRootDirOverride(t *testing.T) {
 	assert.Equal(t, filepath.Join(root, "container-1", "tty.sock"), SockPath("container-1"))
 	assert.Equal(t, filepath.Join(root, "container-1", "exec_tty.sock"), ExecSockPath("container-1"))
 	assert.Equal(t, filepath.Join(root, "container-1", "logs", "shim.log"), ShimLogPath("container-1"))
+	assert.Equal(t, filepath.Join(root, "container-1", "logs", "exec_shim.log"), ExecShimLogPath("container-1"))
+	assert.Equal(t, filepath.Join(root, "container-1", "logs", "container.log"), ContainerLogPath("container-1"))
 	assert.Equal(t, filepath.Join("/sys/fs/cgroup/raind", "container-1"), CgroupPath("container-1"))
 }

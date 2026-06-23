@@ -74,18 +74,6 @@ func ExecShimLogPath(containerId string) string {
 	return filepath.Join(ContainerDir(containerId), "logs", "exec_shim.log")
 }
 
-func ConsoleLogPath(containerId string) string {
-	return filepath.Join(ContainerDir(containerId), "logs", "console.log")
-}
-
-func ExecConsoleLogPath(containerId string) string {
-	return filepath.Join(ContainerDir(containerId), "logs", "exec_console.log")
-}
-
-func InitLogPath(containerId string) string {
-	return filepath.Join(ContainerDir(containerId), "logs", "init.log")
-}
-
-func ExecLogPath(containerId string) string {
-	return filepath.Join(ContainerDir(containerId), "logs", "exec.log")
+func ContainerLogPath(containerId string) string {
+	return filepath.Join(ContainerDir(containerId), "logs", "container.log")
 }
