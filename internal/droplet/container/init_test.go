@@ -429,7 +429,7 @@ func TestRootContainerEnvPreparerCreateSymbolicLinkCreatesMissingLinks(t *testin
 		{"/proc/self/fd/0", "/rootfs/dev/stdin"},
 		{"/proc/self/fd/1", "/rootfs/dev/stdout"},
 		{"/proc/self/fd/2", "/rootfs/dev/stderr"},
-		{"/dev/pts/ptmx", "/rootfs/dev/ptmx"},
+		{"pts/ptmx", "/rootfs/dev/ptmx"},
 	}, syscalls.symlinks)
 }
 

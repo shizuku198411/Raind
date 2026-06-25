@@ -69,5 +69,5 @@ func TestWriteContainerPidFile(t *testing.T) {
 	require.NoError(t, err)
 	data, err := os.ReadFile(pidFile)
 	require.NoError(t, err)
-	assert.Equal(t, "1234\n", string(data))
+	assert.Equal(t, "1234", string(data))
 }

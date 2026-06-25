@@ -213,7 +213,9 @@ type fakeDeleteSyscallHandler struct {
 	kills     []deleteKillCall
 	removeErr error
 	removes   []string
+	removeAll []string
 	openFiles []string
+	existing  map[string]bool
 }
 
 type deleteKillCall struct {
@@ -229,6 +231,23 @@ func (f *fakeDeleteSyscallHandler) Kill(pid int, sig syscall.Signal) error {
 func (f *fakeDeleteSyscallHandler) Remove(path string) error {
 	f.removes = append(f.removes, path)
 	return f.removeErr
+}
+
+func (f *fakeDeleteSyscallHandler) RemoveAll(path string) error {
+	f.removeAll = append(f.removeAll, path)
+	return f.removeErr
+}
+
+func (f *fakeDeleteSyscallHandler) Stat(name string) (os.FileInfo, error) {
+	if f.existing != nil && f.existing[name] {
+		tmp, err := os.CreateTemp("", "raind-test-stat-*")
+		if err != nil {
+			return nil, err
+		}
+		defer tmp.Close()
+		return tmp.Stat()
+	}
+	return nil, os.ErrNotExist
 }
 
 func (f *fakeDeleteSyscallHandler) OpenFile(path string, flag int, perm os.FileMode) (*os.File, error) {
@@ -268,6 +287,38 @@ func TestContainerDeleteRejectsRunningContainer(t *testing.T) {
 	assert.Empty(t, syscalls.kills)
 }
 
+func TestContainerDeleteForceKillsRunningContainer(t *testing.T) {
+	// == setup ==
+	specLoader := &fakeDeleteSpecLoader{}
+	fifoHandler := &fakeDeleteFifoHandler{}
+	statusManager := &fakeDeleteStatusManager{status: status.RUNNING, pid: 1234}
+	hookController := &fakeDeleteHookController{}
+	syscalls := &fakeDeleteSyscallHandler{}
+	deleteController := &ContainerDelete{
+		specLoader:              specLoader,
+		fifoHandler:             fifoHandler,
+		containerStatusManager:  statusManager,
+		containerHookController: hookController,
+		syscallHandler:          syscalls,
+	}
+
+	// == exercise ==
+	err := deleteController.Delete(DeleteOption{ContainerId: "container-1", Force: true})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []deleteKillCall{{pid: 1234, sig: syscall.SIGKILL}}, syscalls.kills)
+	assert.Equal(t, []deleteStatusUpdate{{
+		containerId: "container-1",
+		status:      status.STOPPED,
+		pid:         0,
+		shimPid:     0,
+	}}, statusManager.updates)
+	assert.Equal(t, []string{"container-1"}, specLoader.calls)
+	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
+	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
+}
+
 func TestContainerDeleteRemovesStoppedContainerState(t *testing.T) {
 	// == setup ==
 	poststopHooks := []spec.HookObject{{Path: "/bin/true"}}
@@ -298,6 +349,7 @@ func TestContainerDeleteRemovesStoppedContainerState(t *testing.T) {
 	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
 	assert.Empty(t, fifoHandler.calls)
 	assert.Empty(t, syscalls.kills)
+	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
 }
 
 func TestContainerDeleteKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
@@ -329,6 +381,7 @@ func TestContainerDeleteKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
 	}}, statusManager.updates)
 	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
 	assert.Equal(t, []string{utils.FifoPath("container-1")}, fifoHandler.calls)
+	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
 }
 
 func TestContainerDeleteStopsWhenPoststopHookFails(t *testing.T) {
@@ -356,4 +409,5 @@ func TestContainerDeleteStopsWhenPoststopHookFails(t *testing.T) {
 	assert.Len(t, hookController.poststopCalls, 1)
 	assert.Empty(t, statusManager.removedContainers)
 	assert.Empty(t, fifoHandler.calls)
+	assert.Empty(t, syscalls.removeAll)
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestContainerKillSendsSignalUpdatesStateAndRunsStopHook(t *testing.T) {
+func TestContainerKillSendsNonStoppingSignalWithoutStopHook(t *testing.T) {
 	// == setup ==
 	stopHooks := []spec.HookObject{{Path: "/bin/stop"}}
 	containerSpec := spec.Spec{
@@ -43,6 +43,34 @@ func TestContainerKillSendsSignalUpdatesStateAndRunsStopHook(t *testing.T) {
 	// == assert ==
 	require.NoError(t, err)
 	assert.Equal(t, []string{"container-1"}, specLoader.calls)
+	assert.Equal(t, []deleteKillCall{{pid: os.Getpid(), sig: syscall.SIGCONT}}, syscalls.kills)
+	assert.Equal(t, []deleteStatusUpdate{{containerId: "container-1", status: status.RUNNING, pid: -1, shimPid: -1}}, statusManager.updates)
+	assert.Empty(t, hookController.stopContainerCalls)
+}
+
+func TestContainerKillAllowsCreatedContainerSignalAndRunsStopHook(t *testing.T) {
+	// == setup ==
+	stopHooks := []spec.HookObject{{Path: "/bin/stop"}}
+	containerSpec := spec.Spec{
+		Hooks:   spec.HookLifecycleObject{StopContainer: stopHooks},
+		Process: spec.ProcessObject{Args: []string{"/bin/sh"}},
+	}
+	specLoader := &fakeDeleteSpecLoader{spec: containerSpec}
+	statusManager := &fakeDeleteStatusManager{status: status.CREATED, pid: os.Getpid()}
+	hookController := &fakeDeleteHookController{}
+	syscalls := &fakeDeleteSyscallHandler{}
+	killController := &ContainerKill{
+		specLoader:              specLoader,
+		syscallHandler:          syscalls,
+		containerStatusManager:  statusManager,
+		containerHookController: hookController,
+	}
+
+	// == exercise ==
+	err := killController.Kill(KillOption{ContainerId: "container-1", Signal: "CONT"})
+
+	// == assert ==
+	require.NoError(t, err)
 	assert.Equal(t, []deleteKillCall{{pid: os.Getpid(), sig: syscall.SIGCONT}}, syscalls.kills)
 	assert.Equal(t, []deleteStatusUpdate{{containerId: "container-1", status: status.STOPPED, pid: 0, shimPid: 0}}, statusManager.updates)
 	assert.Equal(t, []deleteHookCall{{containerId: "container-1", hooks: stopHooks}}, hookController.stopContainerCalls)
@@ -98,7 +126,31 @@ func TestContainerKillRejectsNonRunningContainer(t *testing.T) {
 
 	// == assert ==
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not running")
+	assert.Contains(t, err.Error(), "neither created nor running")
+	assert.Empty(t, syscalls.kills)
+	assert.Empty(t, statusManager.updates)
+}
+
+func TestContainerKillAllowsStoppedKillCleanupForExternalPidFileContainer(t *testing.T) {
+	// == setup ==
+	containerId := "container-1"
+	specLoader := &fakeDeleteSpecLoader{}
+	statusManager := &fakeDeleteStatusManager{status: status.STOPPED}
+	syscalls := &fakeDeleteSyscallHandler{
+		existing: map[string]bool{utils.ExternalPidFileMarkerPath(containerId): true},
+	}
+	killController := &ContainerKill{
+		specLoader:              specLoader,
+		syscallHandler:          syscalls,
+		containerStatusManager:  statusManager,
+		containerHookController: &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := killController.Kill(KillOption{ContainerId: containerId, Signal: "KILL"})
+
+	// == assert ==
+	require.NoError(t, err)
 	assert.Empty(t, syscalls.kills)
 	assert.Empty(t, statusManager.updates)
 }

@@ -725,6 +725,7 @@ func (s *ContainerService) createContainerSpec(
 		SecurityProfile:        resolvedSecurityProfile.Name,
 		SeccompJSON:            seccompJSON,
 		AppArmorProfile:        resolvedSecurityProfile.AppArmorProfile,
+		NoNewPrivileges:        resolvedSecurityProfile.NoNewPrivileges,
 		Rootless:               createParameter.Rootless,
 		RootlessMode:           createParameter.RootlessMode,
 		RootlessRootUID:        createParameter.RootlessRootUID,

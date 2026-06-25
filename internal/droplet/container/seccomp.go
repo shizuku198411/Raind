@@ -105,12 +105,7 @@ func (m *SeccompManager) InstallDenyFilter(seccompConfig spec.SeccompObject) err
 		return err
 	}
 
-	// 1. no_new_privs is required for unprivileged seccomp filter install
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS) failed: %w", err)
-	}
-
-	// 2. build classic BPF program
+	// 1. build classic BPF program
 	//    - verify arch; if mismatch, kill (safe default)
 	//    - load syscall number; if it matches any blocked syscall, return ERRNO(EPERM)
 	//    - other; ALLOW

@@ -173,6 +173,7 @@ type KernelSyscallHandler interface {
 	Stat(name string) (os.FileInfo, error)
 	Create(name string) (*os.File, error)
 	Remove(name string) error
+	RemoveAll(path string) error
 	IsNotExist(err error) bool
 	Symlink(oldname string, newname string) error
 	Lstat(name string) (os.FileInfo, error)
@@ -333,6 +334,10 @@ func (k *kernelSyscall) Create(name string) (*os.File, error) {
 
 func (k *kernelSyscall) Remove(name string) error {
 	return os.Remove(name)
+}
+
+func (k *kernelSyscall) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
 // IsNotExist reports whether an error indicates that a file or directory

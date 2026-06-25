@@ -20,6 +20,7 @@ type SecurityOption struct {
 	BaseCapabilities []string
 	Seccomp          *SeccompObject
 	AppArmorProfile  string
+	NoNewPrivileges  bool
 }
 
 type SecurityProfile struct {
@@ -27,6 +28,7 @@ type SecurityProfile struct {
 	Capabilities    CapabilityProfile
 	Seccomp         *SeccompObject
 	AppArmorProfile string
+	NoNewPrivileges bool
 }
 
 type CapabilityProfile struct {
@@ -34,7 +36,7 @@ type CapabilityProfile struct {
 }
 
 func ResolveSecurityOption(opt SecurityOption) (SecurityProfile, error) {
-	if len(opt.BaseCapabilities) != 0 || opt.Seccomp != nil || opt.AppArmorProfile != "" {
+	if len(opt.BaseCapabilities) != 0 || opt.Seccomp != nil || opt.AppArmorProfile != "" || opt.NoNewPrivileges {
 		return SecurityProfile{
 			Name: opt.ProfileName,
 			Capabilities: CapabilityProfile{
@@ -42,6 +44,7 @@ func ResolveSecurityOption(opt SecurityOption) (SecurityProfile, error) {
 			},
 			Seccomp:         cloneSeccompObject(opt.Seccomp),
 			AppArmorProfile: opt.AppArmorProfile,
+			NoNewPrivileges: opt.NoNewPrivileges,
 		}, nil
 	}
 	return ResolveSecurityProfile(opt.ProfileName)
@@ -69,6 +72,7 @@ func ResolveSecurityProfile(name string) (SecurityProfile, error) {
 func DevSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = SecurityProfileDev
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -76,6 +80,7 @@ func DeploySecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = SecurityProfileDeploy
 	profile.Capabilities.Base = dropCapabilities(profile.Capabilities.Base, "CAP_NET_RAW", "CAP_MKNOD")
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -83,6 +88,7 @@ func RestrictedSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = SecurityProfileRestricted
 	profile.Capabilities.Base = []string{}
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -92,6 +98,7 @@ func PrivilegedSecurityProfile() SecurityProfile {
 	profile.Capabilities.Base = allCapabilities()
 	profile.Seccomp = nil
 	profile.AppArmorProfile = ""
+	profile.NoNewPrivileges = false
 	return profile
 }
 
@@ -100,6 +107,7 @@ func UnconfinedSecurityProfile() SecurityProfile {
 	profile.Name = SecurityProfileUnconfined
 	profile.Seccomp = nil
 	profile.AppArmorProfile = ""
+	profile.NoNewPrivileges = false
 	return profile
 }
 

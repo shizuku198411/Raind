@@ -60,6 +60,10 @@ func InitPidFilePath(containerId string) string {
 	return filepath.Join(ContainerDir(containerId), "init.pid")
 }
 
+func ExternalPidFileMarkerPath(containerId string) string {
+	return filepath.Join(ContainerDir(containerId), "external_pid_file")
+}
+
 // cgroup path
 func CgroupPath(containerId string) string {
 	return filepath.Join(cgroupRootDir, containerId)

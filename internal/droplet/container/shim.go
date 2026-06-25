@@ -185,8 +185,13 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		defer devNull.Close()
 
 		cmd.SetStdin(devNull)
-		cmd.SetStdout(initLog)
-		cmd.SetStderr(initLog)
+		if isOCIBundleMode(containerId) {
+			cmd.SetStdout(io.MultiWriter(initLog, os.Stdout))
+			cmd.SetStderr(io.MultiWriter(initLog, os.Stderr))
+		} else {
+			cmd.SetStdout(initLog)
+			cmd.SetStderr(initLog)
+		}
 	}
 
 	// apply SysProcAttr

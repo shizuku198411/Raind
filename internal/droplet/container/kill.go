@@ -94,10 +94,18 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 	if err != nil {
 		return err
 	}
+	signalName, sig, err := parseSignal(opt.Signal)
+	if err != nil {
+		return err
+	}
+	signal = append(signal, signalName)
 
 	stage = "check_status"
-	if containerStatus != status.RUNNING {
-		return fmt.Errorf("container: %s not running.", opt.ContainerId)
+	if containerStatus != status.RUNNING && containerStatus != status.CREATED {
+		if containerStatus == status.STOPPED && signalName == "KILL" && c.hasExternalPidFileMarker(opt.ContainerId) {
+			return nil
+		}
+		return fmt.Errorf("container: %s neither created nor running.", opt.ContainerId)
 	}
 
 	// 3. retrieve pid and shimpid from state.json
@@ -114,10 +122,6 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 
 	// 4. send signal to pid
 	stage = "send_signal"
-	signalName, sig, err := parseSignal(opt.Signal)
-	if err != nil {
-		return err
-	}
 	procStartTime, err := c.readProcStartTime(containerPid)
 	if err != nil {
 		return err
@@ -127,7 +131,6 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 		StartTime: procStartTime,
 	}
 	err = c.syscallHandler.Kill(containerPid, sig)
-	signal = append(signal, signalName)
 	if err != nil {
 		return err
 	}
@@ -148,11 +151,16 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 			}
 		}
 	}
+	if signalName == "KILL" {
+		stage = "wait_exit_signal"
+		_ = c.waitProcessExit(procIdentity, 5*time.Second)
+	}
+	stoppedBySignal := containerStatus == status.CREATED || signalName == "TERM" || signalName == "KILL"
 
 	// if shim pid > 0, the container created with interactive mode
 	// clean up files for shim
 	stage = "cleanup_shim"
-	if shimPid > 0 {
+	if stoppedBySignal && shimPid > 0 {
 		_ = c.cleanupShim(opt.ContainerId)
 	}
 
@@ -161,17 +169,23 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 	//      pid = 0
 	//		shimPid = 0
 	stage = "update_state"
-	err = c.containerStatusManager.UpdateStatus(
-		opt.ContainerId,
-		status.STOPPED,
-		0,
-		0,
-	)
+	nextStatus := status.STOPPED
+	nextPid := 0
+	nextShimPid := 0
+	if !stoppedBySignal {
+		nextStatus = status.RUNNING
+		nextPid = -1
+		nextShimPid = -1
+	}
+	err = c.containerStatusManager.UpdateStatus(opt.ContainerId, nextStatus, nextPid, nextShimPid)
 	if err != nil {
 		return err
 	}
 
 	// 5. HOOK: stopContainer
+	if !stoppedBySignal {
+		return nil
+	}
 	stage = "hook_stopContainer"
 	err = c.containerHookController.RunStopContainerHooks(
 		opt.ContainerId,
@@ -182,6 +196,11 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 	}
 
 	return nil
+}
+
+func (c *ContainerKill) hasExternalPidFileMarker(containerId string) bool {
+	_, err := c.syscallHandler.Stat(utils.ExternalPidFileMarkerPath(containerId))
+	return err == nil
 }
 
 func (c *ContainerKill) cleanupShim(containerId string) error {

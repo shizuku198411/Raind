@@ -39,7 +39,6 @@ func TestValidateBasicRejectsMissingRequiredFields(t *testing.T) {
 	}{
 		{name: "missing version", containerSpec: Spec{Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}}}, want: "ociVersion is required"},
 		{name: "missing root", containerSpec: Spec{OciVersion: "1.3.0", Process: ProcessObject{Args: []string{"/bin/sh"}}}, want: "root.path is required"},
-		{name: "missing args", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}}, want: "process.args[0] is required"},
 		{name: "bad console size zero", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 0, Width: 80}}}, want: "process.consoleSize"},
 		{name: "bad console size large", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 24, Width: MaxConsoleSize + 1}}}, want: "process.consoleSize"},
 		{name: "bad oom score adj", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, OOMScoreAdj: ptrInt(1001)}}, want: "process.oomScoreAdj"},

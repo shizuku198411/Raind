@@ -15,6 +15,7 @@ type SpecModel struct {
 	SecurityProfile string
 	SeccompJSON     string
 	AppArmorProfile string
+	NoNewPrivileges bool
 	Rootless        bool
 	RootlessMode    string
 	RootlessRootUID int

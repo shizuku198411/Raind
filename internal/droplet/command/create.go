@@ -43,6 +43,9 @@ func commandCreate() *cli.Command {
 func runCreate(ctx *cli.Context) error {
 	// retrieve container ID
 	containerId := ctx.Args().Get(0)
+	if containerId == "" {
+		return cli.Exit("container-id is required", 1)
+	}
 	pidPrintFlag := ctx.Bool("print-pid")
 	ttyFlag := ctx.Bool("tty")
 	bundle := ctx.String("bundle")

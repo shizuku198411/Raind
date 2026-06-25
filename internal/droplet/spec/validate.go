@@ -14,9 +14,6 @@ func ValidateBasic(containerSpec Spec) error {
 	if strings.TrimSpace(containerSpec.Root.Path) == "" {
 		return fmt.Errorf("root.path is required")
 	}
-	if len(containerSpec.Process.Args) == 0 || strings.TrimSpace(containerSpec.Process.Args[0]) == "" {
-		return fmt.Errorf("process.args[0] is required")
-	}
 	if containerSpec.Process.ConsoleSize != nil {
 		if containerSpec.Process.ConsoleSize.Height == 0 || containerSpec.Process.ConsoleSize.Width == 0 {
 			return fmt.Errorf("process.consoleSize height and width must be positive")

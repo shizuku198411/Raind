@@ -335,7 +335,10 @@ func TestContainerCreatorCreateWithBundleStoresBundleAndWritesPidFile(t *testing
 	assert.Equal(t, bundle, statusManager.createdStatuses[0].bundle)
 	data, err := os.ReadFile(pidFile)
 	require.NoError(t, err)
-	assert.Equal(t, "4321\n", string(data))
+	assert.Equal(t, "4321", string(data))
+	marker, err := os.ReadFile(utils.ExternalPidFileMarkerPath(containerId))
+	require.NoError(t, err)
+	assert.Equal(t, pidFile, string(marker))
 }
 
 func TestContainerCreatorSpecSecureLoadWritesHashAndReturnsSpec(t *testing.T) {

@@ -355,24 +355,26 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 			return fmt.Errorf("make rootfs readonly: %w", err)
 		}
 	}
-	// 14. set capability
-	err = p.setCapability(spec.Process.Capabilities)
-	if err != nil {
-		return fmt.Errorf("set capability: %w", err)
-	}
-	// 15. apply no_new_privileges
+	// 14. apply no_new_privileges before seccomp so the observed process state
+	// matches process.noNewPrivileges from the OCI spec.
 	if spec.Process.NoNewPrivileges {
 		err = p.setNoNewPrivileges()
 		if err != nil {
 			return fmt.Errorf("set no_new_privileges: %w", err)
 		}
 	}
-	// 16. install seccomp (NO_NEW_PRIVS + filter)
+	// 15. install seccomp before dropping capabilities. Privileged runtimes can
+	// load the filter without forcing no_new_privileges when the spec leaves it false.
 	if spec.LinuxSpec.Seccomp != nil {
 		err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
 		if err != nil {
 			return fmt.Errorf("install seccomp: %w", err)
 		}
+	}
+	// 16. set capability
+	err = p.setCapability(spec.Process.Capabilities)
+	if err != nil {
+		return fmt.Errorf("set capability: %w", err)
 	}
 	// 17. set OOM score adjustment
 	err = p.setOOMScoreAdj(spec.Process.OOMScoreAdj)
@@ -1202,7 +1204,7 @@ func (p *rootContainerEnvPreparer) mountStdDevice(rootfs string) error {
 //   - /dev/stdin  -> /proc/self/fd/0
 //   - /dev/stdout -> /proc/self/fd/1
 //   - /dev/stderr -> /proc/self/fd/2
-//   - /dev/ptmx   -> /dev/pts/ptmx
+//   - /dev/ptmx   -> pts/ptmx
 func (p *rootContainerEnvPreparer) createSymbolicLink(rootfs string) error {
 	deviceDir := filepath.Join(rootfs, "dev")
 	symlinks := []struct {
@@ -1213,7 +1215,7 @@ func (p *rootContainerEnvPreparer) createSymbolicLink(rootfs string) error {
 		{filepath.Join(deviceDir, "stdin"), "/proc/self/fd/0"},
 		{filepath.Join(deviceDir, "stdout"), "/proc/self/fd/1"},
 		{filepath.Join(deviceDir, "stderr"), "/proc/self/fd/2"},
-		{filepath.Join(deviceDir, "ptmx"), "/dev/pts/ptmx"},
+		{filepath.Join(deviceDir, "ptmx"), "pts/ptmx"},
 	}
 
 	for _, symlink := range symlinks {

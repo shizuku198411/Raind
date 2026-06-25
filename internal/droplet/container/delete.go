@@ -50,6 +50,7 @@ type ContainerDelete struct {
 //  3. Run poststop hooks
 //  4. Remove the container state file (state.json)
 //  5. Remove the FIFO if the container status is created
+//  6. Remove the container runtime directory
 //
 // If any step fails, the error is returned immediately and subsequent
 // steps are not executed.
@@ -88,12 +89,14 @@ func (c *ContainerDelete) Delete(opt DeleteOption) (err error) {
 	// if status is running, return error
 	stage = "check_status"
 	if containerStatus == status.RUNNING {
-		return fmt.Errorf("container: %s is not stopped. current status: %s", opt.ContainerId, containerStatus)
+		if !opt.Force {
+			return fmt.Errorf("container: %s is not stopped. current status: %s", opt.ContainerId, containerStatus)
+		}
 	}
 
-	// if status is created, kill init process before delete container
+	// if status is created or force-deleting a running container, kill init process before delete container
 	stage = "kill_process_before_remove"
-	if containerStatus == status.CREATED {
+	if containerStatus == status.CREATED || (containerStatus == status.RUNNING && opt.Force) {
 		err = c.killInitProcess(opt.ContainerId)
 		if err != nil {
 			return fmt.Errorf("kill init process failed: %w", err)
@@ -131,6 +134,13 @@ func (c *ContainerDelete) Delete(opt DeleteOption) (err error) {
 		if err != nil {
 			return err
 		}
+	}
+
+	// 6. remove runtime directory
+	stage = "remove_runtime_dir"
+	err = c.syscallHandler.RemoveAll(utils.ContainerDir(opt.ContainerId))
+	if err != nil {
+		return err
 	}
 
 	return nil

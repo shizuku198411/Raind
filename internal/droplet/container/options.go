@@ -47,6 +47,7 @@ type KillOption struct {
 // delete options
 type DeleteOption struct {
 	ContainerId string
+	Force       bool
 }
 
 // attach options

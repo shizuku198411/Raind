@@ -32,6 +32,12 @@ func TestServiceListBuiltInProfiles(t *testing.T) {
 	assert.Equal(t, "raind-default", profiles[3].AppArmorProfile)
 	assert.Empty(t, profiles[4].AppArmorProfile)
 	assert.Empty(t, profiles[5].AppArmorProfile)
+	assert.False(t, profiles[0].NoNewPrivileges)
+	assert.True(t, profiles[1].NoNewPrivileges)
+	assert.True(t, profiles[2].NoNewPrivileges)
+	assert.True(t, profiles[3].NoNewPrivileges)
+	assert.False(t, profiles[4].NoNewPrivileges)
+	assert.False(t, profiles[5].NoNewPrivileges)
 	assert.Equal(t, 14, profiles[0].CapabilitiesCount)
 	assert.Equal(t, 14, profiles[1].CapabilitiesCount)
 	assert.Equal(t, 12, profiles[2].CapabilitiesCount)
@@ -48,6 +54,7 @@ func TestServiceGetBuiltInProfiles(t *testing.T) {
 	assert.Equal(t, ProfileDev, profile.Name)
 	assert.Equal(t, DefaultSecurityProfile().Capabilities.Base, profile.Capabilities.Base)
 	assert.Equal(t, "SCMP_ACT_ALLOW", profile.Seccomp.DefaultAction)
+	assert.True(t, profile.NoNewPrivileges)
 }
 
 func TestServiceGetDeployProfile(t *testing.T) {
@@ -61,6 +68,7 @@ func TestServiceGetDeployProfile(t *testing.T) {
 	require.NotNil(t, profile.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", profile.Seccomp.DefaultAction)
 	assert.Equal(t, "raind-default", profile.AppArmorProfile)
+	assert.True(t, profile.NoNewPrivileges)
 }
 
 func TestServiceGetRestrictedProfile(t *testing.T) {
@@ -72,6 +80,7 @@ func TestServiceGetRestrictedProfile(t *testing.T) {
 	require.NotNil(t, profile.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", profile.Seccomp.DefaultAction)
 	assert.Equal(t, "raind-default", profile.AppArmorProfile)
+	assert.True(t, profile.NoNewPrivileges)
 }
 
 func TestServiceGetPrivilegedProfile(t *testing.T) {
@@ -83,6 +92,7 @@ func TestServiceGetPrivilegedProfile(t *testing.T) {
 	assert.Contains(t, profile.Capabilities.Base, "CAP_BPF")
 	assert.Nil(t, profile.Seccomp)
 	assert.Empty(t, profile.AppArmorProfile)
+	assert.False(t, profile.NoNewPrivileges)
 }
 
 func TestServiceGetUnconfinedProfile(t *testing.T) {
@@ -93,6 +103,7 @@ func TestServiceGetUnconfinedProfile(t *testing.T) {
 	assert.Equal(t, DefaultSecurityProfile().Capabilities.Base, profile.Capabilities.Base)
 	assert.Nil(t, profile.Seccomp)
 	assert.Empty(t, profile.AppArmorProfile)
+	assert.False(t, profile.NoNewPrivileges)
 }
 
 func TestServiceRejectsUnknownProfile(t *testing.T) {
@@ -134,6 +145,7 @@ func TestServiceRegisterCustomProfile(t *testing.T) {
 	assert.Contains(t, profile.Capabilities.Base, "CAP_SYS_PTRACE")
 	assert.NotContains(t, profile.Capabilities.Base, "CAP_NET_RAW")
 	assert.Contains(t, profile.Capabilities.Base, "CAP_CHOWN")
+	assert.True(t, profile.NoNewPrivileges)
 
 	resolved, err := service.Resolve("custom-dev")
 	require.NoError(t, err)

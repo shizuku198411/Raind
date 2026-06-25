@@ -71,7 +71,14 @@ func writeContainerPidFile(pidFile string, pid int) error {
 	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", pid)), 0644)
+	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0644)
+}
+
+func writeExternalPidFileMarker(containerId string, pidFile string) error {
+	if pidFile == "" {
+		return nil
+	}
+	return os.WriteFile(utils.ExternalPidFileMarkerPath(containerId), []byte(pidFile), 0644)
 }
 
 func writeSpecHashFile(containerId string) error {

@@ -78,6 +78,10 @@ func commandSpec() *cli.Command {
 				Name:  "apparmor-profile",
 				Usage: "AppArmor profile name from a resolved security profile",
 			},
+			&cli.BoolFlag{
+				Name:  "no-new-privileges",
+				Usage: "set process.noNewPrivileges from a resolved security profile",
+			},
 
 			&cli.BoolFlag{
 				Name:  "rootless",
@@ -237,6 +241,7 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 	securityProfile := ctx.String("security-profile")
 	baseCapabilities := normalizeCapabilityFlag(ctx.StringSlice("base-cap"))
 	appArmorProfile := ctx.String("apparmor-profile")
+	noNewPrivileges := ctx.Bool("no-new-privileges")
 	var seccompProfile *spec.SeccompObject
 	if raw := strings.TrimSpace(ctx.String("seccomp-json")); raw != "" {
 		seccompProfile = &spec.SeccompObject{}
@@ -244,7 +249,7 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 			return spec.ConfigOptions{}, fmt.Errorf("invalid seccomp-json: %w", err)
 		}
 	}
-	if len(baseCapabilities) == 0 && seccompProfile == nil && appArmorProfile == "" {
+	if len(baseCapabilities) == 0 && seccompProfile == nil && appArmorProfile == "" && !noNewPrivileges {
 		if _, err := spec.ResolveSecurityProfile(securityProfile); err != nil {
 			return spec.ConfigOptions{}, err
 		}
@@ -359,6 +364,7 @@ func createConfigOptions(ctx *cli.Context) (spec.ConfigOptions, error) {
 			BaseCapabilities: baseCapabilities,
 			Seccomp:          seccompProfile,
 			AppArmorProfile:  appArmorProfile,
+			NoNewPrivileges:  noNewPrivileges,
 		},
 		Process: spec.ProcessOption{
 			Cwd:     cwd,

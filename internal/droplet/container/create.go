@@ -221,6 +221,11 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	if err != nil {
 		return err
 	}
+	stage = "write_pid_file_marker"
+	err = writeExternalPidFileMarker(opt.ContainerId, opt.PidFile)
+	if err != nil {
+		return err
+	}
 
 	// 6. cgroup setup
 	if !nestedRootless {
@@ -405,6 +410,10 @@ func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, 
 	shimArgs = append(shimArgs, containerId, fifo)
 	shimArgs = append(shimArgs, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), shimArgs...)
+	if isOCIBundleMode(containerId) {
+		cmd.SetStdout(os.Stdout)
+		cmd.SetStderr(os.Stderr)
+	}
 
 	// execute shim subcommand
 	if err := cmd.Start(); err != nil {
