@@ -45,6 +45,10 @@ type containerNetworkController struct {
 //
 // Returns an error if any networking operation fails.
 func (c *containerNetworkController) prepare(containerId string, pid int, annotation spec.AnnotationObject) error {
+	if strings.TrimSpace(annotation.Net) == "" {
+		return nil
+	}
+
 	// 1. retrieve network config from annotation
 	var networkConfig spec.NetConfigObject
 	if err := utils.StringToJson(annotation.Net, &networkConfig); err != nil {

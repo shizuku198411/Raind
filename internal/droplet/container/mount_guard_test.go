@@ -300,6 +300,38 @@ func TestValidateUserMount_CommonBind(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestValidateUserMount_AllowsOCIKernelMount(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "proc",
+		Destination: "/proc",
+		Type:        "proc",
+		Options:     []string{"nosuid", "noexec", "nodev"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.Nil(t, err)
+}
+
+func TestValidateUserMount_AllowsOCITmpfsMountDataOptions(t *testing.T) {
+	// == arrange ==
+	mount := spec.MountObject{
+		Source:      "tmpfs",
+		Destination: "/dev",
+		Type:        "tmpfs",
+		Options:     []string{"nosuid", "strictatime", "mode=755", "size=65536k"},
+	}
+
+	// == act ==
+	err := validateUserMount(mount)
+
+	// == assert ==
+	assert.Nil(t, err)
+}
+
 func TestValidateUserMount_DeniedSource(t *testing.T) {
 	// == arrange ==
 	mount := spec.MountObject{

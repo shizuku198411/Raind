@@ -65,9 +65,10 @@ func buildProcessSpec(opts ConfigOptions, profile SecurityProfile) ProcessObject
 	finalCaps := mergeCapabilities(profile.Capabilities.Base, opts.Process.CapAdd, opts.Process.CapDrop)
 
 	return ProcessObject{
-		Cwd:  opts.Process.Cwd,
-		Env:  buildProcessEnvSpec(opts.Process.Env),
-		Args: opts.Process.Args,
+		Cwd:             opts.Process.Cwd,
+		Env:             buildProcessEnvSpec(opts.Process.Env),
+		Args:            opts.Process.Args,
+		NoNewPrivileges: profile.NoNewPrivileges,
 		Capabilities: CapabilityObject{
 			Bounding:  slices.Clone(finalCaps),
 			Effective: slices.Clone(finalCaps),
@@ -137,6 +138,9 @@ func buildLinuxSpec(opts ConfigOptions, profile SecurityProfile) LinuxSpecObject
 			Cpu: CpuObject{ // cpu limit: 80%
 				Period: 100000,
 				Quota:  80000,
+			},
+			Pids: PidsObject{
+				Limit: 512,
 			},
 		},
 		Seccomp:         cloneSeccompObject(profile.Seccomp),

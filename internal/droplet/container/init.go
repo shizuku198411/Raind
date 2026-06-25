@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
+	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
 	"runtime"
 	"strconv"
@@ -284,7 +285,7 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 		return fmt.Errorf("switch to user namespace root: %w", err)
 	}
 	// 2. set hostname
-	if !prejoinedNamespaces {
+	if !shouldSkipInitHostname(spec, prejoinedNamespaces) {
 		err = p.setHostnameToContainerId(spec.Hostname)
 		if err != nil {
 			return fmt.Errorf("set hostname: %w", err)
@@ -295,48 +296,362 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("set env: %w", err)
 	}
-	// 4. setup overlay
+	// 4. make mount propagation private. Plain OCI rootfs bundles do not go
+	// through setupOverlay, but pivot_root still requires propagation isolation.
+	if err := p.makeMountsPrivate(); err != nil {
+		return fmt.Errorf("make mounts private: %w", err)
+	}
+	// 5. setup overlay
 	if err := p.setupOverlay(spec.Root.Path, spec.Annotations.Image); err != nil {
 		return fmt.Errorf("setup overlay: %w", err)
 	}
-	// 5. mount filesystem
-	err = p.mountFilesystem(containerId, spec.Root.Path, spec.Mounts)
+	// 6. mount filesystem
+	ociBundleMode := isOCIBundleMode(containerId)
+	err = p.mountFilesystem(containerId, spec.Root.Path, spec.Mounts, ociBundleMode)
 	if err != nil {
 		return fmt.Errorf("mount filesystem: %w", err)
 	}
-	// 6. mount standard device
+	// 7. mount standard device
 	err = p.mountStdDevice(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("mount std device: %w", err)
 	}
-	// 7. create symbolic link
+	// 8. create OCI linux devices
+	err = p.createLinuxDevices(spec.Root.Path, spec.LinuxSpec.Devices)
+	if err != nil {
+		return fmt.Errorf("create linux devices: %w", err)
+	}
+	// 9. create symbolic link
 	err = p.createSymbolicLink(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("create symbolic link: %w", err)
 	}
-	// 8. pivot_root
+	// 10. apply masked and readonly paths
+	err = p.applyMaskedPaths(spec.Root.Path, spec.LinuxSpec.MaskedPaths)
+	if err != nil {
+		return fmt.Errorf("apply masked paths: %w", err)
+	}
+	err = p.applyReadonlyPaths(spec.Root.Path, spec.LinuxSpec.ReadonlyPaths)
+	if err != nil {
+		return fmt.Errorf("apply readonly paths: %w", err)
+	}
+	// 11. ensure rootfs is a mount point for pivot_root. Plain OCI rootfs
+	// bundles do not go through the Raind overlay mount path, so bind-mount the
+	// rootfs onto itself before pivoting.
+	err = p.ensureRootfsMountpoint(spec.Root.Path)
+	if err != nil {
+		return fmt.Errorf("ensure rootfs mountpoint: %w", err)
+	}
+	if spec.LinuxSpec.RootfsPropagation != "" {
+		err = p.applyMountPropagation(spec.Root.Path, spec.LinuxSpec.RootfsPropagation)
+		if err != nil {
+			return fmt.Errorf("apply rootfs propagation: %w", err)
+		}
+	}
+	// 12. pivot_root
 	err = p.pivotRoot(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("pivot root: %w", err)
 	}
-	// 9. set capability
-	err = p.setCapability(spec.Process.Capabilities)
-	if err != nil {
-		return fmt.Errorf("set capability: %w", err)
+	// 13. apply readonly rootfs after pivot_root so the runtime can create the
+	// temporary put_old directory first.
+	if spec.Root.Readonly {
+		err = p.makeCurrentRootReadonly()
+		if err != nil {
+			return fmt.Errorf("make rootfs readonly: %w", err)
+		}
 	}
-	// 10. install seccomp (NO_NEW_PRIVS + filter)
+	// 14. apply no_new_privileges before seccomp so the observed process state
+	// matches process.noNewPrivileges from the OCI spec.
+	if spec.Process.NoNewPrivileges {
+		err = p.setNoNewPrivileges()
+		if err != nil {
+			return fmt.Errorf("set no_new_privileges: %w", err)
+		}
+	}
+	// 15. install seccomp before dropping capabilities. Privileged runtimes can
+	// load the filter without forcing no_new_privileges when the spec leaves it false.
 	if spec.LinuxSpec.Seccomp != nil {
 		err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
 		if err != nil {
 			return fmt.Errorf("install seccomp: %w", err)
 		}
 	}
-	// 12. change current dir
+	// 16. set capability
+	err = p.setCapability(spec.Process.Capabilities)
+	if err != nil {
+		return fmt.Errorf("set capability: %w", err)
+	}
+	// 17. set OOM score adjustment
+	err = p.setOOMScoreAdj(spec.Process.OOMScoreAdj)
+	if err != nil {
+		return fmt.Errorf("set oom_score_adj: %w", err)
+	}
+	// 18. set rlimits
+	err = p.setRlimits(spec.Process.Rlimits)
+	if err != nil {
+		return fmt.Errorf("set rlimits: %w", err)
+	}
+	// 19. change current dir before dropping to the configured process user.
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)
 	if err != nil {
 		return fmt.Errorf("chdir: %w", err)
 	}
+	// 20. set process user
+	err = p.setProcessUser(spec.Process.User)
+	if err != nil {
+		return fmt.Errorf("set process user: %w", err)
+	}
 
+	return nil
+}
+
+func shouldSkipInitHostname(containerSpec spec.Spec, prejoinedNamespaces bool) bool {
+	nsConfig := buildNamespaceConfig(containerSpec)
+	return nsConfig.utsPath != "" || (prejoinedNamespaces && isRootlessSpec(containerSpec))
+}
+
+func (p *rootContainerEnvPreparer) makeMountsPrivate() error {
+	return p.syscallHandler.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) ensureRootfsMountpoint(rootfs string) error {
+	return p.syscallHandler.Mount(rootfs, rootfs, "", syscall.MS_BIND|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) makeCurrentRootReadonly() error {
+	return p.syscallHandler.Mount("", "/", "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) applyMountPropagation(target string, propagation string) error {
+	flags, ok := mountPropagationFlags(propagation)
+	if !ok {
+		return fmt.Errorf("unsupported mount propagation: %s", propagation)
+	}
+	return p.syscallHandler.Mount("", target, "", flags, "")
+}
+
+func isOCIBundleMode(containerId string) bool {
+	var state status.StatusObject
+	if err := utils.ReadJsonFile(utils.ContainerStatePath(containerId), &state); err != nil {
+		return false
+	}
+	return state.Bundle != "" && filepath.Clean(state.Bundle) != filepath.Clean(utils.ContainerDir(containerId))
+}
+
+func (p *rootContainerEnvPreparer) createLinuxDevices(rootfs string, devices []spec.DeviceObject) error {
+	for _, device := range devices {
+		target, err := securePath(rootfs, device.Path)
+		if err != nil {
+			return err
+		}
+		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		mode, err := deviceMode(device)
+		if err != nil {
+			return err
+		}
+		dev := 0
+		if device.Type == "c" || device.Type == "u" || device.Type == "b" {
+			dev = int(unix.Mkdev(uint32(device.Major), uint32(device.Minor)))
+		}
+		if err := p.syscallHandler.Mknod(target, mode, dev); err != nil {
+			return err
+		}
+		if device.UID != nil || device.GID != nil {
+			uid := -1
+			gid := -1
+			if device.UID != nil {
+				uid = int(*device.UID)
+			}
+			if device.GID != nil {
+				gid = int(*device.GID)
+			}
+			if err := p.syscallHandler.Chown(target, uid, gid); err != nil {
+				return err
+			}
+		}
+		if device.FileMode != nil {
+			if err := p.syscallHandler.Chmod(target, os.FileMode(*device.FileMode)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deviceMode(device spec.DeviceObject) (uint32, error) {
+	perm := uint32(0666)
+	if device.FileMode != nil {
+		perm = *device.FileMode
+	}
+	switch device.Type {
+	case "c", "u":
+		return syscall.S_IFCHR | perm, nil
+	case "b":
+		return syscall.S_IFBLK | perm, nil
+	case "p":
+		return syscall.S_IFIFO | perm, nil
+	default:
+		return 0, fmt.Errorf("unsupported linux device type: %s", device.Type)
+	}
+}
+
+func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []string) error {
+	for _, path := range paths {
+		target, err := securePath(rootfs, path)
+		if err != nil {
+			return err
+		}
+		info, statErr := p.syscallHandler.Stat(target)
+		if statErr == nil && info.IsDir() {
+			if err := p.syscallHandler.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+				return err
+			}
+			if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+				return err
+			}
+			continue
+		}
+		if statErr != nil {
+			if !p.syscallHandler.IsNotExist(statErr) {
+				return statErr
+			}
+			if shouldSkipMissingMaskedPath(path) {
+				continue
+			}
+		}
+		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		if statErr != nil {
+			f, err := p.syscallHandler.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+			if err != nil {
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		}
+		if err := p.syscallHandler.Mount("/dev/null", target, "", syscall.MS_BIND, ""); err != nil {
+			return err
+		}
+		if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func shouldSkipMissingMaskedPath(path string) bool {
+	return strings.HasPrefix(path, "/proc/") || strings.HasPrefix(path, "/sys/")
+}
+
+func (p *rootContainerEnvPreparer) applyReadonlyPaths(rootfs string, paths []string) error {
+	for _, path := range paths {
+		target, err := securePath(rootfs, path)
+		if err != nil {
+			return err
+		}
+		if _, err := p.syscallHandler.Stat(target); err != nil {
+			if p.syscallHandler.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := p.syscallHandler.Mount(target, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return err
+		}
+		if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *rootContainerEnvPreparer) setNoNewPrivileges() error {
+	return unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+}
+
+func (p *rootContainerEnvPreparer) setOOMScoreAdj(value *int) error {
+	if value == nil {
+		return nil
+	}
+	if *value < -1000 || *value > 1000 {
+		return fmt.Errorf("oomScoreAdj must be between -1000 and 1000")
+	}
+	return p.syscallHandler.WriteFile("/proc/self/oom_score_adj", []byte(strconv.Itoa(*value)), 0644)
+}
+
+func (p *rootContainerEnvPreparer) setRlimits(rlimits []spec.RlimitObject) error {
+	for _, item := range rlimits {
+		resource, ok := rlimitResource(item.Type)
+		if !ok {
+			return fmt.Errorf("unsupported rlimit type: %s", item.Type)
+		}
+		limit := syscall.Rlimit{Cur: item.Soft, Max: item.Hard}
+		if err := p.syscallHandler.Setrlimit(resource, &limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rlimitResource(name string) (int, bool) {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "RLIMIT_AS":
+		return unix.RLIMIT_AS, true
+	case "RLIMIT_CORE":
+		return unix.RLIMIT_CORE, true
+	case "RLIMIT_CPU":
+		return unix.RLIMIT_CPU, true
+	case "RLIMIT_DATA":
+		return unix.RLIMIT_DATA, true
+	case "RLIMIT_FSIZE":
+		return unix.RLIMIT_FSIZE, true
+	case "RLIMIT_LOCKS":
+		return unix.RLIMIT_LOCKS, true
+	case "RLIMIT_MEMLOCK":
+		return unix.RLIMIT_MEMLOCK, true
+	case "RLIMIT_MSGQUEUE":
+		return unix.RLIMIT_MSGQUEUE, true
+	case "RLIMIT_NICE":
+		return unix.RLIMIT_NICE, true
+	case "RLIMIT_NOFILE":
+		return unix.RLIMIT_NOFILE, true
+	case "RLIMIT_NPROC":
+		return unix.RLIMIT_NPROC, true
+	case "RLIMIT_RSS":
+		return unix.RLIMIT_RSS, true
+	case "RLIMIT_RTPRIO":
+		return unix.RLIMIT_RTPRIO, true
+	case "RLIMIT_RTTIME":
+		return unix.RLIMIT_RTTIME, true
+	case "RLIMIT_SIGPENDING":
+		return unix.RLIMIT_SIGPENDING, true
+	case "RLIMIT_STACK":
+		return unix.RLIMIT_STACK, true
+	default:
+		return 0, false
+	}
+}
+
+func (p *rootContainerEnvPreparer) setProcessUser(user spec.UserObject) error {
+	if len(user.AdditionalGids) > 0 {
+		if err := p.syscallHandler.Setgroups(user.AdditionalGids); err != nil {
+			return err
+		}
+	}
+	if err := p.syscallHandler.Setresgid(user.GID, user.GID, user.GID); err != nil {
+		return err
+	}
+	if err := p.syscallHandler.Setresuid(user.UID, user.UID, user.UID); err != nil {
+		return err
+	}
+	if user.Umask != nil {
+		syscall.Umask(*user.Umask)
+	}
 	return nil
 }
 
@@ -389,6 +704,10 @@ func (p *rootContainerEnvPreparer) setEnv(envlist []string) error {
 // which contains lower (image layers), upper, and work directories.
 // The overlay filesystem is mounted at the given rootfs path.
 func (p *rootContainerEnvPreparer) setupOverlay(rootfs string, imageAnnotation string) error {
+	if strings.TrimSpace(imageAnnotation) == "" {
+		return nil
+	}
+
 	// convert string to json
 	var imageConfig spec.ImageConfigObject
 	if err := utils.StringToJson(imageAnnotation, &imageConfig); err != nil {
@@ -475,11 +794,225 @@ func (p *rootContainerEnvPreparer) ensureOverlayManagedFileTargets(upperDir stri
 // The mountList contains entries such as /proc, /dev, /sys, cgroup, tmpfs,
 // and arbitrary host paths. For bind mounts, this method prepares the
 // destination path depending on whether the source is a file or a directory.
-func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs string, mountList []spec.MountObject) error {
+func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs string, mountList []spec.MountObject, ociBundleMode bool) error {
+	prerequiredMounts := baseMountsForMode(containerId, ociBundleMode)
+
+	if !ociBundleMode {
+		if os.Getenv(raindNamespacesPrejoinedEnv) == "1" {
+			prerequiredMounts = filterRootlessPrejoinedMounts(prerequiredMounts)
+		}
+		prerequiredMounts = p.filterMissingManagedFileMounts(prerequiredMounts)
+	}
+
+	// user mounts
+	for _, user_mount := range mountList {
+		if err := validateUserMount(user_mount); err != nil {
+			return err
+		}
+		prerequiredMounts = append(prerequiredMounts, spec.MountObject{
+			Destination: user_mount.Destination,
+			Type:        user_mount.Type,
+			Source:      user_mount.Source,
+			Options:     user_mount.Options,
+		})
+	}
+
+	for _, mountConfig := range prerequiredMounts {
+		var (
+			mountFlags      uintptr
+			mountData       string
+			dataStrTmp      []string
+			bindFlag        = false
+			deviceMountFlag = false
+			propagation     string
+		)
+		if mountConfig.Options != nil {
+			for _, option := range mountConfig.Options {
+				switch option {
+				case "nosuid":
+					mountFlags |= syscall.MS_NOSUID
+				case "noexec":
+					mountFlags |= syscall.MS_NOEXEC
+				case "nodev":
+					mountFlags |= syscall.MS_NODEV
+				case "dev":
+					deviceMountFlag = true
+				case "ro":
+					mountFlags |= syscall.MS_RDONLY
+				case "rw":
+					// ignore
+				case "bind":
+					bindFlag = true
+					mountFlags |= syscall.MS_BIND
+				case "strictatime":
+					mountFlags |= syscall.MS_STRICTATIME
+				case "noatime":
+					mountFlags |= syscall.MS_NOATIME
+				case "relatime":
+					mountFlags |= syscall.MS_RELATIME
+				case "rbind":
+					bindFlag = true
+					mountFlags |= syscall.MS_BIND | syscall.MS_REC
+				case "shared", "rshared", "slave", "rslave", "private", "rprivate", "unbindable", "runbindable":
+					propagation = option
+				case "z", "Z":
+					// ignore
+				default:
+					dataStrTmp = append(dataStrTmp, option)
+				}
+			}
+			mountData = strings.Join(dataStrTmp, ",")
+		} else {
+			mountFlags = uintptr(0)
+		}
+		// If type is explicitly bind, ensure bind flags are set even when options omit bind/rbind.
+		if mountConfig.Type == "bind" && !bindFlag {
+			bindFlag = true
+			mountFlags |= syscall.MS_BIND
+		}
+		// If type is empty but source is an absolute path, treat as bind mount by default.
+		if mountConfig.Type == "" && !bindFlag && strings.HasPrefix(mountConfig.Source, string(os.PathSeparator)) {
+			bindFlag = true
+			mountFlags |= syscall.MS_BIND
+		}
+
+		// validate destination path
+		mountPath, err := securePath(rootfs, mountConfig.Destination)
+		if err != nil {
+			return err
+		}
+
+		// the process differs depending on whether the source to be mounted is a directory or a file.
+		// if the source is a directory, the destination directory is checked for existence and created if it does not exist.
+		// if the source is a file, the parent directory is created and an empty file is created.
+		// this process is only bind mount
+		if bindFlag {
+			// validate source type
+			// if source typ is symlink, then deny
+			isLink, err := isSymlink(mountConfig.Source)
+			if err != nil {
+				return fmt.Errorf("lstat failed: %s: %w", mountConfig.Source, err)
+			}
+			if isLink {
+				return fmt.Errorf("source:%s is symlink", mountConfig.Source)
+			}
+
+			// retrieve source info
+			srcInfo, statErr := p.syscallHandler.Stat(mountConfig.Source)
+			if statErr != nil {
+				return statErr
+			}
+
+			if srcInfo.IsDir() { // source: directory
+				// reject if any symlink exists under source directory tree
+				//if err := rejectSymlinkInDirTreeFd(mountConfig.Source, WalkLimits{MaxDepth: 64, MaxEntries: 200_000}); err != nil {
+				//	return fmt.Errorf("invalid mount source (symlink in tree): %s: %w", mountConfig.Source, err)
+				//}
+				// check if target directory is exists
+				if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
+					if err := p.syscallHandler.MkdirAll(mountPath, os.ModePerm); err != nil {
+						return err
+					}
+				}
+			} else { // source: file
+				// create parent directory if not exists
+				if err := p.syscallHandler.MkdirAll(filepath.Dir(mountPath), os.ModePerm); err != nil {
+					return err
+				}
+				if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
+					f, err := p.syscallHandler.OpenFile(mountPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+					if err != nil {
+						return err
+					}
+					f.Close()
+				}
+			}
+		} else {
+			// check if target directory is exists
+			if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
+				if err := p.syscallHandler.MkdirAll(mountPath, os.ModePerm); err != nil {
+					return err
+				}
+			}
+		}
+
+		mountType := mountConfig.Type
+		mountSource := mountConfig.Source
+		mountDataForCall := mountData
+
+		// if the mountType is `cgroup`, fallback to `cgroup2`
+		if mountType == "cgroup" && hostUsesUnifiedCgroupV2() {
+			mountType = "cgroup2"
+			if mountSource == "" || mountSource == "cgroup" {
+				mountSource = "cgroup"
+			}
+			mountDataForCall = ""
+		}
+
+		// mount
+		if err := secureMount(
+			//mountConfig.Source,
+			mountSource,
+			mountPath,
+			//mountConfig.Type,
+			mountType,
+			mountFlags,
+			//mountData,
+			mountDataForCall,
+			deviceMountFlag,
+		); err != nil {
+			//return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
+			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountSource, mountPath, mountType, mountFlags, mountDataForCall, err)
+		}
+		if propagation != "" {
+			if err := p.applyMountPropagation(mountPath, propagation); err != nil {
+				return fmt.Errorf("mount propagation failed: target=%q propagation=%q: %w", mountPath, propagation, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func hostUsesUnifiedCgroupV2() bool {
+	return utils.FileExists("/sys/fs/cgroup/cgroup.controllers")
+}
+
+func mountPropagationFlags(propagation string) (uintptr, bool) {
+	switch propagation {
+	case "shared":
+		return syscall.MS_SHARED, true
+	case "rshared":
+		return syscall.MS_SHARED | syscall.MS_REC, true
+	case "slave":
+		return syscall.MS_SLAVE, true
+	case "rslave":
+		return syscall.MS_SLAVE | syscall.MS_REC, true
+	case "private":
+		return syscall.MS_PRIVATE, true
+	case "rprivate":
+		return syscall.MS_PRIVATE | syscall.MS_REC, true
+	case "unbindable":
+		return syscall.MS_UNBINDABLE, true
+	case "runbindable":
+		return syscall.MS_UNBINDABLE | syscall.MS_REC, true
+	default:
+		return 0, false
+	}
+}
+
+func baseMountsForMode(containerId string, ociBundleMode bool) []spec.MountObject {
+	if ociBundleMode {
+		return nil
+	}
+	return defaultContainerMounts(containerId)
+}
+
+func defaultContainerMounts(containerId string) []spec.MountObject {
 	// mount file system required for operation. required fs is the following
 	//   /proc, /dev, /dev/pts, /sys, /sys/fs/cgroup, /dev/mqueue, /dev/shm
 	// additionally, mount user-specified host directories
-	var prerequiredMounts = []spec.MountObject{
+	return []spec.MountObject{
 		{
 			Destination: "/proc",
 			Type:        "proc",
@@ -654,154 +1187,28 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 			},
 		},
 	}
+}
 
-	if os.Getenv(raindNamespacesPrejoinedEnv) == "1" {
-		prerequiredMounts = filterRootlessPrejoinedMounts(prerequiredMounts)
+func (p *rootContainerEnvPreparer) filterMissingManagedFileMounts(mounts []spec.MountObject) []spec.MountObject {
+	filtered := make([]spec.MountObject, 0, len(mounts))
+	for _, mountConfig := range mounts {
+		if isManagedEtcMount(mountConfig) {
+			if _, err := p.syscallHandler.Stat(mountConfig.Source); err != nil {
+				continue
+			}
+		}
+		filtered = append(filtered, mountConfig)
 	}
+	return filtered
+}
 
-	// user mounts
-	for _, user_mount := range mountList {
-		if err := validateUserMount(user_mount); err != nil {
-			return err
-		}
-		prerequiredMounts = append(prerequiredMounts, spec.MountObject{
-			Destination: user_mount.Destination,
-			Type:        user_mount.Type,
-			Source:      user_mount.Source,
-			Options:     user_mount.Options,
-		})
+func isManagedEtcMount(mountConfig spec.MountObject) bool {
+	switch filepath.Clean(mountConfig.Destination) {
+	case "/etc/resolv.conf", "/etc/hostname", "/etc/hosts":
+		return strings.Contains(filepath.Clean(mountConfig.Source), string(filepath.Separator)+"etc"+string(filepath.Separator))
+	default:
+		return false
 	}
-
-	for _, mountConfig := range prerequiredMounts {
-		var (
-			mountFlags      uintptr
-			mountData       string
-			dataStrTmp      []string
-			bindFlag        = false
-			deviceMountFlag = false
-		)
-		if mountConfig.Options != nil {
-			for _, option := range mountConfig.Options {
-				switch option {
-				case "nosuid":
-					mountFlags |= syscall.MS_NOSUID
-				case "noexec":
-					mountFlags |= syscall.MS_NOEXEC
-				case "nodev":
-					mountFlags |= syscall.MS_NODEV
-				case "dev":
-					deviceMountFlag = true
-				case "ro":
-					mountFlags |= syscall.MS_RDONLY
-				case "rw":
-					// ignore
-				case "bind":
-					bindFlag = true
-					mountFlags |= syscall.MS_BIND
-				case "strictatime":
-					mountFlags |= syscall.MS_STRICTATIME
-				case "noatime":
-					mountFlags |= syscall.MS_NOATIME
-				case "relatime":
-					mountFlags |= syscall.MS_RELATIME
-				case "rbind":
-					bindFlag = true
-					mountFlags |= syscall.MS_BIND | syscall.MS_REC
-				case "rprivate", "private", "z", "Z":
-					// ignore
-				default:
-					dataStrTmp = append(dataStrTmp, option)
-				}
-			}
-			mountData = strings.Join(dataStrTmp, ",")
-		} else {
-			mountFlags = uintptr(0)
-		}
-		// If type is explicitly bind, ensure bind flags are set even when options omit bind/rbind.
-		if mountConfig.Type == "bind" && !bindFlag {
-			bindFlag = true
-			mountFlags |= syscall.MS_BIND
-		}
-		// If type is empty but source is an absolute path, treat as bind mount by default.
-		if mountConfig.Type == "" && !bindFlag && strings.HasPrefix(mountConfig.Source, string(os.PathSeparator)) {
-			bindFlag = true
-			mountFlags |= syscall.MS_BIND
-		}
-
-		// validate destination path
-		mountPath, err := securePath(rootfs, mountConfig.Destination)
-		if err != nil {
-			return err
-		}
-
-		// the process differs depending on whether the source to be mounted is a directory or a file.
-		// if the source is a directory, the destination directory is checked for existence and created if it does not exist.
-		// if the source is a file, the parent directory is created and an empty file is created.
-		// this process is only bind mount
-		if bindFlag {
-			// validate source type
-			// if source typ is symlink, then deny
-			isLink, err := isSymlink(mountConfig.Source)
-			if err != nil {
-				return fmt.Errorf("lstat failed: %s: %w", mountConfig.Source, err)
-			}
-			if isLink {
-				return fmt.Errorf("source:%s is symlink", mountConfig.Source)
-			}
-
-			// retrieve source info
-			srcInfo, statErr := p.syscallHandler.Stat(mountConfig.Source)
-			if statErr != nil {
-				return statErr
-			}
-
-			if srcInfo.IsDir() { // source: directory
-				// reject if any symlink exists under source directory tree
-				//if err := rejectSymlinkInDirTreeFd(mountConfig.Source, WalkLimits{MaxDepth: 64, MaxEntries: 200_000}); err != nil {
-				//	return fmt.Errorf("invalid mount source (symlink in tree): %s: %w", mountConfig.Source, err)
-				//}
-				// check if target directory is exists
-				if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
-					if err := p.syscallHandler.MkdirAll(mountPath, os.ModePerm); err != nil {
-						return err
-					}
-				}
-			} else { // source: file
-				// create parent directory if not exists
-				if err := p.syscallHandler.MkdirAll(filepath.Dir(mountPath), os.ModePerm); err != nil {
-					return err
-				}
-				if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
-					f, err := p.syscallHandler.OpenFile(mountPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-					if err != nil {
-						return err
-					}
-					f.Close()
-				}
-			}
-		} else {
-			// check if target directory is exists
-			if _, err := p.syscallHandler.Stat(mountPath); p.syscallHandler.IsNotExist(err) {
-				if err := p.syscallHandler.MkdirAll(mountPath, os.ModePerm); err != nil {
-					return err
-				}
-			}
-		}
-
-		// mount
-		if err := secureMount(
-			mountConfig.Source,
-			mountPath,
-			mountConfig.Type,
-			mountFlags,
-			mountData,
-			deviceMountFlag,
-		); err != nil {
-			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
-		}
-	}
-
-	return nil
 }
 
 func filterRootlessPrejoinedMounts(mounts []spec.MountObject) []spec.MountObject {
@@ -877,7 +1284,7 @@ func (p *rootContainerEnvPreparer) mountStdDevice(rootfs string) error {
 //   - /dev/stdin  -> /proc/self/fd/0
 //   - /dev/stdout -> /proc/self/fd/1
 //   - /dev/stderr -> /proc/self/fd/2
-//   - /dev/ptmx   -> /dev/pts/ptmx
+//   - /dev/ptmx   -> pts/ptmx
 func (p *rootContainerEnvPreparer) createSymbolicLink(rootfs string) error {
 	deviceDir := filepath.Join(rootfs, "dev")
 	symlinks := []struct {
@@ -888,7 +1295,7 @@ func (p *rootContainerEnvPreparer) createSymbolicLink(rootfs string) error {
 		{filepath.Join(deviceDir, "stdin"), "/proc/self/fd/0"},
 		{filepath.Join(deviceDir, "stdout"), "/proc/self/fd/1"},
 		{filepath.Join(deviceDir, "stderr"), "/proc/self/fd/2"},
-		{filepath.Join(deviceDir, "ptmx"), "/dev/pts/ptmx"},
+		{filepath.Join(deviceDir, "ptmx"), "pts/ptmx"},
 	}
 
 	for _, symlink := range symlinks {

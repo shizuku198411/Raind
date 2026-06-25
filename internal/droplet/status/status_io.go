@@ -66,7 +66,7 @@ func (h *StatusHandler) CreateStatusFile(containerId string, pid int, status Con
 		ShimPid:    0,
 		Rootfs:     rootfs,
 		Bundle:     bundle,
-		Annotaion:  annotation,
+		Annotation: annotation,
 	}
 
 	if err := utils.WriteJsonToFile(stateFilePath, statusObject); err != nil {

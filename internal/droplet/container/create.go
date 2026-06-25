@@ -105,10 +105,24 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	}()
 
 	// 1. load config.json
+	stage = "prepare_bundle_config"
+	err = prepareBundleConfig(opt.ContainerId, opt.Bundle)
+	if err != nil {
+		return err
+	}
+
 	stage = "load_spec"
 	spec, err = c.specSecureLoad(opt.ContainerId)
 	if err != nil {
 		return err
+	}
+	bundlePath, err := bundlePathForContainer(opt.ContainerId, opt.Bundle)
+	if err != nil {
+		return err
+	}
+	tty := opt.TtyFlag || spec.Process.Terminal
+	if opt.ConsoleSocket != "" && !tty {
+		return fmt.Errorf("--console-socket requires --tty or process.terminal=true")
 	}
 
 	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
@@ -135,7 +149,7 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		0,
 		status.CREATING,
 		spec.Root.Path,
-		utils.ContainerDir(opt.ContainerId),
+		bundlePath,
 		spec.Annotations,
 	)
 	if err != nil {
@@ -189,7 +203,7 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	}
 
 	stage = "execute_shim"
-	pid, err = c.processExecutor.executeShim(opt.ContainerId, spec, fifo, opt.TtyFlag)
+	pid, err = c.processExecutor.executeShim(opt.ContainerId, spec, fifo, tty, opt.ConsoleSocket)
 	if err != nil {
 		return err
 	}
@@ -202,13 +216,23 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		return c.wrapInitPidWaitError(opt.ContainerId, err)
 	}
 	pid = initPid
+	stage = "write_pid_file"
+	err = writeContainerPidFile(opt.PidFile, initPid)
+	if err != nil {
+		return err
+	}
+	stage = "write_pid_file_marker"
+	err = writeExternalPidFileMarker(opt.ContainerId, opt.PidFile)
+	if err != nil {
+		return err
+	}
 
 	// 6. cgroup setup
 	if !nestedRootless {
 		stage = "setup_cgroup"
 		err = c.containerCgroupPreparer.prepare(opt.ContainerId, spec, initPid)
 		if err != nil {
-			return err
+			return c.wrapInitPidWaitError(opt.ContainerId, err)
 		}
 	}
 
@@ -233,6 +257,16 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	)
 	if err != nil {
 		return err
+	}
+	if len(spec.Hooks.Prestart) > 0 {
+		stage = "hook_prestart"
+		err = c.containerHookController.RunCreateRuntimeHooks(
+			opt.ContainerId,
+			spec.Hooks.Prestart,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 9. HOOK: createContainer
@@ -309,7 +343,7 @@ func (c *ContainerCreator) specSecureLoad(containerId string) (spec.Spec, error)
 // It is an interface so that the behavior can be mocked in tests and
 // replaced by alternative implementations if needed.
 type processExecutor interface {
-	executeShim(containerId string, spec spec.Spec, fifo string, tty bool) (int, error)
+	executeShim(containerId string, spec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error)
 }
 
 // containerInitExecutor is the default implementation of processExecutor.
@@ -371,7 +405,7 @@ func prepareRootlessInitLog(path string, rootlessConfig spec.RootlessConfigObjec
 	return os.Chown(path, uid, gid)
 }
 
-func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string, tty bool) (int, error) {
+func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error) {
 	// retrieve entrypoint from spec
 	entrypoint := spec.Process.Args
 
@@ -380,9 +414,16 @@ func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, 
 	if tty {
 		shimArgs = append(shimArgs, "--tty")
 	}
+	if consoleSocket != "" {
+		shimArgs = append(shimArgs, "--console-socket", consoleSocket)
+	}
 	shimArgs = append(shimArgs, containerId, fifo)
 	shimArgs = append(shimArgs, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), shimArgs...)
+	if isOCIBundleMode(containerId) {
+		cmd.SetStdout(os.Stdout)
+		cmd.SetStderr(os.Stderr)
+	}
 
 	// execute shim subcommand
 	if err := cmd.Start(); err != nil {

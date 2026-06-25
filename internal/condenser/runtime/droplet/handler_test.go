@@ -88,6 +88,7 @@ func TestDropletHandlerSpecUsesResolvedSecurityProfileArgs(t *testing.T) {
 		CapBase:         []string{"CAP_CHOWN", "CAP_NET_RAW"},
 		SeccompJSON:     `{"defaultAction":"SCMP_ACT_ALLOW"}`,
 		AppArmorProfile: "raind-default",
+		NoNewPrivileges: true,
 	})
 
 	require.NoError(t, err)
@@ -101,6 +102,7 @@ func TestDropletHandlerSpecUsesResolvedSecurityProfileArgs(t *testing.T) {
 	assert.Contains(t, args, `{"defaultAction":"SCMP_ACT_ALLOW"}`)
 	assert.Contains(t, args, "--apparmor-profile")
 	assert.Contains(t, args, "raind-default")
+	assert.Contains(t, args, "--no-new-privileges")
 }
 
 func TestDropletHandlerCreateBuildsExpectedArgs(t *testing.T) {
@@ -168,6 +170,11 @@ func TestDropletHandlerLifecycleBuildsExpectedArgs(t *testing.T) {
 			name: "delete",
 			run:  func(h *DropletHandler) error { return h.Delete(runtime.DeleteModel{ContainerId: "cid"}) },
 			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"delete", "cid"}},
+		},
+		{
+			name: "delete force",
+			run:  func(h *DropletHandler) error { return h.Delete(runtime.DeleteModel{ContainerId: "cid", Force: true}) },
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"delete", "--force", "cid"}},
 		},
 		{
 			name: "exec",

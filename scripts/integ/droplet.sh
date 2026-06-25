@@ -655,6 +655,13 @@ run_runtime_lifecycle_e2e() {
   trap - EXIT
 }
 
+run_oci_bundle_e2e() {
+  RAIND_DROPLET_OCI_CID="${RUNTIME_CID}-oci" \
+    DROPLET_BIN="${DROPLET_BIN}" \
+    E2E_WORK_DIR="${E2E_WORK_DIR}" \
+    "${ROOT_DIR}/scripts/oci/droplet_bundle_smoke.sh"
+}
+
 run_rootless_runtime_lifecycle_e2e() {
   local cid="${RUNTIME_CID}-rootless"
   local pid
@@ -803,6 +810,7 @@ main() {
   build_droplet
   setup_audit_log
   run_smoke_e2e
+  run_oci_bundle_e2e
 
   case "${RUN_RUNTIME}" in
     0|false|no)

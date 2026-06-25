@@ -1,6 +1,6 @@
 name: raind
 base: core24
-version: "0.4.0"
+version: "0.4.1"
 summary: Workload-Centric Container Runtime
 description: |
   Raind is a workload-centric container runtime that manages

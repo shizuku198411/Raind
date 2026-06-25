@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RAIND_BIN="${ROOT_DIR}/bin/raind"
 CONDENSER_BIN="${ROOT_DIR}/bin/condenser"
+DROPLET_BIN="${ROOT_DIR}/bin/droplet"
 E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/raind-deploy-e2e}"
 LOG_PATH="${E2E_WORK_DIR}/condenser.log"
 PID=""
@@ -75,6 +76,7 @@ build_components() {
   ./scripts/build.sh build
   [[ -x "${RAIND_BIN}" ]] || fail "missing built raind binary: ${RAIND_BIN}"
   [[ -x "${CONDENSER_BIN}" ]] || fail "missing built condenser binary: ${CONDENSER_BIN}"
+  [[ -x "${DROPLET_BIN}" ]] || fail "missing built droplet binary: ${DROPLET_BIN}"
 }
 
 prepare_runtime() {
@@ -193,6 +195,14 @@ cleanup_stale_condenser() {
   sleep 0.2
   sudo_cmd pkill -KILL -f "^${CONDENSER_BIN}$" 2>/dev/null || true
   sudo_cmd pkill -KILL -f "^/usr/local/bin/condenser$" 2>/dev/null || true
+}
+
+test_droplet_oci_bundle() {
+  log "droplet OCI bundle smoke test"
+  RAIND_DROPLET_OCI_CID="raind-e2e-oci-${SUFFIX}" \
+    DROPLET_BIN="${DROPLET_BIN}" \
+    E2E_WORK_DIR="${E2E_WORK_DIR}" \
+    "${ROOT_DIR}/scripts/oci/droplet_bundle_smoke.sh"
 }
 
 assert_port_free() {
@@ -2133,6 +2143,7 @@ main() {
 
   build_components
   prepare_runtime
+  test_droplet_oci_bundle
   cleanup_stale_condenser
   start_condenser
   trap stop_condenser EXIT

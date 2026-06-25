@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -53,6 +54,22 @@ func (f *fakeHookCommandFactory) Command(name string, args ...string) utils.Comm
 		cmd.err = errors.New("hook failed")
 	}
 	f.commands = append(f.commands, cmd)
+	return cmd
+}
+
+type fakeContextHookCommandFactory struct {
+	fakeHookCommandFactory
+	contextCommands int
+}
+
+func (f *fakeContextHookCommandFactory) CommandContext(ctx context.Context, name string, args ...string) utils.CommandExecutor {
+	f.contextCommands++
+	cmd := f.Command(name, args...)
+	if ctx.Err() != nil {
+		if fake, ok := cmd.(*fakeHookCommand); ok {
+			fake.err = ctx.Err()
+		}
+	}
 	return cmd
 }
 
@@ -119,10 +136,49 @@ func TestHookControllerRunHookListPassesCommandEnvAndStateStdin(t *testing.T) {
 	require.Len(t, factory.commands, 1)
 	cmd := factory.commands[0]
 	assert.Equal(t, "/bin/hook", cmd.name)
-	assert.Equal(t, []string{"a", "b"}, cmd.args)
+	assert.Equal(t, []string{"b"}, cmd.args)
 	assert.Equal(t, []string{"A=1"}, cmd.env)
 	assert.Equal(t, `{"id":"container-1"}`, cmd.stdinData)
 	assert.Equal(t, 1, cmd.runs)
+}
+
+func TestHookControllerRunHookListDropsOCIArgv0(t *testing.T) {
+	// == setup ==
+	factory := &fakeHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunPoststartHooks("container-1", []spec.HookObject{
+		{Path: "/bin/sh", Args: []string{"sh", "-c", "cat >/tmp/hook-state"}},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, "/bin/sh", factory.commands[0].name)
+	assert.Equal(t, []string{"-c", "cat >/tmp/hook-state"}, factory.commands[0].args)
+}
+
+func TestHookControllerRunHookListKeepsLegacyFlagArgs(t *testing.T) {
+	// == setup ==
+	factory := &fakeHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunCreateRuntimeHooks("container-1", []spec.HookObject{
+		{Path: "/bin/hook", Args: []string{"--url", "https://example.test"}},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, []string{"--url", "https://example.test"}, factory.commands[0].args)
 }
 
 func TestHookControllerRunHookListWithNsenterBuildsNsenterCommand(t *testing.T) {
@@ -143,7 +199,7 @@ func TestHookControllerRunHookListWithNsenterBuildsNsenterCommand(t *testing.T) 
 	require.Len(t, factory.commands, 1)
 	cmd := factory.commands[0]
 	assert.Equal(t, "/usr/bin/nsenter", cmd.name)
-	assert.Equal(t, []string{"nsenter", "-t", "4242", "-m", "-u", "-i", "-n", "-p", "--", "/bin/hook", "a"}, cmd.args)
+	assert.Equal(t, []string{"-t", "4242", "-m", "-u", "-i", "-n", "-p", "--", "/bin/hook"}, cmd.args)
 	assert.Equal(t, `{"id":"container-1"}`, cmd.stdinData)
 }
 
@@ -180,4 +236,26 @@ func TestHookControllerRunHookListRejectsEmptyPath(t *testing.T) {
 	// == assert ==
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty path")
+}
+
+func TestHookControllerRunHookListUsesTimeoutContextWhenConfigured(t *testing.T) {
+	// == setup ==
+	timeout := 1
+	factory := &fakeContextHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunPoststartHooks("container-1", []spec.HookObject{{
+		Path:    "/bin/hook",
+		Timeout: &timeout,
+	}})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, 1, factory.contextCommands)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, "/bin/hook", factory.commands[0].name)
 }

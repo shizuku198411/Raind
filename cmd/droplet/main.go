@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
+	"path/filepath"
 	"raind/internal/droplet/command"
 	"raind/internal/droplet/logs"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func isVersionArg(args []string) bool {
@@ -76,7 +79,9 @@ func main() {
 	// For version output, skip audit logger initialization.
 	if isVersionArg(os.Args[1:]) {
 		if err := app.Run(os.Args); err != nil {
-			log.Fatal(err)
+			writeOCIRuntimeErrorLog(os.Args[1:], err)
+			log.Print(err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -96,6 +101,42 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		writeOCIRuntimeErrorLog(os.Args[1:], err)
+		log.Print(err)
+		os.Exit(1)
 	}
+}
+
+func writeOCIRuntimeErrorLog(args []string, err error) {
+	logPath := flagValue(args, "--log")
+	if logPath == "" {
+		return
+	}
+	if mkErr := os.MkdirAll(filepath.Dir(logPath), 0755); mkErr != nil {
+		return
+	}
+	f, openErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if openErr != nil {
+		return
+	}
+	defer f.Close()
+	record := map[string]string{
+		"level": "error",
+		"msg":   err.Error(),
+		"time":  time.Now().Format(time.RFC3339Nano),
+	}
+	_ = json.NewEncoder(f).Encode(record)
+}
+
+func flagValue(args []string, name string) string {
+	prefix := name + "="
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
+		}
+	}
+	return ""
 }

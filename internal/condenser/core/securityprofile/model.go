@@ -23,6 +23,7 @@ type SecurityProfile struct {
 	Capabilities    CapabilityProfile `json:"capabilities" yaml:"capabilities"`
 	Seccomp         *SeccompObject    `json:"seccomp,omitempty" yaml:"seccomp,omitempty"`
 	AppArmorProfile string            `json:"apparmorProfile,omitempty" yaml:"apparmorProfile,omitempty"`
+	NoNewPrivileges bool              `json:"noNewPrivileges,omitempty" yaml:"noNewPrivileges,omitempty"`
 }
 
 type CapabilityProfile struct {
@@ -115,4 +116,5 @@ type ProfileSummary struct {
 	CapabilitiesCount int         `json:"capabilitiesCount"`
 	SeccompEnabled    bool        `json:"seccompEnabled"`
 	AppArmorProfile   string      `json:"apparmorProfile,omitempty"`
+	NoNewPrivileges   bool        `json:"noNewPrivileges,omitempty"`
 }

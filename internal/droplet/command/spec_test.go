@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"raind/internal/droplet/spec"
@@ -147,9 +148,10 @@ func TestCreateConfigOptionsBuildsConfigOptionsFromFlags(t *testing.T) {
 
 func TestCreateConfigOptionsAcceptsResolvedSecurityOptions(t *testing.T) {
 	ctx := newSpecCLIContext(t, map[string]any{
-		"base-cap":         []string{"chown", "CAP_NET_RAW"},
-		"seccomp-json":     `{"defaultAction":"SCMP_ACT_ALLOW"}`,
-		"apparmor-profile": "raind-default",
+		"base-cap":          []string{"chown", "CAP_NET_RAW"},
+		"seccomp-json":      `{"defaultAction":"SCMP_ACT_ALLOW"}`,
+		"apparmor-profile":  "raind-default",
+		"no-new-privileges": true,
 	})
 
 	opts, err := createConfigOptions(ctx)
@@ -159,6 +161,7 @@ func TestCreateConfigOptionsAcceptsResolvedSecurityOptions(t *testing.T) {
 	require.NotNil(t, opts.Security.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", opts.Security.Seccomp.DefaultAction)
 	assert.Equal(t, "raind-default", opts.Security.AppArmorProfile)
+	assert.True(t, opts.Security.NoNewPrivileges)
 }
 
 func TestCreateConfigOptionsRejectsUnknownSecurityProfile(t *testing.T) {
@@ -213,7 +216,7 @@ func TestPrintListDefaultAndJSONFormats(t *testing.T) {
 	assert.Contains(t, defaultOut, "ID")
 	assert.Contains(t, defaultOut, "c1")
 	jsonOut := captureCommandStdout(t, func() { printList(list, "json") })
-	assert.JSONEq(t, `[{"ociVersion":"","id":"c1","status":"running","exit_code":0,"reason":"","message":"","pid":123,"shimPid":0,"rootfs":"","bundle":"/bundle","annotations":{"io.raind.runtime.annotation.version":"","io.raind.net.config":"","io.raind.image.config":""}}]`, jsonOut)
+	assert.JSONEq(t, `[{"ociVersion":"","id":"c1","status":"running","exit_code":0,"reason":"","message":"","pid":123,"shimPid":0,"rootfs":"","bundle":"/bundle","annotations":{}}]`, jsonOut)
 }
 
 func newSpecCLIContext(t *testing.T, values map[string]any) *cli.Context {
@@ -229,6 +232,7 @@ func newSpecCLIContext(t *testing.T, values map[string]any) *cli.Context {
 	set.Var(cli.NewStringSlice(), "base-cap", "")
 	set.String("seccomp-json", "", "")
 	set.String("apparmor-profile", "", "")
+	set.Bool("no-new-privileges", false, "")
 	set.String("command", "sh", "")
 	set.Var(cli.NewStringSlice(), "ns", "")
 	set.Var(cli.NewStringSlice(), "ns-path", "")
@@ -263,6 +267,8 @@ func newSpecCLIContext(t *testing.T, values map[string]any) *cli.Context {
 			for _, item := range v {
 				require.NoError(t, set.Set(name, item))
 			}
+		case bool:
+			require.NoError(t, set.Set(name, fmt.Sprintf("%t", v)))
 		}
 	}
 	return cli.NewContext(cli.NewApp(), set, nil)

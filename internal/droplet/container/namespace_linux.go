@@ -3,7 +3,9 @@ package container
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -75,7 +77,9 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 	setGroupsFlag := nsConfig.user
 	var credential *syscall.Credential
 
-	if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
+	if specUIDMap, specGIDMap := buildSpecUserNamespaceIDMap(nsConfig, containerSpec.LinuxSpec.UIDMappings, containerSpec.LinuxSpec.GIDMappings); len(specUIDMap) > 0 || len(specGIDMap) > 0 {
+		uidMap, gidMap = specUIDMap, specGIDMap
+	} else if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
 		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig, rootlessConfig)
 		// Rootless containers still need setgroups inside the child user
 		// namespace for images such as nginx that drop workers to a non-root
@@ -119,6 +123,7 @@ type namespaceConfig struct {
 	ipc     bool
 	user    bool
 	cgroup  bool
+	time    bool
 
 	mountPath   string
 	networkPath string
@@ -127,6 +132,7 @@ type namespaceConfig struct {
 	ipcPath     string
 	userPath    string
 	cgroupPath  string
+	timePath    string
 }
 
 // buildNamespaceConfig constructs a namespaceConfig from the namespaces
@@ -205,6 +211,17 @@ func buildNamespaceConfig(spec spec.Spec) namespaceConfig {
 			if nsConfig.cgroupPath == "" {
 				nsConfig.cgroup = true
 			}
+		case "time":
+			if ns.Path != "" {
+				nsConfig.timePath = ns.Path
+				nsConfig.time = false
+				break
+			}
+			if nsConfig.timePath == "" {
+				// Accept OCI time namespaces from Docker/containerd for compatibility.
+				// Droplet does not create a separate time namespace yet.
+				nsConfig.time = true
+			}
 		}
 	}
 	return nsConfig
@@ -249,8 +266,9 @@ func buildCloneFlags(nsConfig namespaceConfig) uintptr {
 }
 
 type namespaceJoinTarget struct {
-	name string
-	path string
+	name   string
+	path   string
+	nstype int
 }
 
 // buildNamespaceJoinTargets returns the list of namespaces that should be joined
@@ -260,14 +278,20 @@ func buildNamespaceJoinTargets(spec spec.Spec) []namespaceJoinTarget {
 	nsConfig := buildNamespaceConfig(spec)
 	var targets []namespaceJoinTarget
 
+	if nsConfig.mountPath != "" {
+		targets = append(targets, namespaceJoinTarget{name: "mount", path: nsConfig.mountPath, nstype: unix.CLONE_NEWNS})
+	}
+	if nsConfig.cgroupPath != "" {
+		targets = append(targets, namespaceJoinTarget{name: "cgroup", path: nsConfig.cgroupPath, nstype: unix.CLONE_NEWCGROUP})
+	}
 	if nsConfig.networkPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "network", path: nsConfig.networkPath})
+		targets = append(targets, namespaceJoinTarget{name: "network", path: nsConfig.networkPath, nstype: unix.CLONE_NEWNET})
 	}
 	if nsConfig.ipcPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "ipc", path: nsConfig.ipcPath})
+		targets = append(targets, namespaceJoinTarget{name: "ipc", path: nsConfig.ipcPath, nstype: unix.CLONE_NEWIPC})
 	}
 	if nsConfig.utsPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "uts", path: nsConfig.utsPath})
+		targets = append(targets, namespaceJoinTarget{name: "uts", path: nsConfig.utsPath, nstype: unix.CLONE_NEWUTS})
 	}
 
 	return targets
@@ -275,6 +299,119 @@ func buildNamespaceJoinTargets(spec spec.Spec) []namespaceJoinTarget {
 
 func userNamespacePath(spec spec.Spec) string {
 	return buildNamespaceConfig(spec).userPath
+}
+
+func namespacePathNsenterArgs(containerSpec spec.Spec) []string {
+	nsConfig := buildNamespaceConfig(containerSpec)
+	args := []string{}
+	if nsConfig.cgroupPath != "" {
+		args = append(args, "--cgroup="+nsConfig.cgroupPath)
+	}
+	if nsConfig.ipcPath != "" {
+		args = append(args, "--ipc="+nsConfig.ipcPath)
+	}
+	if nsConfig.mountPath != "" {
+		args = append(args, "--mount="+nsConfig.mountPath)
+	}
+	if nsConfig.networkPath != "" {
+		args = append(args, "--net="+nsConfig.networkPath)
+	}
+	if nsConfig.pidPath != "" {
+		args = append(args, "--pid="+resolvePIDNamespacePath(nsConfig.pidPath))
+	}
+	if nsConfig.utsPath != "" {
+		args = append(args, "--uts="+nsConfig.utsPath)
+	}
+	if nsConfig.userPath != "" {
+		args = append(args, "--user="+nsConfig.userPath, "--setuid=0", "--setgid=0")
+	}
+	return args
+}
+
+func resolvePIDNamespacePath(path string) string {
+	if filepath.Base(path) != "pid_for_children" {
+		return path
+	}
+
+	parentPID, ok := pidFromProcNamespacePath(path)
+	if !ok {
+		return path
+	}
+	if childPID, ok := firstChildPID(parentPID); ok {
+		return fmt.Sprintf("/proc/%d/ns/pid", childPID)
+	}
+	if childPID, ok := scanFirstChildPID(parentPID); ok {
+		return fmt.Sprintf("/proc/%d/ns/pid", childPID)
+	}
+	return path
+}
+
+func pidFromProcNamespacePath(path string) (int, bool) {
+	clean := filepath.Clean(path)
+	parts := strings.Split(clean, string(os.PathSeparator))
+	if len(parts) != 5 || parts[1] != "proc" || parts[3] != "ns" {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(parts[2])
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+func firstChildPID(parentPID int) (int, bool) {
+	childrenPath := fmt.Sprintf("/proc/%d/task/%d/children", parentPID, parentPID)
+	data, err := os.ReadFile(childrenPath)
+	if err != nil {
+		return 0, false
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err == nil && pid > 0 {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
+func scanFirstChildPID(parentPID int) (int, bool) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		stat, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		if procStatPPID(string(stat)) == parentPID {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
+func procStatPPID(stat string) int {
+	closeParen := strings.LastIndex(stat, ")")
+	if closeParen < 0 || closeParen+2 >= len(stat) {
+		return 0
+	}
+	fields := strings.Fields(stat[closeParen+2:])
+	if len(fields) < 2 {
+		return 0
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0
+	}
+	return ppid
 }
 
 // joinExistingNamespaces applies setns for non-user namespaces that specify
@@ -288,8 +425,7 @@ func joinExistingNamespaces(spec spec.Spec) error {
 		if err != nil {
 			return fmt.Errorf("open %s namespace: %w", t.name, err)
 		}
-		nstype := 0
-		if err := unix.Setns(int(f.Fd()), nstype); err != nil {
+		if err := unix.Setns(int(f.Fd()), t.nstype); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("setns %s: %w", t.name, err)
 		}
@@ -330,6 +466,27 @@ func buildRootUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []sys
 		},
 	}
 
+	return uidMap, gidMap
+}
+
+func buildSpecUserNamespaceIDMap(nsConfig namespaceConfig, uidMappings []spec.IDMappingObject, gidMappings []spec.IDMappingObject) (uidMap, gidMap []syscall.SysProcIDMap) {
+	if !nsConfig.user {
+		return nil, nil
+	}
+	for _, mapping := range uidMappings {
+		uidMap = append(uidMap, syscall.SysProcIDMap{
+			ContainerID: mapping.ContainerID,
+			HostID:      mapping.HostID,
+			Size:        mapping.Size,
+		})
+	}
+	for _, mapping := range gidMappings {
+		gidMap = append(gidMap, syscall.SysProcIDMap{
+			ContainerID: mapping.ContainerID,
+			HostID:      mapping.HostID,
+			Size:        mapping.Size,
+		})
+	}
 	return uidMap, gidMap
 }
 

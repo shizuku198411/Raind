@@ -28,7 +28,7 @@ func (s *ContainerService) Delete(deleteParameter ServiceDeleteModel) (string, e
 	switch containerInfo.State {
 	case "creating", "created", "stopped":
 		// 1. delete container
-		if err := s.deleteContainer(containerId); err != nil {
+		if err := s.deleteContainer(containerId, containerInfo.State != "stopped"); err != nil {
 			return "", fmt.Errorf("delete container failed: %w", err)
 		}
 
@@ -49,7 +49,9 @@ func (s *ContainerService) Delete(deleteParameter ServiceDeleteModel) (string, e
 
 		// 4. delete cgroup subtree
 		if err := s.deleteCgroupSubtree(containerId); err != nil {
-			return "", fmt.Errorf("delete cgroup subtree failed: %w", err)
+			if !isNotFoundErr(err) {
+				return "", fmt.Errorf("delete cgroup subtree failed: %w", err)
+			}
 		}
 
 		if err := s.csmHandler.RemoveContainer(containerId); err != nil {
@@ -67,11 +69,12 @@ func (s *ContainerService) Delete(deleteParameter ServiceDeleteModel) (string, e
 	return containerId, nil
 }
 
-func (s *ContainerService) deleteContainer(containerId string) error {
+func (s *ContainerService) deleteContainer(containerId string, force bool) error {
 	// runtime: delete
 	if err := s.runtimeHandler.Delete(
 		runtime.DeleteModel{
 			ContainerId: containerId,
+			Force:       force,
 		},
 	); err != nil {
 		return err

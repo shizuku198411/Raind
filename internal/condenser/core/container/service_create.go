@@ -244,7 +244,7 @@ type RollbackFlag struct {
 
 func (s *ContainerService) rollback(rollbackFlag RollbackFlag, containerId string) error {
 	if rollbackFlag.Runtime {
-		if err := s.deleteContainer(containerId); err != nil {
+		if err := s.deleteContainer(containerId, true); err != nil {
 			if !isNotFoundErr(err) {
 				return err
 			}
@@ -286,8 +286,11 @@ func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found")
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such file")
 }
 
 func isBusyErr(err error) bool {
@@ -725,6 +728,7 @@ func (s *ContainerService) createContainerSpec(
 		SecurityProfile:        resolvedSecurityProfile.Name,
 		SeccompJSON:            seccompJSON,
 		AppArmorProfile:        resolvedSecurityProfile.AppArmorProfile,
+		NoNewPrivileges:        resolvedSecurityProfile.NoNewPrivileges,
 		Rootless:               createParameter.Rootless,
 		RootlessMode:           createParameter.RootlessMode,
 		RootlessRootUID:        createParameter.RootlessRootUID,

@@ -37,6 +37,13 @@ type containerCgroupController struct {
 // This method configures memory, CPU, and process membership
 // sequentially and returns an error if any step fails.
 func (c *containerCgroupController) prepare(containerId string, spec spec.Spec, pid int) error {
+	if !hasCgroupResourceConfig(spec.LinuxSpec.Resources) {
+		return nil
+	}
+	if err := c.syscallHandler.MkdirAll(utils.CgroupPath(containerId), 0755); err != nil {
+		return err
+	}
+
 	// 1. set memory limit
 	if err := c.setMemoryLimit(containerId, spec.LinuxSpec.Resources.Memory); err != nil {
 		return err
@@ -48,7 +55,7 @@ func (c *containerCgroupController) prepare(containerId string, spec spec.Spec, 
 	}
 
 	// 3. set pids max
-	if err := c.setPidsLimit(containerId, 512); err != nil {
+	if err := c.setPidsLimit(containerId, spec.LinuxSpec.Resources.Pids.Limit); err != nil {
 		return err
 	}
 
@@ -64,6 +71,10 @@ func (c *containerCgroupController) prepare(containerId string, spec spec.Spec, 
 // under the container's cgroup directory. The value is applied
 // according to the provided MemoryObject configuration.
 func (c *containerCgroupController) setMemoryLimit(containerId string, memoryObject spec.MemoryObject) error {
+	if memoryObject.Limit <= 0 {
+		return nil
+	}
+
 	cgroupPath := utils.CgroupPath(containerId)
 	memoryPath := filepath.Join(cgroupPath, "memory.max")
 	memoryLimit := strconv.FormatInt(int64(memoryObject.Limit), 10)
@@ -79,6 +90,10 @@ func (c *containerCgroupController) setMemoryLimit(containerId string, memoryObj
 // under the container's cgroup directory. The quota and period
 // together define the scheduler time allocation for the container.
 func (c *containerCgroupController) setCpuLimit(containerId string, cpuObject spec.CpuObject) error {
+	if cpuObject.Quota <= 0 || cpuObject.Period <= 0 {
+		return nil
+	}
+
 	cgroupPath := utils.CgroupPath(containerId)
 	cpuPath := filepath.Join(cgroupPath, "cpu.max")
 	cpuLimit := fmt.Sprintf("%d %d\n", cpuObject.Quota, cpuObject.Period)
@@ -90,6 +105,10 @@ func (c *containerCgroupController) setCpuLimit(containerId string, cpuObject sp
 }
 
 func (c *containerCgroupController) setPidsLimit(containerId string, pids int) error {
+	if pids <= 0 {
+		return nil
+	}
+
 	cgroupPath := utils.CgroupPath(containerId)
 	pidsMaxPath := filepath.Join(cgroupPath, "pids.max")
 	pidsMax := fmt.Sprintf("%d\n", pids)
@@ -113,4 +132,10 @@ func (c *containerCgroupController) setProcessToCgroup(containerId string, pid i
 	}
 
 	return nil
+}
+
+func hasCgroupResourceConfig(resources spec.ResourceObject) bool {
+	return resources.Memory.Limit > 0 ||
+		(resources.Cpu.Quota > 0 && resources.Cpu.Period > 0) ||
+		resources.Pids.Limit > 0
 }

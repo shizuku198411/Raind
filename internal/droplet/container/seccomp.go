@@ -67,6 +67,13 @@ const (
 	AUDIT_ARCH_RISCV64 = 0xc00000f3
 )
 
+const (
+	// clone3 is syscall number 435 on the Linux architectures Droplet currently
+	// supports for seccomp filtering: amd64, arm64, and riscv64. Keep this as a
+	// local constant so the build does not depend on x/sys exposing SYS_CLONE3.
+	linuxSysClone3 = 435
+)
+
 var syscallNameToNr = map[string]uint32{
 	"bpf":               uint32(unix.SYS_BPF),
 	"perf_event_open":   uint32(unix.SYS_PERF_EVENT_OPEN),
@@ -87,6 +94,7 @@ var syscallNameToNr = map[string]uint32{
 	"mount":             uint32(unix.SYS_MOUNT),
 	"unshare":           uint32(unix.SYS_UNSHARE),
 	"setns":             uint32(unix.SYS_SETNS),
+	"clone3":            linuxSysClone3,
 }
 
 type SeccompHandler interface {
@@ -99,22 +107,22 @@ func NewSeccompManager() *SeccompManager {
 
 type SeccompManager struct{}
 
+type seccompDenyRule struct {
+	nr    uint32
+	errno uint32
+}
+
 func (m *SeccompManager) InstallDenyFilter(seccompConfig spec.SeccompObject) error {
 	arch, err := m.auditArchForGOARCH(runtime.GOARCH)
 	if err != nil {
 		return err
 	}
 
-	// 1. no_new_privs is required for unprivileged seccomp filter install
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS) failed: %w", err)
-	}
-
-	// 2. build classic BPF program
+	// 1. build classic BPF program
 	//    - verify arch; if mismatch, kill (safe default)
-	//    - load syscall number; if it matches any blocked syscall, return ERRNO(EPERM)
+	//    - load syscall number; if it matches any blocked syscall, return ERRNO(rule.errno)
 	//    - other; ALLOW
-	blocked := []uint32{}
+	blocked := []seccompDenyRule{}
 	seen := map[uint32]struct{}{}
 
 	for _, rule := range seccompConfig.Syscalls {
@@ -131,7 +139,7 @@ func (m *SeccompManager) InstallDenyFilter(seccompConfig spec.SeccompObject) err
 				continue
 			}
 			seen[nr] = struct{}{}
-			blocked = append(blocked, nr)
+			blocked = append(blocked, seccompDenyRule{nr: nr, errno: m.errnoForRule(rule)})
 		}
 	}
 	if len(blocked) == 0 {
@@ -150,10 +158,10 @@ func (m *SeccompManager) InstallDenyFilter(seccompConfig spec.SeccompObject) err
 	prog = append(prog, m.bpfStmt(bpfLD|bpfW|bpfABS, seccompDataNrOffset))
 
 	// For each blocked syscall:
-	// if (A == SYS_xxx) return ERRNO(EPERM)
-	denyAction := SECCOMP_RET_ERRNO | uint32(unix.EPERM)
-	for _, nr := range blocked {
-		prog = append(prog, m.bpfJump(bpfJMP|bpfJEQ|bpfK, nr, 0, 1))
+	// if (A == SYS_xxx) return ERRNO(rule.errno)
+	for _, denyRule := range blocked {
+		prog = append(prog, m.bpfJump(bpfJMP|bpfJEQ|bpfK, denyRule.nr, 0, 1))
+		denyAction := SECCOMP_RET_ERRNO | denyRule.errno
 		prog = append(prog, m.bpfStmt(bpfRET|bpfK, denyAction))
 	}
 
@@ -210,4 +218,11 @@ func (m *SeccompManager) resolveSyscallNr(name string) (uint32, bool) {
 	n := normalizeSyscallName(name)
 	nr, ok := syscallNameToNr[n]
 	return nr, ok
+}
+
+func (m *SeccompManager) errnoForRule(rule spec.SeccompSyscallObject) uint32 {
+	if rule.ErrnoRet != nil {
+		return *rule.ErrnoRet
+	}
+	return uint32(unix.EPERM)
 }

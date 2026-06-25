@@ -36,7 +36,7 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 		"--work_dir", specParameter.WorkDir,
 		"--output", specParameter.Output,
 	}
-	if len(specParameter.CapBase) == 0 && specParameter.SeccompJSON == "" && specParameter.AppArmorProfile == "" && specParameter.SecurityProfile != "" {
+	if len(specParameter.CapBase) == 0 && specParameter.SeccompJSON == "" && specParameter.AppArmorProfile == "" && !specParameter.NoNewPrivileges && specParameter.SecurityProfile != "" {
 		args = append(args, "--security-profile", specParameter.SecurityProfile)
 	}
 	for _, v := range specParameter.CapBase {
@@ -47,6 +47,9 @@ func (h *DropletHandler) Spec(specParameter runtime.SpecModel) error {
 	}
 	if specParameter.AppArmorProfile != "" {
 		args = append(args, "--apparmor-profile", specParameter.AppArmorProfile)
+	}
+	if specParameter.NoNewPrivileges {
+		args = append(args, "--no-new-privileges")
 	}
 	if specParameter.Rootless {
 		args = append(args, "--rootless")
@@ -212,8 +215,11 @@ func (h *DropletHandler) Delete(deleteParameter runtime.DeleteModel) error {
 	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"delete",
-		deleteParameter.ContainerId,
 	}
+	if deleteParameter.Force {
+		args = append(args, "--force")
+	}
+	args = append(args, deleteParameter.ContainerId)
 	runtimeDelete := h.commandFactory.Command(runtimePath, args...)
 	out, err := runtimeDelete.CombineOutput()
 	if err != nil {

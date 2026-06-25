@@ -167,6 +167,7 @@ func TestContainerServiceDeleteRemovesCSMEntryAfterRuntimeDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "cid-1", id)
 	assert.True(t, deps.runtime.deleteCalled)
+	assert.Equal(t, runtime.DeleteModel{ContainerId: "cid-1", Force: true}, deps.runtime.deleteModel)
 	assert.Empty(t, deps.csm.containers)
 }
 
@@ -182,6 +183,19 @@ func TestContainerServiceDeleteIgnoresCSMEntryAlreadyRemovedByPoststopHook(t *te
 	require.NoError(t, err)
 	assert.Equal(t, "cid-1", id)
 	assert.True(t, deps.runtime.deleteCalled)
+	assert.Equal(t, runtime.DeleteModel{ContainerId: "cid-1", Force: true}, deps.runtime.deleteModel)
+	assert.Empty(t, deps.csm.containers)
+}
+
+func TestContainerServiceDeleteIgnoresMissingCgroupSubtree(t *testing.T) {
+	deps := newContainerServiceTestDeps(true)
+	deps.csm.storeInfo("cid-1", csm.ContainerInfo{ContainerId: "cid-1", ContainerName: "web", State: "stopped"})
+	deps.fs.removeErr = os.ErrNotExist
+
+	id, err := deps.service.Delete(ServiceDeleteModel{ContainerId: "web"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "cid-1", id)
 	assert.Empty(t, deps.csm.containers)
 }
 
@@ -204,6 +218,7 @@ type containerServiceTestDeps struct {
 	runtime *fakeRuntimeHandler
 	network *fakeNetworkService
 	psm     *fakePsmHandler
+	fs      *fakeFilesystemHandler
 }
 
 func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
@@ -214,8 +229,9 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 	runtimeHandler := &fakeRuntimeHandler{}
 	networkHandler := &fakeNetworkService{}
 	psmHandler := &fakePsmHandler{pods: map[string]psm.PodInfo{}}
+	filesystemHandler := &fakeFilesystemHandler{}
 	service := &ContainerService{
-		filesystemHandler:      &fakeFilesystemHandler{},
+		filesystemHandler:      filesystemHandler,
 		runtimeHandler:         runtimeHandler,
 		ipamHandler:            ipamHandler,
 		ilmHandler:             ilmHandler,
@@ -234,6 +250,7 @@ func newContainerServiceTestDeps(imageExists bool) containerServiceTestDeps {
 		runtime: runtimeHandler,
 		network: networkHandler,
 		psm:     psmHandler,
+		fs:      filesystemHandler,
 	}
 }
 
@@ -245,6 +262,7 @@ type fakeRuntimeHandler struct {
 	createPodPid int
 	execModel    runtime.ExecModel
 	specModel    runtime.SpecModel
+	deleteModel  runtime.DeleteModel
 	specErr      error
 	createErr    error
 	deleteHook   func(containerId string)
@@ -266,6 +284,7 @@ func (f *fakeRuntimeHandler) Start(m runtime.StartModel) error {
 }
 func (f *fakeRuntimeHandler) Delete(m runtime.DeleteModel) error {
 	f.deleteCalled = true
+	f.deleteModel = m
 	if f.deleteHook != nil {
 		f.deleteHook(m.ContainerId)
 	}
@@ -591,7 +610,9 @@ func (f *fakeNetworkService) RemoveForwardingRule(containerId string, model netw
 	return nil
 }
 
-type fakeFilesystemHandler struct{}
+type fakeFilesystemHandler struct {
+	removeErr error
+}
 
 func (f *fakeFilesystemHandler) MkdirAll(string, os.FileMode) error { return nil }
 func (f *fakeFilesystemHandler) ReadFile(string) ([]byte, error) {
@@ -616,7 +637,7 @@ func (f *fakeFilesystemHandler) WriteFile(string, []byte, os.FileMode) error    
 func (f *fakeFilesystemHandler) Open(string) (*os.File, error)                       { return nil, nil }
 func (f *fakeFilesystemHandler) OpenFile(string, int, os.FileMode) (*os.File, error) { return nil, nil }
 func (f *fakeFilesystemHandler) Copy(io.Writer, io.Reader) (int64, error)            { return 0, nil }
-func (f *fakeFilesystemHandler) Remove(string) error                                 { return nil }
+func (f *fakeFilesystemHandler) Remove(string) error                                 { return f.removeErr }
 func (f *fakeFilesystemHandler) RemoveAll(string) error                              { return nil }
 func (f *fakeFilesystemHandler) Rename(string, string) error                         { return nil }
 func (f *fakeFilesystemHandler) IsNotExist(err error) bool                           { return os.IsNotExist(err) }

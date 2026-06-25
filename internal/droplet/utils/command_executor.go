@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,10 @@ type CommandFactory interface {
 	Command(name string, args ...string) CommandExecutor
 }
 
+type ContextCommandFactory interface {
+	CommandContext(ctx context.Context, name string, args ...string) CommandExecutor
+}
+
 // execCommandFactory is the default implementation of commandFactory.
 //
 // It creates commandExecutor values backed by *exec.Cmd and launches
@@ -32,6 +37,10 @@ type ExecCommandFactory struct{}
 // using exec.Cmd.
 func (e *ExecCommandFactory) Command(name string, args ...string) CommandExecutor {
 	return &ExecCmd{cmd: exec.Command(name, args...)}
+}
+
+func (e *ExecCommandFactory) CommandContext(ctx context.Context, name string, args ...string) CommandExecutor {
+	return &ExecCmd{cmd: exec.CommandContext(ctx, name, args...)}
 }
 
 // commandExecutor represents a process that can be started.
@@ -147,6 +156,8 @@ type SyscallHandler interface {
 type KernelSyscallHandler interface {
 	Setresgid(rgid int, egid int, sgid int) error
 	Setresuid(ruid int, euid int, suid int) error
+	Setgroups(gids []int) error
+	Setrlimit(resource int, rlim *syscall.Rlimit) error
 	Sethostname(p []byte) error
 	Mount(source string, target string, fstype string, flags uintptr, data string) error
 	Unmount(target string, flags int) error
@@ -154,11 +165,15 @@ type KernelSyscallHandler interface {
 	Chdir(path string) error
 	Mkdir(path string, mode uint32) error
 	MkdirAll(path string, perm os.FileMode) error
+	Mknod(path string, mode uint32, dev int) error
+	Chown(name string, uid int, gid int) error
+	Chmod(name string, mode os.FileMode) error
 	Rmdir(path string) error
 	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
 	Create(name string) (*os.File, error)
 	Remove(name string) error
+	RemoveAll(path string) error
 	IsNotExist(err error) bool
 	Symlink(oldname string, newname string) error
 	Lstat(name string) (os.FileInfo, error)
@@ -208,6 +223,14 @@ func (k *kernelSyscall) Setresgid(rgid int, egid int, sgid int) error {
 // may be performed safely.
 func (k *kernelSyscall) Setresuid(ruid int, euid int, suid int) error {
 	return syscall.Setresuid(ruid, euid, suid)
+}
+
+func (k *kernelSyscall) Setgroups(gids []int) error {
+	return syscall.Setgroups(gids)
+}
+
+func (k *kernelSyscall) Setrlimit(resource int, rlim *syscall.Rlimit) error {
+	return syscall.Setrlimit(resource, rlim)
 }
 
 // Sethostname sets the hostname of the current UTS namespace by invoking the
@@ -270,6 +293,18 @@ func (k *kernelSyscall) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
+func (k *kernelSyscall) Mknod(path string, mode uint32, dev int) error {
+	return syscall.Mknod(path, mode, dev)
+}
+
+func (k *kernelSyscall) Chown(name string, uid int, gid int) error {
+	return os.Chown(name, uid, gid)
+}
+
+func (k *kernelSyscall) Chmod(name string, mode os.FileMode) error {
+	return os.Chmod(name, mode)
+}
+
 // Rmdir removes an empty directory using the rmdir(2) syscall.
 //
 // If the directory is not empty, the call fails with an error.
@@ -299,6 +334,10 @@ func (k *kernelSyscall) Create(name string) (*os.File, error) {
 
 func (k *kernelSyscall) Remove(name string) error {
 	return os.Remove(name)
+}
+
+func (k *kernelSyscall) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
 // IsNotExist reports whether an error indicates that a file or directory

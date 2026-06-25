@@ -19,6 +19,7 @@ func TestResolveSecurityProfileDefaults(t *testing.T) {
 	assert.Equal(t, SecurityProfileDefault, explicitProfile.Name)
 	assert.Equal(t, emptyProfile.Capabilities.Base, explicitProfile.Capabilities.Base)
 	assert.Equal(t, emptyProfile.AppArmorProfile, explicitProfile.AppArmorProfile)
+	assert.False(t, emptyProfile.NoNewPrivileges)
 	require.NotNil(t, emptyProfile.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", emptyProfile.Seccomp.DefaultAction)
 }
@@ -33,6 +34,7 @@ func TestResolveSecurityProfileDev(t *testing.T) {
 	assert.Equal(t, SecurityProfileDev, devProfile.Name)
 	assert.Equal(t, defaultProfile.Capabilities.Base, devProfile.Capabilities.Base)
 	assert.Equal(t, defaultProfile.AppArmorProfile, devProfile.AppArmorProfile)
+	assert.True(t, devProfile.NoNewPrivileges)
 	require.NotNil(t, devProfile.Seccomp)
 	assert.Equal(t, defaultProfile.Seccomp.DefaultAction, devProfile.Seccomp.DefaultAction)
 	assert.Equal(t, defaultProfile.Seccomp.Syscalls, devProfile.Seccomp.Syscalls)
@@ -51,6 +53,7 @@ func TestResolveSecurityProfileDeploy(t *testing.T) {
 	assert.Contains(t, defaultProfile.Capabilities.Base, "CAP_NET_RAW")
 	assert.Contains(t, defaultProfile.Capabilities.Base, "CAP_MKNOD")
 	assert.Equal(t, defaultProfile.AppArmorProfile, deployProfile.AppArmorProfile)
+	assert.True(t, deployProfile.NoNewPrivileges)
 	require.NotNil(t, deployProfile.Seccomp)
 	assert.Equal(t, defaultProfile.Seccomp.DefaultAction, deployProfile.Seccomp.DefaultAction)
 }
@@ -66,6 +69,7 @@ func TestResolveSecurityProfileRestricted(t *testing.T) {
 	require.NotNil(t, restrictedProfile.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", restrictedProfile.Seccomp.DefaultAction)
 	assert.Equal(t, "raind-default", restrictedProfile.AppArmorProfile)
+	assert.True(t, restrictedProfile.NoNewPrivileges)
 }
 
 func TestResolveSecurityProfilePrivileged(t *testing.T) {
@@ -132,6 +136,7 @@ func TestBuildSpecAcceptsDevSecurityProfile(t *testing.T) {
 	assert.Equal(t, DevSecurityProfile().AppArmorProfile, config.LinuxSpec.AppArmorProfile)
 	require.NotNil(t, config.LinuxSpec.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
+	assert.True(t, config.Process.NoNewPrivileges)
 }
 
 func TestBuildSpecAcceptsResolvedSecurityOption(t *testing.T) {
@@ -148,6 +153,7 @@ func TestBuildSpecAcceptsResolvedSecurityOption(t *testing.T) {
 				DefaultErrnoRet: &ep,
 			},
 			AppArmorProfile: "raind-default",
+			NoNewPrivileges: true,
 		},
 	})
 
@@ -172,6 +178,7 @@ func TestBuildSpecAcceptsDeploySecurityProfile(t *testing.T) {
 	assert.Equal(t, DeploySecurityProfile().AppArmorProfile, config.LinuxSpec.AppArmorProfile)
 	require.NotNil(t, config.LinuxSpec.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", config.LinuxSpec.Seccomp.DefaultAction)
+	assert.True(t, config.Process.NoNewPrivileges)
 }
 
 func TestBuildSpecAcceptsRestrictedSecurityProfile(t *testing.T) {

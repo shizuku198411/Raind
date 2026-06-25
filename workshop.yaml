@@ -52,6 +52,9 @@ actions:
   test-e2e: |
     cd /project
     ./scripts/e2e/raind.sh "$@"
+  test-oci-runtime-tools: |
+    cd /project
+    ./scripts/oci/runtime_tools_validation.sh "$@"
 
   dev-install: |
     cd /project

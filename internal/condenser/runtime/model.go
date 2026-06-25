@@ -15,6 +15,7 @@ type SpecModel struct {
 	SecurityProfile string
 	SeccompJSON     string
 	AppArmorProfile string
+	NoNewPrivileges bool
 	Rootless        bool
 	RootlessMode    string
 	RootlessRootUID int
@@ -59,6 +60,7 @@ type StartModel struct {
 
 type DeleteModel struct {
 	ContainerId string
+	Force       bool
 }
 
 type StopModel struct {

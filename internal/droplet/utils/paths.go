@@ -60,6 +60,10 @@ func InitPidFilePath(containerId string) string {
 	return filepath.Join(ContainerDir(containerId), "init.pid")
 }
 
+func ExternalPidFileMarkerPath(containerId string) string {
+	return filepath.Join(ContainerDir(containerId), "external_pid_file")
+}
+
 // cgroup path
 func CgroupPath(containerId string) string {
 	return filepath.Join(cgroupRootDir, containerId)
@@ -76,4 +80,9 @@ func ExecShimLogPath(containerId string) string {
 
 func ContainerLogPath(containerId string) string {
 	return filepath.Join(ContainerDir(containerId), "logs", "container.log")
+}
+
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

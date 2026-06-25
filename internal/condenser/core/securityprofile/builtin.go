@@ -265,12 +265,14 @@ func (p SecurityProfile) Summary() ProfileSummary {
 		CapabilitiesCount: len(p.Capabilities.Base),
 		SeccompEnabled:    p.Seccomp != nil,
 		AppArmorProfile:   p.AppArmorProfile,
+		NoNewPrivileges:   p.NoNewPrivileges,
 	}
 }
 
 func DevSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = ProfileDev
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -278,6 +280,7 @@ func DeploySecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = ProfileDeploy
 	profile.Capabilities.Base = dropCapabilities(profile.Capabilities.Base, "CAP_NET_RAW", "CAP_MKNOD")
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -285,6 +288,7 @@ func RestrictedSecurityProfile() SecurityProfile {
 	profile := DefaultSecurityProfile()
 	profile.Name = ProfileRestricted
 	profile.Capabilities.Base = []string{}
+	profile.NoNewPrivileges = true
 	return profile
 }
 
@@ -294,6 +298,7 @@ func PrivilegedSecurityProfile() SecurityProfile {
 	profile.Capabilities.Base = allCapabilities()
 	profile.Seccomp = nil
 	profile.AppArmorProfile = ""
+	profile.NoNewPrivileges = false
 	return profile
 }
 
@@ -302,6 +307,7 @@ func UnconfinedSecurityProfile() SecurityProfile {
 	profile.Name = ProfileUnconfined
 	profile.Seccomp = nil
 	profile.AppArmorProfile = ""
+	profile.NoNewPrivileges = false
 	return profile
 }
 
