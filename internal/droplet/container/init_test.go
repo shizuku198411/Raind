@@ -419,6 +419,51 @@ func TestRootContainerEnvPreparerPivotRootRunsExpectedSyscalls(t *testing.T) {
 	assert.Equal(t, []string{"/put_old"}, syscalls.rmdirs)
 }
 
+func TestRootContainerEnvPreparerMakeMountsPrivate(t *testing.T) {
+	// == setup ==
+	syscalls := &fakeInitSyscallHandler{}
+	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
+
+	// == exercise ==
+	err := preparer.makeMountsPrivate()
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []initMountCall{
+		{source: "", target: "/", fstype: "", flags: syscall.MS_PRIVATE | syscall.MS_REC, data: ""},
+	}, syscalls.mounts)
+}
+
+func TestRootContainerEnvPreparerEnsureRootfsMountpointBindMountsRootfs(t *testing.T) {
+	// == setup ==
+	syscalls := &fakeInitSyscallHandler{}
+	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
+
+	// == exercise ==
+	err := preparer.ensureRootfsMountpoint("/rootfs")
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []initMountCall{
+		{source: "/rootfs", target: "/rootfs", fstype: "", flags: syscall.MS_BIND | syscall.MS_REC, data: ""},
+	}, syscalls.mounts)
+}
+
+func TestRootContainerEnvPreparerMakeCurrentRootReadonlyRemountsSlash(t *testing.T) {
+	// == setup ==
+	syscalls := &fakeInitSyscallHandler{}
+	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
+
+	// == exercise ==
+	err := preparer.makeCurrentRootReadonly()
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []initMountCall{
+		{source: "", target: "/", fstype: "", flags: syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY | syscall.MS_REC, data: ""},
+	}, syscalls.mounts)
+}
+
 func TestRootContainerEnvPreparerSetRlimitsAppliesSupportedLimits(t *testing.T) {
 	// == setup ==
 	syscalls := &fakeInitSyscallHandler{}

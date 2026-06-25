@@ -295,31 +295,36 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("set env: %w", err)
 	}
-	// 4. setup overlay
+	// 4. make mount propagation private. Plain OCI rootfs bundles do not go
+	// through setupOverlay, but pivot_root still requires propagation isolation.
+	if err := p.makeMountsPrivate(); err != nil {
+		return fmt.Errorf("make mounts private: %w", err)
+	}
+	// 5. setup overlay
 	if err := p.setupOverlay(spec.Root.Path, spec.Annotations.Image); err != nil {
 		return fmt.Errorf("setup overlay: %w", err)
 	}
-	// 5. mount filesystem
+	// 6. mount filesystem
 	err = p.mountFilesystem(containerId, spec.Root.Path, spec.Mounts)
 	if err != nil {
 		return fmt.Errorf("mount filesystem: %w", err)
 	}
-	// 6. mount standard device
+	// 7. mount standard device
 	err = p.mountStdDevice(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("mount std device: %w", err)
 	}
-	// 7. create OCI linux devices
+	// 8. create OCI linux devices
 	err = p.createLinuxDevices(spec.Root.Path, spec.LinuxSpec.Devices)
 	if err != nil {
 		return fmt.Errorf("create linux devices: %w", err)
 	}
-	// 8. create symbolic link
+	// 9. create symbolic link
 	err = p.createSymbolicLink(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("create symbolic link: %w", err)
 	}
-	// 9. apply masked and readonly paths
+	// 10. apply masked and readonly paths
 	err = p.applyMaskedPaths(spec.Root.Path, spec.LinuxSpec.MaskedPaths)
 	if err != nil {
 		return fmt.Errorf("apply masked paths: %w", err)
@@ -328,48 +333,56 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("apply readonly paths: %w", err)
 	}
-	// 10. apply readonly rootfs
-	if spec.Root.Readonly {
-		err = p.makeRootfsReadonly(spec.Root.Path)
-		if err != nil {
-			return fmt.Errorf("make rootfs readonly: %w", err)
-		}
+	// 11. ensure rootfs is a mount point for pivot_root. Plain OCI rootfs
+	// bundles do not go through the Raind overlay mount path, so bind-mount the
+	// rootfs onto itself before pivoting.
+	err = p.ensureRootfsMountpoint(spec.Root.Path)
+	if err != nil {
+		return fmt.Errorf("ensure rootfs mountpoint: %w", err)
 	}
-	// 11. pivot_root
+	// 12. pivot_root
 	err = p.pivotRoot(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("pivot root: %w", err)
 	}
-	// 12. set capability
+	// 13. apply readonly rootfs after pivot_root so the runtime can create the
+	// temporary put_old directory first.
+	if spec.Root.Readonly {
+		err = p.makeCurrentRootReadonly()
+		if err != nil {
+			return fmt.Errorf("make rootfs readonly: %w", err)
+		}
+	}
+	// 14. set capability
 	err = p.setCapability(spec.Process.Capabilities)
 	if err != nil {
 		return fmt.Errorf("set capability: %w", err)
 	}
-	// 13. apply no_new_privileges
+	// 15. apply no_new_privileges
 	if spec.Process.NoNewPrivileges {
 		err = p.setNoNewPrivileges()
 		if err != nil {
 			return fmt.Errorf("set no_new_privileges: %w", err)
 		}
 	}
-	// 14. install seccomp (NO_NEW_PRIVS + filter)
+	// 16. install seccomp (NO_NEW_PRIVS + filter)
 	if spec.LinuxSpec.Seccomp != nil {
 		err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
 		if err != nil {
 			return fmt.Errorf("install seccomp: %w", err)
 		}
 	}
-	// 15. set rlimits
+	// 17. set rlimits
 	err = p.setRlimits(spec.Process.Rlimits)
 	if err != nil {
 		return fmt.Errorf("set rlimits: %w", err)
 	}
-	// 16. set process user
+	// 18. set process user
 	err = p.setProcessUser(spec.Process.User)
 	if err != nil {
 		return fmt.Errorf("set process user: %w", err)
 	}
-	// 17. change current dir
+	// 19. change current dir
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)
 	if err != nil {
 		return fmt.Errorf("chdir: %w", err)
@@ -378,11 +391,16 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	return nil
 }
 
-func (p *rootContainerEnvPreparer) makeRootfsReadonly(rootfs string) error {
-	if err := p.syscallHandler.Mount(rootfs, rootfs, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-		return err
-	}
-	return p.syscallHandler.Mount("", rootfs, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, "")
+func (p *rootContainerEnvPreparer) makeMountsPrivate() error {
+	return p.syscallHandler.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) ensureRootfsMountpoint(rootfs string) error {
+	return p.syscallHandler.Mount(rootfs, rootfs, "", syscall.MS_BIND|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) makeCurrentRootReadonly() error {
+	return p.syscallHandler.Mount("", "/", "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, "")
 }
 
 func (p *rootContainerEnvPreparer) createLinuxDevices(rootfs string, devices []spec.DeviceObject) error {
