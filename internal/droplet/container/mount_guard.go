@@ -104,7 +104,8 @@ func isAllowedType(fstype string, options []string) bool {
 				return false
 			}
 			hasBind = true
-		case "rprivate", "private", "ro", "rw", "nosuid", "nodev", "noexec", "relatime", "noatime", "strictatime", "dev", "newinstance":
+		case "shared", "rshared", "slave", "rslave", "private", "rprivate", "unbindable", "runbindable",
+			"ro", "rw", "nosuid", "nodev", "noexec", "relatime", "noatime", "strictatime", "dev", "newinstance":
 			// allowed mount option
 		case "z", "Z":
 			// Docker-compatible SELinux relabel hints. Raind does not relabel, but accepting them

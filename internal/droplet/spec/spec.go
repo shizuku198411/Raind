@@ -134,15 +134,16 @@ type SeccompObject struct {
 }
 
 type LinuxSpecObject struct {
-	Resources       ResourceObject    `json:"resources"`
-	Namespaces      []NamespaceObject `json:"namespaces"`
-	Devices         []DeviceObject    `json:"devices,omitempty"`
-	UIDMappings     []IDMappingObject `json:"uidMappings,omitempty"`
-	GIDMappings     []IDMappingObject `json:"gidMappings,omitempty"`
-	MaskedPaths     []string          `json:"maskedPaths,omitempty"`
-	ReadonlyPaths   []string          `json:"readonlyPaths,omitempty"`
-	Seccomp         *SeccompObject    `json:"seccomp,omitempty"`
-	AppArmorProfile string            `json:"apparmorProfile,omitempty"`
+	Resources         ResourceObject    `json:"resources"`
+	Namespaces        []NamespaceObject `json:"namespaces"`
+	Devices           []DeviceObject    `json:"devices,omitempty"`
+	UIDMappings       []IDMappingObject `json:"uidMappings,omitempty"`
+	GIDMappings       []IDMappingObject `json:"gidMappings,omitempty"`
+	MaskedPaths       []string          `json:"maskedPaths,omitempty"`
+	ReadonlyPaths     []string          `json:"readonlyPaths,omitempty"`
+	RootfsPropagation string            `json:"rootfsPropagation,omitempty"`
+	Seccomp           *SeccompObject    `json:"seccomp,omitempty"`
+	AppArmorProfile   string            `json:"apparmorProfile,omitempty"`
 }
 
 type AnnotationObject struct {
@@ -158,9 +159,15 @@ func (a AnnotationObject) MarshalJSON() ([]byte, error) {
 	for k, v := range a.Extra {
 		items[k] = v
 	}
-	items["io.raind.runtime.annotation.version"] = a.Version
-	items["io.raind.net.config"] = a.Net
-	items["io.raind.image.config"] = a.Image
+	if a.Version != "" {
+		items["io.raind.runtime.annotation.version"] = a.Version
+	}
+	if a.Net != "" {
+		items["io.raind.net.config"] = a.Net
+	}
+	if a.Image != "" {
+		items["io.raind.image.config"] = a.Image
+	}
 	if a.Rootless != "" {
 		items["io.raind.rootless"] = a.Rootless
 	}

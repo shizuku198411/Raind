@@ -136,10 +136,49 @@ func TestHookControllerRunHookListPassesCommandEnvAndStateStdin(t *testing.T) {
 	require.Len(t, factory.commands, 1)
 	cmd := factory.commands[0]
 	assert.Equal(t, "/bin/hook", cmd.name)
-	assert.Equal(t, []string{"a", "b"}, cmd.args)
+	assert.Equal(t, []string{"b"}, cmd.args)
 	assert.Equal(t, []string{"A=1"}, cmd.env)
 	assert.Equal(t, `{"id":"container-1"}`, cmd.stdinData)
 	assert.Equal(t, 1, cmd.runs)
+}
+
+func TestHookControllerRunHookListDropsOCIArgv0(t *testing.T) {
+	// == setup ==
+	factory := &fakeHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunPoststartHooks("container-1", []spec.HookObject{
+		{Path: "/bin/sh", Args: []string{"sh", "-c", "cat >/tmp/hook-state"}},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, "/bin/sh", factory.commands[0].name)
+	assert.Equal(t, []string{"-c", "cat >/tmp/hook-state"}, factory.commands[0].args)
+}
+
+func TestHookControllerRunHookListKeepsLegacyFlagArgs(t *testing.T) {
+	// == setup ==
+	factory := &fakeHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunCreateRuntimeHooks("container-1", []spec.HookObject{
+		{Path: "/bin/hook", Args: []string{"--url", "https://example.test"}},
+	})
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, []string{"--url", "https://example.test"}, factory.commands[0].args)
 }
 
 func TestHookControllerRunHookListWithNsenterBuildsNsenterCommand(t *testing.T) {
@@ -160,7 +199,7 @@ func TestHookControllerRunHookListWithNsenterBuildsNsenterCommand(t *testing.T) 
 	require.Len(t, factory.commands, 1)
 	cmd := factory.commands[0]
 	assert.Equal(t, "/usr/bin/nsenter", cmd.name)
-	assert.Equal(t, []string{"nsenter", "-t", "4242", "-m", "-u", "-i", "-n", "-p", "--", "/bin/hook", "a"}, cmd.args)
+	assert.Equal(t, []string{"-t", "4242", "-m", "-u", "-i", "-n", "-p", "--", "/bin/hook"}, cmd.args)
 	assert.Equal(t, `{"id":"container-1"}`, cmd.stdinData)
 }
 

@@ -164,6 +164,14 @@ func (c *ContainerRun) Run(opt RunOption) error {
 	); err != nil {
 		return err
 	}
+	if len(spec.Hooks.Prestart) > 0 {
+		if err := c.containerHookController.RunCreateRuntimeHooks(
+			opt.ContainerId,
+			spec.Hooks.Prestart,
+		); err != nil {
+			return err
+		}
+	}
 
 	// 10. HOOK: createContainer
 	if err := c.containerHookController.RunCreateContainerHooks(

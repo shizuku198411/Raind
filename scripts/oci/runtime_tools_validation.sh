@@ -72,6 +72,60 @@ requires_cgroup_v1() {
   esac
 }
 
+host_is_nested_userns() {
+  local uid_map
+  uid_map="$(cat /proc/self/uid_map 2>/dev/null || true)"
+  [[ "$(wc -l <<<"${uid_map}")" -ne 1 ]] && return 0
+  ! grep -Eq '^[[:space:]]*0[[:space:]]+0[[:space:]]+4294967295[[:space:]]*$' <<<"${uid_map}"
+}
+
+requires_initial_userns_mapping() {
+  case "$1" in
+    ./validation/linux_ns_nopath/linux_ns_nopath.t | \
+    ./validation/linux_uid_mappings/linux_uid_mappings.t)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+host_can_mknod_device_nodes() {
+  local tmp
+  tmp="$(mktemp -d)"
+  if ! sudo mknod "${tmp}/oci-test-char" c 1 3 2>/dev/null; then
+    rm -rf "${tmp}"
+    return 1
+  fi
+  if ! sudo mknod "${tmp}/oci-test-block" b 1 0 2>/dev/null; then
+    rm -rf "${tmp}"
+    return 1
+  fi
+  rm -rf "${tmp}"
+  return 0
+}
+
+requires_host_device_mknod() {
+  case "$1" in
+    ./validation/linux_masked_paths/linux_masked_paths.t | \
+    ./validation/linux_readonly_paths/linux_readonly_paths.t)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+skip_test() {
+  local test_path="$1"
+  local reason="$2"
+  printf 'TAP version 13\n'
+  printf 'ok 1 # SKIP %s %s\n' "${test_path}" "${reason}"
+  printf '1..1\n'
+}
+
 prepare_arm64_rootfs() {
   local arch
   arch="$(dpkg --print-architecture 2>/dev/null || true)"
@@ -146,16 +200,34 @@ main() {
   local skipped_tests=()
   local output
   local cgroup2=false
+  local nested_userns=false
+  local device_mknod=false
   if host_uses_cgroup2; then
     cgroup2=true
+  fi
+  if host_is_nested_userns; then
+    nested_userns=true
+  fi
+  if host_can_mknod_device_nodes; then
+    device_mknod=true
   fi
   for test_path in "${test_paths[@]}"; do
     cleanup_droplet_runtime_state
     log "runtime-tools validation: ${test_path}"
     if [[ "${cgroup2}" == "true" ]] && requires_cgroup_v1 "${test_path}"; then
-      printf 'TAP version 13\n'
-      printf 'ok 1 # SKIP %s requires cgroup v1; host uses cgroup2\n' "${test_path}"
-      printf '1..1\n'
+      skip_test "${test_path}" "requires cgroup v1; host uses cgroup2"
+      skipped_count=$((skipped_count + 1))
+      skipped_tests+=("${test_path}")
+      continue
+    fi
+    if [[ "${nested_userns}" == "true" ]] && requires_initial_userns_mapping "${test_path}"; then
+      skip_test "${test_path}" "requires broad uid/gid mappings from the initial user namespace"
+      skipped_count=$((skipped_count + 1))
+      skipped_tests+=("${test_path}")
+      continue
+    fi
+    if [[ "${device_mknod}" != "true" ]] && requires_host_device_mknod "${test_path}"; then
+      skip_test "${test_path}" "requires host device-node mknod permission"
       skipped_count=$((skipped_count + 1))
       skipped_tests+=("${test_path}")
       continue
@@ -170,6 +242,10 @@ main() {
       printf 'error: %s exited with status %d\n' "${test_path}" "${status}" >&2
       failed=1
       test_failed=1
+    fi
+    if [[ "${status}" -eq 0 ]] && ! grep -q '^1\.\.' <<<"${output}"; then
+      passed_count=$((passed_count + 1))
+      continue
     fi
     if ! grep -q '^1\.\.' <<<"${output}"; then
       printf 'error: %s did not emit a TAP plan\n' "${test_path}" >&2

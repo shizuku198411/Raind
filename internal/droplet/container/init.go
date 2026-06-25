@@ -285,7 +285,7 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 		return fmt.Errorf("switch to user namespace root: %w", err)
 	}
 	// 2. set hostname
-	if !prejoinedNamespaces {
+	if !shouldSkipInitHostname(spec, prejoinedNamespaces) {
 		err = p.setHostnameToContainerId(spec.Hostname)
 		if err != nil {
 			return fmt.Errorf("set hostname: %w", err)
@@ -342,6 +342,12 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("ensure rootfs mountpoint: %w", err)
 	}
+	if spec.LinuxSpec.RootfsPropagation != "" {
+		err = p.applyMountPropagation(spec.Root.Path, spec.LinuxSpec.RootfsPropagation)
+		if err != nil {
+			return fmt.Errorf("apply rootfs propagation: %w", err)
+		}
+	}
 	// 12. pivot_root
 	err = p.pivotRoot(spec.Root.Path)
 	if err != nil {
@@ -386,18 +392,23 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("set rlimits: %w", err)
 	}
-	// 19. set process user
-	err = p.setProcessUser(spec.Process.User)
-	if err != nil {
-		return fmt.Errorf("set process user: %w", err)
-	}
-	// 20. change current dir
+	// 19. change current dir before dropping to the configured process user.
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)
 	if err != nil {
 		return fmt.Errorf("chdir: %w", err)
 	}
+	// 20. set process user
+	err = p.setProcessUser(spec.Process.User)
+	if err != nil {
+		return fmt.Errorf("set process user: %w", err)
+	}
 
 	return nil
+}
+
+func shouldSkipInitHostname(containerSpec spec.Spec, prejoinedNamespaces bool) bool {
+	nsConfig := buildNamespaceConfig(containerSpec)
+	return nsConfig.utsPath != "" || (prejoinedNamespaces && isRootlessSpec(containerSpec))
 }
 
 func (p *rootContainerEnvPreparer) makeMountsPrivate() error {
@@ -410,6 +421,14 @@ func (p *rootContainerEnvPreparer) ensureRootfsMountpoint(rootfs string) error {
 
 func (p *rootContainerEnvPreparer) makeCurrentRootReadonly() error {
 	return p.syscallHandler.Mount("", "/", "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) applyMountPropagation(target string, propagation string) error {
+	flags, ok := mountPropagationFlags(propagation)
+	if !ok {
+		return fmt.Errorf("unsupported mount propagation: %s", propagation)
+	}
+	return p.syscallHandler.Mount("", target, "", flags, "")
 }
 
 func isOCIBundleMode(containerId string) bool {
@@ -796,6 +815,7 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 			dataStrTmp      []string
 			bindFlag        = false
 			deviceMountFlag = false
+			propagation     string
 		)
 		if mountConfig.Options != nil {
 			for _, option := range mountConfig.Options {
@@ -824,7 +844,9 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 				case "rbind":
 					bindFlag = true
 					mountFlags |= syscall.MS_BIND | syscall.MS_REC
-				case "rprivate", "private", "z", "Z":
+				case "shared", "rshared", "slave", "rslave", "private", "rprivate", "unbindable", "runbindable":
+					propagation = option
+				case "z", "Z":
 					// ignore
 				default:
 					dataStrTmp = append(dataStrTmp, option)
@@ -916,9 +938,37 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 		); err != nil {
 			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
 		}
+		if propagation != "" {
+			if err := p.applyMountPropagation(mountPath, propagation); err != nil {
+				return fmt.Errorf("mount propagation failed: target=%q propagation=%q: %w", mountPath, propagation, err)
+			}
+		}
 	}
 
 	return nil
+}
+
+func mountPropagationFlags(propagation string) (uintptr, bool) {
+	switch propagation {
+	case "shared":
+		return syscall.MS_SHARED, true
+	case "rshared":
+		return syscall.MS_SHARED | syscall.MS_REC, true
+	case "slave":
+		return syscall.MS_SLAVE, true
+	case "rslave":
+		return syscall.MS_SLAVE | syscall.MS_REC, true
+	case "private":
+		return syscall.MS_PRIVATE, true
+	case "rprivate":
+		return syscall.MS_PRIVATE | syscall.MS_REC, true
+	case "unbindable":
+		return syscall.MS_UNBINDABLE, true
+	case "runbindable":
+		return syscall.MS_UNBINDABLE | syscall.MS_REC, true
+	default:
+		return 0, false
+	}
 }
 
 func baseMountsForMode(containerId string, ociBundleMode bool) []spec.MountObject {

@@ -3,7 +3,9 @@ package container
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -77,13 +79,6 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 
 	if specUIDMap, specGIDMap := buildSpecUserNamespaceIDMap(nsConfig, containerSpec.LinuxSpec.UIDMappings, containerSpec.LinuxSpec.GIDMappings); len(specUIDMap) > 0 || len(specGIDMap) > 0 {
 		uidMap, gidMap = specUIDMap, specGIDMap
-		if nsConfig.user {
-			credential = &syscall.Credential{
-				Uid:         0,
-				Gid:         0,
-				NoSetGroups: true,
-			}
-		}
 	} else if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
 		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig, rootlessConfig)
 		// Rootless containers still need setgroups inside the child user
@@ -291,6 +286,119 @@ func buildNamespaceJoinTargets(spec spec.Spec) []namespaceJoinTarget {
 
 func userNamespacePath(spec spec.Spec) string {
 	return buildNamespaceConfig(spec).userPath
+}
+
+func namespacePathNsenterArgs(containerSpec spec.Spec) []string {
+	nsConfig := buildNamespaceConfig(containerSpec)
+	args := []string{}
+	if nsConfig.cgroupPath != "" {
+		args = append(args, "--cgroup="+nsConfig.cgroupPath)
+	}
+	if nsConfig.ipcPath != "" {
+		args = append(args, "--ipc="+nsConfig.ipcPath)
+	}
+	if nsConfig.mountPath != "" {
+		args = append(args, "--mount="+nsConfig.mountPath)
+	}
+	if nsConfig.networkPath != "" {
+		args = append(args, "--net="+nsConfig.networkPath)
+	}
+	if nsConfig.pidPath != "" {
+		args = append(args, "--pid="+resolvePIDNamespacePath(nsConfig.pidPath))
+	}
+	if nsConfig.utsPath != "" {
+		args = append(args, "--uts="+nsConfig.utsPath)
+	}
+	if nsConfig.userPath != "" {
+		args = append(args, "--user="+nsConfig.userPath, "--setuid=0", "--setgid=0")
+	}
+	return args
+}
+
+func resolvePIDNamespacePath(path string) string {
+	if filepath.Base(path) != "pid_for_children" {
+		return path
+	}
+
+	parentPID, ok := pidFromProcNamespacePath(path)
+	if !ok {
+		return path
+	}
+	if childPID, ok := firstChildPID(parentPID); ok {
+		return fmt.Sprintf("/proc/%d/ns/pid", childPID)
+	}
+	if childPID, ok := scanFirstChildPID(parentPID); ok {
+		return fmt.Sprintf("/proc/%d/ns/pid", childPID)
+	}
+	return path
+}
+
+func pidFromProcNamespacePath(path string) (int, bool) {
+	clean := filepath.Clean(path)
+	parts := strings.Split(clean, string(os.PathSeparator))
+	if len(parts) != 5 || parts[1] != "proc" || parts[3] != "ns" {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(parts[2])
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+func firstChildPID(parentPID int) (int, bool) {
+	childrenPath := fmt.Sprintf("/proc/%d/task/%d/children", parentPID, parentPID)
+	data, err := os.ReadFile(childrenPath)
+	if err != nil {
+		return 0, false
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err == nil && pid > 0 {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
+func scanFirstChildPID(parentPID int) (int, bool) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		stat, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		if procStatPPID(string(stat)) == parentPID {
+			return pid, true
+		}
+	}
+	return 0, false
+}
+
+func procStatPPID(stat string) int {
+	closeParen := strings.LastIndex(stat, ")")
+	if closeParen < 0 || closeParen+2 >= len(stat) {
+		return 0
+	}
+	fields := strings.Fields(stat[closeParen+2:])
+	if len(fields) < 2 {
+		return 0
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0
+	}
+	return ppid
 }
 
 // joinExistingNamespaces applies setns for non-user namespaces that specify

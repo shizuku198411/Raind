@@ -246,13 +246,12 @@ func (c *HookController) runHookListWithNsenter(containerId string, phase string
 
 		// prepare hook environment with nsenter
 		nsenterArgs := []string{
-			"nsenter",
 			"-t", strconv.Itoa(initPid),
 			"-m", "-u", "-i", "-n", "-p",
 			"--",
 			hook.Path,
 		}
-		nsenterArgs = append(nsenterArgs, args...)
+		nsenterArgs = append(nsenterArgs, commandArgsFromOCIArgs(args)...)
 
 		var stderr bytes.Buffer
 		cmd, cancel := c.buildCommandWithTimeout(hook, "/usr/bin/nsenter", nsenterArgs...)
@@ -315,7 +314,17 @@ func (c *HookController) runHookListWithNsenter(containerId string, phase string
 }
 
 func (c *HookController) buildHookCommand(hook spec.HookObject, args []string) (utils.CommandExecutor, context.CancelFunc) {
-	return c.buildCommandWithTimeout(hook, hook.Path, args...)
+	return c.buildCommandWithTimeout(hook, hook.Path, commandArgsFromOCIArgs(args)...)
+}
+
+func commandArgsFromOCIArgs(args []string) []string {
+	if len(args) == 0 {
+		return []string{}
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return args
+	}
+	return args[1:]
 }
 
 func (c *HookController) buildCommandWithTimeout(hook spec.HookObject, name string, args ...string) (utils.CommandExecutor, context.CancelFunc) {

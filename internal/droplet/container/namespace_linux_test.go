@@ -210,11 +210,25 @@ func TestBuildProcAttrForContainerUsesSpecIDMappingsBeforeRaindRootlessAnnotatio
 		{ContainerID: 0, HostID: 1000, Size: 1},
 		{ContainerID: 1, HostID: 300000, Size: 65535},
 	}, procAttr.gidMap)
-	if assert.NotNil(t, procAttr.credential) {
-		assert.Equal(t, uint32(0), procAttr.credential.Uid)
-		assert.Equal(t, uint32(0), procAttr.credential.Gid)
-		assert.True(t, procAttr.credential.NoSetGroups)
-	}
+	assert.Nil(t, procAttr.credential)
+}
+
+func TestResolvePIDNamespacePathKeepsPlainPIDPath(t *testing.T) {
+	assert.Equal(t, "/proc/123/ns/pid", resolvePIDNamespacePath("/proc/123/ns/pid"))
+}
+
+func TestPIDFromProcNamespacePath(t *testing.T) {
+	pid, ok := pidFromProcNamespacePath("/proc/123/ns/pid_for_children")
+	assert.True(t, ok)
+	assert.Equal(t, 123, pid)
+
+	_, ok = pidFromProcNamespacePath("/tmp/pid_for_children")
+	assert.False(t, ok)
+}
+
+func TestProcStatPPID(t *testing.T) {
+	stat := "42 (process name) S 7 1 1 0 -1 4194560"
+	assert.Equal(t, 7, procStatPPID(stat))
 }
 
 func TestBuildRootlessUserNamespaceIDMapMapsContainerRootToLoginUser(t *testing.T) {

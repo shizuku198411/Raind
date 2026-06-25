@@ -93,9 +93,12 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	initArgs := append([]string{"init", containerId, opt.Fifo}, opt.Entrypoint...)
 	cmdName := utils.SelfBinPath()
 	cmdArgs := initArgs
-	if userNS := userNamespacePath(spec); userNS != "" {
+	pidNamespacePath := buildNamespaceConfig(spec).pidPath
+	usePrejoin := shouldPrejoinRootlessPathNamespaces(spec)
+	if nsenterArgs := namespacePathNsenterArgs(spec); len(nsenterArgs) > 0 && !usePrejoin {
 		cmdName = "nsenter"
-		cmdArgs = append([]string{"--user=" + userNS, "--setuid=0", "--setgid=0", "--", utils.SelfBinPath()}, initArgs...)
+		cmdArgs = append(nsenterArgs, "--", utils.SelfBinPath())
+		cmdArgs = append(cmdArgs, initArgs...)
 	}
 	cmd := c.commandFactory.Command(cmdName, cmdArgs...)
 	prejoinedNamespaces, unlockOSThread, err := prejoinRootlessPathNamespaces(spec)
@@ -106,7 +109,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		logger.Printf("prejoin namespaces failed: %v", err)
 		return err
 	}
-	if prejoinedNamespaces {
+	if prejoinedNamespaces || len(namespacePathNsenterArgs(spec)) > 0 {
 		cmd.SetEnv(append(os.Environ(), raindNamespacesPrejoinedEnv+"=1"))
 	}
 
@@ -212,6 +215,14 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		return err
 	}
 	initPid := cmd.Pid()
+	if pidNamespacePath != "" {
+		childPID, err := waitFirstChildPID(cmd.Pid(), 3*time.Second, 20*time.Millisecond)
+		if err != nil {
+			logger.Printf("wait pid namespace child failed: %v", err)
+			return err
+		}
+		initPid = childPID
+	}
 	pid = initPid
 	logger.Printf("init started pid=%d tty=%t", initPid, opt.Tty)
 
@@ -273,6 +284,25 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	}
 
 	return waitErr
+}
+
+func waitFirstChildPID(parentPID int, timeout time.Duration, pollInterval time.Duration) (int, error) {
+	if pollInterval <= 0 {
+		pollInterval = 20 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if childPID, ok := firstChildPID(parentPID); ok {
+			return childPID, nil
+		}
+		if childPID, ok := scanFirstChildPID(parentPID); ok {
+			return childPID, nil
+		}
+		if time.Now().After(deadline) {
+			return 0, fmt.Errorf("timed out waiting for child of pid %d", parentPID)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 func applyConsoleSize(ptmx *os.File, size *spec.ConsoleSizeObject) error {

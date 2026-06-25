@@ -232,7 +232,7 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		stage = "setup_cgroup"
 		err = c.containerCgroupPreparer.prepare(opt.ContainerId, spec, initPid)
 		if err != nil {
-			return err
+			return c.wrapInitPidWaitError(opt.ContainerId, err)
 		}
 	}
 
@@ -257,6 +257,16 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 	)
 	if err != nil {
 		return err
+	}
+	if len(spec.Hooks.Prestart) > 0 {
+		stage = "hook_prestart"
+		err = c.containerHookController.RunCreateRuntimeHooks(
+			opt.ContainerId,
+			spec.Hooks.Prestart,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 9. HOOK: createContainer

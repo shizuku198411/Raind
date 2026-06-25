@@ -216,7 +216,7 @@ func TestPrintListDefaultAndJSONFormats(t *testing.T) {
 	assert.Contains(t, defaultOut, "ID")
 	assert.Contains(t, defaultOut, "c1")
 	jsonOut := captureCommandStdout(t, func() { printList(list, "json") })
-	assert.JSONEq(t, `[{"ociVersion":"","id":"c1","status":"running","exit_code":0,"reason":"","message":"","pid":123,"shimPid":0,"rootfs":"","bundle":"/bundle","annotations":{"io.raind.runtime.annotation.version":"","io.raind.net.config":"","io.raind.image.config":""}}]`, jsonOut)
+	assert.JSONEq(t, `[{"ociVersion":"","id":"c1","status":"running","exit_code":0,"reason":"","message":"","pid":123,"shimPid":0,"rootfs":"","bundle":"/bundle","annotations":{}}]`, jsonOut)
 }
 
 func newSpecCLIContext(t *testing.T, values map[string]any) *cli.Context {
