@@ -46,6 +46,7 @@ type ProcessObject struct {
 	Args            []string           `json:"args"`
 	Terminal        bool               `json:"terminal,omitempty"`
 	ConsoleSize     *ConsoleSizeObject `json:"consoleSize,omitempty"`
+	OOMScoreAdj     *int               `json:"oomScoreAdj,omitempty"`
 	Capabilities    CapabilityObject   `json:"capabilities"`
 	User            UserObject         `json:"user,omitempty"`
 	Rlimits         []RlimitObject     `json:"rlimits,omitempty"`

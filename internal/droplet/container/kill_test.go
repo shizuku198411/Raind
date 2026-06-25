@@ -48,6 +48,39 @@ func TestContainerKillSendsSignalUpdatesStateAndRunsStopHook(t *testing.T) {
 	assert.Equal(t, []deleteHookCall{{containerId: "container-1", hooks: stopHooks}}, hookController.stopContainerCalls)
 }
 
+func TestContainerKillAcceptsSigPrefixSignal(t *testing.T) {
+	// == setup ==
+	killController := &ContainerKill{
+		specLoader:              &fakeDeleteSpecLoader{spec: spec.Spec{Process: spec.ProcessObject{Args: []string{"/bin/sh"}}}},
+		syscallHandler:          &fakeDeleteSyscallHandler{},
+		containerStatusManager:  &fakeDeleteStatusManager{status: status.RUNNING, pid: os.Getpid()},
+		containerHookController: &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := killController.Kill(KillOption{ContainerId: "container-1", Signal: "SIGCONT"})
+
+	// == assert ==
+	require.NoError(t, err)
+	syscalls := killController.syscallHandler.(*fakeDeleteSyscallHandler)
+	assert.Equal(t, []deleteKillCall{{pid: os.Getpid(), sig: syscall.SIGCONT}}, syscalls.kills)
+}
+
+func TestParseSignalAcceptsNumericSignal(t *testing.T) {
+	name, sig, err := parseSignal("15")
+
+	require.NoError(t, err)
+	assert.Equal(t, "15", name)
+	assert.Equal(t, syscall.SIGTERM, sig)
+}
+
+func TestParseSignalRejectsUnsupportedSignal(t *testing.T) {
+	_, _, err := parseSignal("SIGWAT")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported signal")
+}
+
 func TestContainerKillRejectsNonRunningContainer(t *testing.T) {
 	// == setup ==
 	specLoader := &fakeDeleteSpecLoader{}

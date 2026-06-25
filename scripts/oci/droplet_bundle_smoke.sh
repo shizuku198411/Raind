@@ -133,7 +133,87 @@ prepare_bundle() {
     "path": "rootfs",
     "readonly": true
   },
-  "mounts": [],
+  "mounts": [
+    {
+      "destination": "/proc",
+      "type": "proc",
+      "source": "proc",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/dev",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "strictatime",
+        "mode=755",
+        "size=65536k"
+      ]
+    },
+    {
+      "destination": "/dev/pts",
+      "type": "devpts",
+      "source": "devpts",
+      "options": [
+        "nosuid",
+        "noexec",
+        "newinstance",
+        "ptmxmode=0666",
+        "mode=0620",
+        "gid=5"
+      ]
+    },
+    {
+      "destination": "/sys",
+      "type": "sysfs",
+      "source": "sysfs",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "ro"
+      ]
+    },
+    {
+      "destination": "/tmp",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=1777",
+        "size=512m"
+      ]
+    },
+    {
+      "destination": "/run",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=755",
+        "size=65536k"
+      ]
+    },
+    {
+      "destination": "/dev/shm",
+      "type": "tmpfs",
+      "source": "shm",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "mode=1777",
+        "size=67108864"
+      ]
+    }
+  ],
   "process": {
     "terminal": false,
     "consoleSize": {
@@ -157,6 +237,7 @@ prepare_bundle() {
       "effective": [],
       "ambient": []
     },
+    "oomScoreAdj": 0,
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
@@ -253,6 +334,9 @@ run_oci_bundle_smoke() {
     .root.readonly == true and
     .process.consoleSize.height == 24 and
     .process.noNewPrivileges == true and
+    .process.oomScoreAdj == 0 and
+    ([.mounts[].destination] | index("/proc")) and
+    ([.mounts[].destination] | index("/tmp")) and
     .linux.resources.pids.limit == 64 and
     .annotations["org.opencontainers.image.ref.name"] == "droplet-oci-smoke"
   ' "/etc/raind/container/${CID}/config.json" >/dev/null || fail "runtime config was not normalized from OCI bundle"

@@ -91,7 +91,8 @@ func hasDeniedDestination(destination string) bool {
 }
 
 func isAllowedType(fstype string, options []string) bool {
-	if fstype != "" && fstype != "bind" {
+	kernelMount := isAllowedKernelMountType(fstype)
+	if fstype != "" && fstype != "bind" && !kernelMount {
 		return false
 	}
 
@@ -99,22 +100,52 @@ func isAllowedType(fstype string, options []string) bool {
 	for _, o := range options {
 		switch o {
 		case "bind", "rbind":
+			if kernelMount {
+				return false
+			}
 			hasBind = true
-		case "rprivate", "private", "ro", "rw", "nosuid", "nodev", "noexec", "relatime", "noatime", "strictatime", "dev":
+		case "rprivate", "private", "ro", "rw", "nosuid", "nodev", "noexec", "relatime", "noatime", "strictatime", "dev", "newinstance":
 			// allowed mount option
 		case "z", "Z":
 			// Docker-compatible SELinux relabel hints. Raind does not relabel, but accepting them
 			// keeps common volume declarations from failing before the bind mount is made.
 		default:
-			return false
+			if !kernelMount || !isAllowedMountDataOption(o) {
+				return false
+			}
 		}
 	}
-	return hasBind || len(options) == 0
+	return kernelMount || hasBind || len(options) == 0
+}
+
+func isAllowedKernelMountType(fstype string) bool {
+	switch fstype {
+	case "proc", "sysfs", "tmpfs", "devpts", "cgroup2", "mqueue":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedMountDataOption(option string) bool {
+	key, _, ok := strings.Cut(option, "=")
+	if !ok {
+		return false
+	}
+	switch key {
+	case "mode", "size", "gid", "uid", "ptmxmode":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateUserMount(m spec.MountObject) error {
 	if !isAllowedType(m.Type, m.Options) {
 		return fmt.Errorf("invalid mount type/options: type=%q options=%q", m.Type, strings.Join(m.Options, ","))
+	}
+	if isAllowedKernelMountType(m.Type) {
+		return nil
 	}
 
 	allowDevice := hasMountOption(m.Options, "dev")

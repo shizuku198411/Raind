@@ -33,6 +33,7 @@ type fakeInitSyscallHandler struct {
 	unmounts       []string
 	rmdirs         []string
 	creates        []string
+	writeFiles     []initWriteFileCall
 	symlinks       [][2]string
 	existing       map[string]bool
 }
@@ -65,6 +66,12 @@ type initChownCall struct {
 type initChmodCall struct {
 	path string
 	mode os.FileMode
+}
+
+type initWriteFileCall struct {
+	name string
+	data string
+	perm os.FileMode
 }
 
 func (f *fakeInitSyscallHandler) Setresgid(rgid int, egid int, sgid int) error {
@@ -171,6 +178,11 @@ func (f *fakeInitSyscallHandler) Create(name string) (*os.File, error) {
 func (f *fakeInitSyscallHandler) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	f.openFiles = append(f.openFiles, name)
 	return os.CreateTemp("", "raind-init-openfile-*")
+}
+
+func (f *fakeInitSyscallHandler) WriteFile(name string, data []byte, perm os.FileMode) error {
+	f.writeFiles = append(f.writeFiles, initWriteFileCall{name: name, data: string(data), perm: perm})
+	return nil
 }
 
 func (f *fakeInitSyscallHandler) Lstat(name string) (os.FileInfo, error) {
@@ -361,6 +373,25 @@ func TestFilterRootlessPrejoinedMountsDropsKernelMountsOwnedBySharedNamespaces(t
 	}, filtered)
 }
 
+func TestDefaultContainerMountsIncludesManagedDefaults(t *testing.T) {
+	mounts := defaultContainerMounts("container-1")
+
+	destinations := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		destinations = append(destinations, mount.Destination)
+	}
+	assert.Contains(t, destinations, "/proc")
+	assert.Contains(t, destinations, "/dev")
+	assert.Contains(t, destinations, "/sys/fs/cgroup")
+	assert.Contains(t, destinations, "/etc/hosts")
+	assert.Contains(t, mounts[len(mounts)-1].Source, "/container-1/etc/hosts")
+}
+
+func TestBaseMountsForModeUsesSpecMountsOnlyForOCIBundleMode(t *testing.T) {
+	assert.Empty(t, baseMountsForMode("container-1", true))
+	assert.NotEmpty(t, baseMountsForMode("container-1", false))
+}
+
 func TestRootContainerEnvPreparerFilterMissingManagedFileMounts(t *testing.T) {
 	// == setup ==
 	syscalls := &fakeInitSyscallHandler{existing: map[string]bool{
@@ -462,6 +493,37 @@ func TestRootContainerEnvPreparerMakeCurrentRootReadonlyRemountsSlash(t *testing
 	assert.Equal(t, []initMountCall{
 		{source: "", target: "/", fstype: "", flags: syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY | syscall.MS_REC, data: ""},
 	}, syscalls.mounts)
+}
+
+func TestRootContainerEnvPreparerSetOOMScoreAdjWritesProcValue(t *testing.T) {
+	// == setup ==
+	value := 250
+	syscalls := &fakeInitSyscallHandler{}
+	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
+
+	// == exercise ==
+	err := preparer.setOOMScoreAdj(&value)
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []initWriteFileCall{{
+		name: "/proc/self/oom_score_adj",
+		data: "250",
+		perm: 0644,
+	}}, syscalls.writeFiles)
+}
+
+func TestRootContainerEnvPreparerSetOOMScoreAdjRejectsOutOfRange(t *testing.T) {
+	// == setup ==
+	value := 1001
+	preparer := &rootContainerEnvPreparer{syscallHandler: &fakeInitSyscallHandler{}}
+
+	// == exercise ==
+	err := preparer.setOOMScoreAdj(&value)
+
+	// == assert ==
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "between -1000 and 1000")
 }
 
 func TestRootContainerEnvPreparerSetRlimitsAppliesSupportedLimits(t *testing.T) {

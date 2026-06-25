@@ -25,6 +25,11 @@ func ValidateBasic(containerSpec Spec) error {
 			return fmt.Errorf("process.consoleSize height and width must be <= %d", MaxConsoleSize)
 		}
 	}
+	if containerSpec.Process.OOMScoreAdj != nil {
+		if *containerSpec.Process.OOMScoreAdj < -1000 || *containerSpec.Process.OOMScoreAdj > 1000 {
+			return fmt.Errorf("process.oomScoreAdj must be between -1000 and 1000")
+		}
+	}
 	for _, ns := range containerSpec.LinuxSpec.Namespaces {
 		switch ns.Type {
 		case "mount", "network", "uts", "pid", "ipc", "user", "cgroup":

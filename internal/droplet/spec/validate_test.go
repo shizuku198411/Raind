@@ -10,10 +10,11 @@ import (
 func TestValidateBasicAcceptsMinimalSpec(t *testing.T) {
 	major := int64(1)
 	minor := int64(3)
+	oomScoreAdj := -500
 	err := ValidateBasic(Spec{
 		OciVersion: "1.3.0",
 		Root:       RootObject{Path: "/rootfs"},
-		Process:    ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 24, Width: 80}},
+		Process:    ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 24, Width: 80}, OOMScoreAdj: &oomScoreAdj},
 		LinuxSpec: LinuxSpecObject{
 			Namespaces:  []NamespaceObject{{Type: "mount"}},
 			UIDMappings: []IDMappingObject{{ContainerID: 0, HostID: 1000, Size: 1}},
@@ -41,6 +42,7 @@ func TestValidateBasicRejectsMissingRequiredFields(t *testing.T) {
 		{name: "missing args", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}}, want: "process.args[0] is required"},
 		{name: "bad console size zero", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 0, Width: 80}}}, want: "process.consoleSize"},
 		{name: "bad console size large", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, ConsoleSize: &ConsoleSizeObject{Height: 24, Width: MaxConsoleSize + 1}}}, want: "process.consoleSize"},
+		{name: "bad oom score adj", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}, OOMScoreAdj: ptrInt(1001)}}, want: "process.oomScoreAdj"},
 		{name: "bad namespace", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}}, LinuxSpec: LinuxSpecObject{Namespaces: []NamespaceObject{{Type: "bad"}}}}, want: "unsupported linux namespace type"},
 		{name: "bad mapping", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}}, LinuxSpec: LinuxSpecObject{UIDMappings: []IDMappingObject{{ContainerID: 0, HostID: 1000}}}}, want: "mapping size"},
 		{name: "bad device", containerSpec: Spec{OciVersion: "1.3.0", Root: RootObject{Path: "/rootfs"}, Process: ProcessObject{Args: []string{"/bin/sh"}}, LinuxSpec: LinuxSpecObject{Devices: []DeviceObject{{Path: "/dev/test", Type: "x"}}}}, want: "unsupported linux device type"},
@@ -55,4 +57,8 @@ func TestValidateBasicRejectsMissingRequiredFields(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func ptrInt(v int) *int {
+	return &v
 }

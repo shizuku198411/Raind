@@ -114,6 +114,10 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 
 	// 4. send signal to pid
 	stage = "send_signal"
+	signalName, sig, err := parseSignal(opt.Signal)
+	if err != nil {
+		return err
+	}
 	procStartTime, err := c.readProcStartTime(containerPid)
 	if err != nil {
 		return err
@@ -122,13 +126,13 @@ func (c *ContainerKill) Kill(opt KillOption) (err error) {
 		Pid:       containerPid,
 		StartTime: procStartTime,
 	}
-	err = c.syscallHandler.Kill(containerPid, signalMap[opt.Signal])
-	signal = append(signal, opt.Signal)
+	err = c.syscallHandler.Kill(containerPid, sig)
+	signal = append(signal, signalName)
 	if err != nil {
 		return err
 	}
 	// if signal is SIGTERM, graceful stop with SIGKILL
-	if opt.Signal == "TERM" {
+	if signalName == "TERM" {
 		stage = "wait_exit_grace"
 		err = c.waitProcessExit(procIdentity, 3*time.Second)
 		if err != nil {
