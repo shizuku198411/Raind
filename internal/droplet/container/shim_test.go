@@ -3,9 +3,11 @@ package container
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
 	"syscall"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 type fakeShimCommand struct {
@@ -191,6 +194,99 @@ func TestContainerShimHubAttachReplacesPreviousConnection(t *testing.T) {
 	_ = oldConnB.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
 	_, err = oldConnB.Write([]byte("x"))
 	require.Error(t, err)
+}
+
+func TestSendConsoleFileDescriptorSendsReadableFD(t *testing.T) {
+	// == setup ==
+	socketPath := filepath.Join(t.TempDir(), "console.sock")
+	ln, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	source, err := os.CreateTemp("", "raind-console-fd-*")
+	require.NoError(t, err)
+	defer source.Close()
+	require.NoError(t, os.WriteFile(source.Name(), []byte("console"), 0644))
+	_, err = source.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+
+	fdCh := make(chan int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer conn.Close()
+
+		unixConn, ok := conn.(*net.UnixConn)
+		if !ok {
+			errCh <- errors.New("expected UnixConn")
+			return
+		}
+		buf := make([]byte, 1)
+		oob := make([]byte, unix.CmsgSpace(4))
+		_, oobn, _, _, err := unixConn.ReadMsgUnix(buf, oob)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
+		if err != nil {
+			errCh <- err
+			return
+		}
+		for _, msg := range msgs {
+			fds, err := unix.ParseUnixRights(&msg)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if len(fds) > 0 {
+				fdCh <- fds[0]
+				return
+			}
+		}
+		errCh <- errors.New("no fd received")
+	}()
+
+	// == exercise ==
+	err = sendConsoleFileDescriptor(socketPath, source)
+
+	// == assert ==
+	require.NoError(t, err)
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case fd := <-fdCh:
+		received := os.NewFile(uintptr(fd), "received-console")
+		defer received.Close()
+		data, err := io.ReadAll(received)
+		require.NoError(t, err)
+		assert.Equal(t, "console", string(data))
+	case <-time.After(time.Second):
+		require.Fail(t, "timed out waiting for console fd")
+	}
+}
+
+func TestConsoleWinsizeConvertsSpecConsoleSize(t *testing.T) {
+	winsize, err := consoleWinsize(&spec.ConsoleSizeObject{Height: 24, Width: 80})
+
+	require.NoError(t, err)
+	require.NotNil(t, winsize)
+	assert.Equal(t, uint16(24), winsize.Rows)
+	assert.Equal(t, uint16(80), winsize.Cols)
+}
+
+func TestConsoleWinsizeRejectsInvalidConsoleSize(t *testing.T) {
+	_, err := consoleWinsize(&spec.ConsoleSizeObject{Height: 0, Width: 80})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "process.consoleSize")
+
+	_, err = consoleWinsize(&spec.ConsoleSizeObject{Height: 24, Width: spec.MaxConsoleSize + 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "process.consoleSize")
 }
 
 func buildFrameForTest(typ byte, payload []byte) []byte {

@@ -62,7 +62,17 @@ type ContainerRun struct {
 // synchronization results in an error being returned.
 func (c *ContainerRun) Run(opt RunOption) error {
 	// 1. load config.json
+	if err := prepareBundleConfig(opt.ContainerId, opt.Bundle); err != nil {
+		return err
+	}
 	spec, err := c.specLoader.loadFile(opt.ContainerId)
+	if err != nil {
+		return err
+	}
+	if err := writeSpecHashFile(opt.ContainerId); err != nil {
+		return err
+	}
+	bundlePath, err := bundlePathForContainer(opt.ContainerId, opt.Bundle)
 	if err != nil {
 		return err
 	}
@@ -75,7 +85,7 @@ func (c *ContainerRun) Run(opt RunOption) error {
 		0,
 		status.CREATING,
 		spec.Root.Path,
-		utils.ContainerDir(opt.ContainerId),
+		bundlePath,
 		spec.Annotations,
 	); err != nil {
 		return err
@@ -100,7 +110,8 @@ func (c *ContainerRun) Run(opt RunOption) error {
 	initArgs := append([]string{"init", opt.ContainerId, fifo}, entrypoint...)
 	cmd := c.commandFactory.Command(utils.SelfBinPath(), initArgs...)
 	// set stdout/stderr/stdin
-	if opt.Tty {
+	tty := opt.Tty || spec.Process.Terminal
+	if tty {
 		cmd.SetStdout(os.Stdout)
 		cmd.SetStderr(os.Stderr)
 		cmd.SetStdin(os.Stdin)
@@ -118,6 +129,9 @@ func (c *ContainerRun) Run(opt RunOption) error {
 		return err
 	}
 	initPid := cmd.Pid()
+	if err := writeContainerPidFile(opt.PidFile, initPid); err != nil {
+		return err
+	}
 
 	// output when init process has been created
 	// if --print-pid is setted, print message with pid
@@ -194,7 +208,7 @@ func (c *ContainerRun) Run(opt RunOption) error {
 	}
 
 	// 15. wait init process
-	if opt.Tty {
+	if tty {
 		if err := cmd.Wait(); err != nil {
 			return err
 		}

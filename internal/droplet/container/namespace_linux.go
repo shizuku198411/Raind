@@ -75,7 +75,16 @@ func buildProcAttrForContainer(containerSpec spec.Spec) procAttr {
 	setGroupsFlag := nsConfig.user
 	var credential *syscall.Credential
 
-	if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
+	if specUIDMap, specGIDMap := buildSpecUserNamespaceIDMap(nsConfig, containerSpec.LinuxSpec.UIDMappings, containerSpec.LinuxSpec.GIDMappings); len(specUIDMap) > 0 || len(specGIDMap) > 0 {
+		uidMap, gidMap = specUIDMap, specGIDMap
+		if nsConfig.user {
+			credential = &syscall.Credential{
+				Uid:         0,
+				Gid:         0,
+				NoSetGroups: true,
+			}
+		}
+	} else if rootlessConfig, ok := rootlessConfigFromSpec(containerSpec); ok {
 		uidMap, gidMap = buildRootlessUserNamespaceIDMap(nsConfig, rootlessConfig)
 		// Rootless containers still need setgroups inside the child user
 		// namespace for images such as nginx that drop workers to a non-root
@@ -249,8 +258,9 @@ func buildCloneFlags(nsConfig namespaceConfig) uintptr {
 }
 
 type namespaceJoinTarget struct {
-	name string
-	path string
+	name   string
+	path   string
+	nstype int
 }
 
 // buildNamespaceJoinTargets returns the list of namespaces that should be joined
@@ -260,14 +270,20 @@ func buildNamespaceJoinTargets(spec spec.Spec) []namespaceJoinTarget {
 	nsConfig := buildNamespaceConfig(spec)
 	var targets []namespaceJoinTarget
 
+	if nsConfig.mountPath != "" {
+		targets = append(targets, namespaceJoinTarget{name: "mount", path: nsConfig.mountPath, nstype: unix.CLONE_NEWNS})
+	}
+	if nsConfig.cgroupPath != "" {
+		targets = append(targets, namespaceJoinTarget{name: "cgroup", path: nsConfig.cgroupPath, nstype: unix.CLONE_NEWCGROUP})
+	}
 	if nsConfig.networkPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "network", path: nsConfig.networkPath})
+		targets = append(targets, namespaceJoinTarget{name: "network", path: nsConfig.networkPath, nstype: unix.CLONE_NEWNET})
 	}
 	if nsConfig.ipcPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "ipc", path: nsConfig.ipcPath})
+		targets = append(targets, namespaceJoinTarget{name: "ipc", path: nsConfig.ipcPath, nstype: unix.CLONE_NEWIPC})
 	}
 	if nsConfig.utsPath != "" {
-		targets = append(targets, namespaceJoinTarget{name: "uts", path: nsConfig.utsPath})
+		targets = append(targets, namespaceJoinTarget{name: "uts", path: nsConfig.utsPath, nstype: unix.CLONE_NEWUTS})
 	}
 
 	return targets
@@ -288,8 +304,7 @@ func joinExistingNamespaces(spec spec.Spec) error {
 		if err != nil {
 			return fmt.Errorf("open %s namespace: %w", t.name, err)
 		}
-		nstype := 0
-		if err := unix.Setns(int(f.Fd()), nstype); err != nil {
+		if err := unix.Setns(int(f.Fd()), t.nstype); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("setns %s: %w", t.name, err)
 		}
@@ -330,6 +345,27 @@ func buildRootUserNamespaceIDMap(nsConfig namespaceConfig) (uidMap, gidMap []sys
 		},
 	}
 
+	return uidMap, gidMap
+}
+
+func buildSpecUserNamespaceIDMap(nsConfig namespaceConfig, uidMappings []spec.IDMappingObject, gidMappings []spec.IDMappingObject) (uidMap, gidMap []syscall.SysProcIDMap) {
+	if !nsConfig.user {
+		return nil, nil
+	}
+	for _, mapping := range uidMappings {
+		uidMap = append(uidMap, syscall.SysProcIDMap{
+			ContainerID: mapping.ContainerID,
+			HostID:      mapping.HostID,
+			Size:        mapping.Size,
+		})
+	}
+	for _, mapping := range gidMappings {
+		gidMap = append(gidMap, syscall.SysProcIDMap{
+			ContainerID: mapping.ContainerID,
+			HostID:      mapping.HostID,
+			Size:        mapping.Size,
+		})
+	}
 	return uidMap, gidMap
 }
 

@@ -22,6 +22,19 @@ func commandCreate() *cli.Command {
 				Aliases: []string{"t"},
 				Value:   false,
 			},
+			&cli.StringFlag{
+				Name:    "bundle",
+				Aliases: []string{"b"},
+				Usage:   "path to an OCI bundle directory",
+			},
+			&cli.StringFlag{
+				Name:  "console-socket",
+				Usage: "path to an AF_UNIX socket that receives the terminal console file descriptor",
+			},
+			&cli.StringFlag{
+				Name:  "pid-file",
+				Usage: "write the container init pid to this file",
+			},
 		},
 		Action: runCreate,
 	}
@@ -32,13 +45,19 @@ func runCreate(ctx *cli.Context) error {
 	containerId := ctx.Args().Get(0)
 	pidPrintFlag := ctx.Bool("print-pid")
 	ttyFlag := ctx.Bool("tty")
+	bundle := ctx.String("bundle")
+	consoleSocket := ctx.String("console-socket")
+	pidFile := ctx.String("pid-file")
 
 	containerCreator := container.NewContainerCreator()
 	err := containerCreator.Create(
 		container.CreateOption{
-			ContainerId:  containerId,
-			PrintPidFlag: pidPrintFlag,
-			TtyFlag:      ttyFlag,
+			ContainerId:   containerId,
+			Bundle:        bundle,
+			ConsoleSocket: consoleSocket,
+			PidFile:       pidFile,
+			PrintPidFlag:  pidPrintFlag,
+			TtyFlag:       ttyFlag,
 		},
 	)
 

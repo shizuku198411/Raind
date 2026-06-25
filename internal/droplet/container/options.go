@@ -2,9 +2,12 @@ package container
 
 // create options
 type CreateOption struct {
-	ContainerId  string
-	PrintPidFlag bool
-	TtyFlag      bool
+	ContainerId   string
+	Bundle        string
+	ConsoleSocket string
+	PidFile       string
+	PrintPidFlag  bool
+	TtyFlag       bool
 }
 
 // init options
@@ -22,6 +25,8 @@ type StartOption struct {
 // run options
 type RunOption struct {
 	ContainerId  string
+	Bundle       string
+	PidFile      string
 	Tty          bool
 	PrintPidFlag bool
 }

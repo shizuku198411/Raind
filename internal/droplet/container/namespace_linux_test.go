@@ -91,6 +91,7 @@ func TestBuildNamespaceJoinTargetsIncludesPathNamespacesInStableOrder(t *testing
 				{Type: "network", Path: "/proc/1/ns/net"},
 				{Type: "ipc", Path: "/proc/1/ns/ipc"},
 				{Type: "mount", Path: "/proc/1/ns/mnt"},
+				{Type: "cgroup", Path: "/proc/1/ns/cgroup"},
 			},
 		},
 	}
@@ -100,9 +101,11 @@ func TestBuildNamespaceJoinTargetsIncludesPathNamespacesInStableOrder(t *testing
 
 	// == assert ==
 	assert.Equal(t, []namespaceJoinTarget{
-		{name: "network", path: "/proc/1/ns/net"},
-		{name: "ipc", path: "/proc/1/ns/ipc"},
-		{name: "uts", path: "/proc/1/ns/uts"},
+		{name: "mount", path: "/proc/1/ns/mnt", nstype: syscall.CLONE_NEWNS},
+		{name: "cgroup", path: "/proc/1/ns/cgroup", nstype: syscall.CLONE_NEWCGROUP},
+		{name: "network", path: "/proc/1/ns/net", nstype: syscall.CLONE_NEWNET},
+		{name: "ipc", path: "/proc/1/ns/ipc", nstype: syscall.CLONE_NEWIPC},
+		{name: "uts", path: "/proc/1/ns/uts", nstype: syscall.CLONE_NEWUTS},
 	}, targets)
 }
 
@@ -172,6 +175,41 @@ func TestBuildProcAttrForRootlessContainerStartsAsUserNamespaceRoot(t *testing.T
 	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.uidMap)
 	assert.Equal(t, []syscall.SysProcIDMap{{ContainerID: 0, HostID: 100000, Size: 65536}}, procAttr.gidMap)
 	assert.True(t, procAttr.setGroupsFlag)
+	if assert.NotNil(t, procAttr.credential) {
+		assert.Equal(t, uint32(0), procAttr.credential.Uid)
+		assert.Equal(t, uint32(0), procAttr.credential.Gid)
+		assert.True(t, procAttr.credential.NoSetGroups)
+	}
+}
+
+func TestBuildProcAttrForContainerUsesSpecIDMappingsBeforeRaindRootlessAnnotation(t *testing.T) {
+	containerSpec := spec.Spec{
+		LinuxSpec: spec.LinuxSpecObject{
+			Namespaces: []spec.NamespaceObject{{Type: "user"}},
+			UIDMappings: []spec.IDMappingObject{
+				{ContainerID: 0, HostID: 1000, Size: 1},
+				{ContainerID: 1, HostID: 200000, Size: 65535},
+			},
+			GIDMappings: []spec.IDMappingObject{
+				{ContainerID: 0, HostID: 1000, Size: 1},
+				{ContainerID: 1, HostID: 300000, Size: 65535},
+			},
+		},
+		Annotations: spec.AnnotationObject{
+			Rootless: `{"enabled":true}`,
+		},
+	}
+
+	procAttr := buildProcAttrForContainer(containerSpec)
+
+	assert.Equal(t, []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: 1000, Size: 1},
+		{ContainerID: 1, HostID: 200000, Size: 65535},
+	}, procAttr.uidMap)
+	assert.Equal(t, []syscall.SysProcIDMap{
+		{ContainerID: 0, HostID: 1000, Size: 1},
+		{ContainerID: 1, HostID: 300000, Size: 65535},
+	}, procAttr.gidMap)
 	if assert.NotNil(t, procAttr.credential) {
 		assert.Equal(t, uint32(0), procAttr.credential.Uid)
 		assert.Equal(t, uint32(0), procAttr.credential.Gid)

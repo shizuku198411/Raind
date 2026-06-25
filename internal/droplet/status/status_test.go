@@ -81,7 +81,7 @@ func TestStatusHandlerCreateReadAndUpdateStatusFile(t *testing.T) {
 	assert.Equal(t, 7, state.ExitCode)
 	assert.Equal(t, "Error", state.Reason)
 	assert.Equal(t, "failed", state.Message)
-	assert.Equal(t, annotation, state.Annotaion)
+	assert.Equal(t, annotation, state.Annotation)
 }
 
 func TestStatusHandlerRecomputesRunningDeadPidToStopped(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -38,10 +39,11 @@ type fakeCreateProcessExecutor struct {
 }
 
 type createProcessCall struct {
-	containerId string
-	fifo        string
-	entrypoint  []string
-	tty         bool
+	containerId   string
+	fifo          string
+	entrypoint    []string
+	tty           bool
+	consoleSocket string
 }
 
 func (f *fakeCreateProcessExecutor) executeInit(containerId string, containerSpec spec.Spec, fifo string) (int, error) {
@@ -53,12 +55,13 @@ func (f *fakeCreateProcessExecutor) executeInit(containerId string, containerSpe
 	return f.initPid, f.initErr
 }
 
-func (f *fakeCreateProcessExecutor) executeShim(containerId string, containerSpec spec.Spec, fifo string, tty bool) (int, error) {
+func (f *fakeCreateProcessExecutor) executeShim(containerId string, containerSpec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error) {
 	f.shimCalls = append(f.shimCalls, createProcessCall{
-		containerId: containerId,
-		fifo:        fifo,
-		entrypoint:  append([]string(nil), containerSpec.Process.Args...),
-		tty:         tty,
+		containerId:   containerId,
+		fifo:          fifo,
+		entrypoint:    append([]string(nil), containerSpec.Process.Args...),
+		tty:           tty,
+		consoleSocket: consoleSocket,
 	})
 	_ = os.MkdirAll(utils.ContainerDir(containerId), 0755)
 	_ = os.WriteFile(utils.InitPidFilePath(containerId), []byte("4321\n"), 0644)
@@ -108,7 +111,8 @@ func setupCreateSpecFile(t *testing.T, containerId string, containerSpec spec.Sp
 
 func minimalCreateSpec() spec.Spec {
 	return spec.Spec{
-		Root: spec.RootObject{Path: "/rootfs"},
+		OciVersion: "1.3.0",
+		Root:       spec.RootObject{Path: "/rootfs"},
 		Process: spec.ProcessObject{
 			Args: []string{"/bin/sh"},
 			Env:  []string{"PATH=/bin"},
@@ -207,6 +211,131 @@ func TestContainerCreatorCreateTTYUsesShimPidAndInitPidFile(t *testing.T) {
 		pid:         4321,
 		shimPid:     2222,
 	})
+}
+
+func TestContainerCreatorCreateUsesSpecTerminalForShimTTY(t *testing.T) {
+	// == setup ==
+	rootDir := t.TempDir()
+	t.Setenv("RAIND_ROOT_DIR", rootDir)
+	containerId := "container-1"
+	containerSpec := minimalCreateSpec()
+	containerSpec.Process.Terminal = true
+	setupCreateSpecFile(t, containerId, containerSpec)
+	processExecutor := &fakeCreateProcessExecutor{shimPid: 2222}
+	creator := &ContainerCreator{
+		specLoader:               &fakeDeleteSpecLoader{spec: containerSpec},
+		fifoCreator:              &fakeCreateFifoCreator{},
+		processExecutor:          processExecutor,
+		containerCgroupPreparer:  &fakeCreateCgroupPreparer{},
+		containerNetworkPreparer: &fakeCreateNetworkPreparer{},
+		containerStatusManager:   &fakeDeleteStatusManager{},
+		containerHookController:  &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := creator.Create(CreateOption{ContainerId: containerId})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []createProcessCall{{containerId: containerId, fifo: utils.FifoPath(containerId), entrypoint: []string{"/bin/sh"}, tty: true}}, processExecutor.shimCalls)
+}
+
+func TestContainerCreatorCreatePassesConsoleSocketToShim(t *testing.T) {
+	// == setup ==
+	rootDir := t.TempDir()
+	t.Setenv("RAIND_ROOT_DIR", rootDir)
+	containerId := "container-1"
+	consoleSocket := filepath.Join(t.TempDir(), "console.sock")
+	containerSpec := minimalCreateSpec()
+	containerSpec.Process.Terminal = true
+	setupCreateSpecFile(t, containerId, containerSpec)
+	processExecutor := &fakeCreateProcessExecutor{shimPid: 2222}
+	creator := &ContainerCreator{
+		specLoader:               &fakeDeleteSpecLoader{spec: containerSpec},
+		fifoCreator:              &fakeCreateFifoCreator{},
+		processExecutor:          processExecutor,
+		containerCgroupPreparer:  &fakeCreateCgroupPreparer{},
+		containerNetworkPreparer: &fakeCreateNetworkPreparer{},
+		containerStatusManager:   &fakeDeleteStatusManager{},
+		containerHookController:  &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := creator.Create(CreateOption{ContainerId: containerId, ConsoleSocket: consoleSocket})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, []createProcessCall{{
+		containerId:   containerId,
+		fifo:          utils.FifoPath(containerId),
+		entrypoint:    []string{"/bin/sh"},
+		tty:           true,
+		consoleSocket: consoleSocket,
+	}}, processExecutor.shimCalls)
+}
+
+func TestContainerCreatorCreateRejectsConsoleSocketWithoutTTY(t *testing.T) {
+	// == setup ==
+	rootDir := t.TempDir()
+	t.Setenv("RAIND_ROOT_DIR", rootDir)
+	containerId := "container-1"
+	containerSpec := minimalCreateSpec()
+	setupCreateSpecFile(t, containerId, containerSpec)
+	processExecutor := &fakeCreateProcessExecutor{shimPid: 2222}
+	creator := &ContainerCreator{
+		specLoader:               &fakeDeleteSpecLoader{spec: containerSpec},
+		fifoCreator:              &fakeCreateFifoCreator{},
+		processExecutor:          processExecutor,
+		containerCgroupPreparer:  &fakeCreateCgroupPreparer{},
+		containerNetworkPreparer: &fakeCreateNetworkPreparer{},
+		containerStatusManager:   &fakeDeleteStatusManager{},
+		containerHookController:  &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := creator.Create(CreateOption{ContainerId: containerId, ConsoleSocket: filepath.Join(t.TempDir(), "console.sock")})
+
+	// == assert ==
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "console-socket requires")
+	assert.Empty(t, processExecutor.shimCalls)
+}
+
+func TestContainerCreatorCreateWithBundleStoresBundleAndWritesPidFile(t *testing.T) {
+	// == setup ==
+	rootDir := t.TempDir()
+	t.Setenv("RAIND_ROOT_DIR", rootDir)
+	containerId := "container-1"
+	bundle := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "container.pid")
+	containerSpec := minimalCreateSpec()
+	containerSpec.Root.Path = "rootfs"
+	require.NoError(t, os.MkdirAll(filepath.Join(bundle, "rootfs"), 0755))
+	require.NoError(t, utils.WriteJsonToFile(filepath.Join(bundle, "config.json"), containerSpec))
+	resolvedSpec := containerSpec
+	resolvedSpec.Root.Path = filepath.Join(bundle, "rootfs")
+	processExecutor := &fakeCreateProcessExecutor{shimPid: 2222}
+	statusManager := &fakeDeleteStatusManager{}
+	creator := &ContainerCreator{
+		specLoader:               &fakeDeleteSpecLoader{spec: resolvedSpec},
+		fifoCreator:              &fakeCreateFifoCreator{},
+		processExecutor:          processExecutor,
+		containerCgroupPreparer:  &fakeCreateCgroupPreparer{},
+		containerNetworkPreparer: &fakeCreateNetworkPreparer{},
+		containerStatusManager:   statusManager,
+		containerHookController:  &fakeDeleteHookController{},
+	}
+
+	// == exercise ==
+	err := creator.Create(CreateOption{ContainerId: containerId, Bundle: bundle, PidFile: pidFile})
+
+	// == assert ==
+	require.NoError(t, err)
+	require.Len(t, statusManager.createdStatuses, 1)
+	assert.Equal(t, bundle, statusManager.createdStatuses[0].bundle)
+	data, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	assert.Equal(t, "4321\n", string(data))
 }
 
 func TestContainerCreatorSpecSecureLoadWritesHashAndReturnsSpec(t *testing.T) {

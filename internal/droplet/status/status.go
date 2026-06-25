@@ -17,7 +17,7 @@ type StatusObject struct {
 	ShimPid    int                   `json:"shimPid"`
 	Rootfs     string                `json:"rootfs"`
 	Bundle     string                `json:"bundle"`
-	Annotaion  spec.AnnotationObject `json:"annotations"`
+	Annotation spec.AnnotationObject `json:"annotations"`
 }
 
 // container status

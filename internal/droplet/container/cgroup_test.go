@@ -23,6 +23,12 @@ type fakeCgroupSyscallHandler struct {
 
 	writeCalls []cgroupWriteCall
 	writeErr   error
+	mkdirAlls  []string
+}
+
+func (f *fakeCgroupSyscallHandler) MkdirAll(path string, perm os.FileMode) error {
+	f.mkdirAlls = append(f.mkdirAlls, path)
+	return nil
 }
 
 func (f *fakeCgroupSyscallHandler) WriteFile(name string, data []byte, perm os.FileMode) error {
@@ -46,6 +52,7 @@ func TestContainerCgroupControllerPrepareWritesResourceLimitsAndProcess(t *testi
 			Resources: spec.ResourceObject{
 				Memory: spec.MemoryObject{Limit: 268435456},
 				Cpu:    spec.CpuObject{Quota: 50000, Period: 100000},
+				Pids:   spec.PidsObject{Limit: 512},
 			},
 		},
 	}
@@ -55,6 +62,7 @@ func TestContainerCgroupControllerPrepareWritesResourceLimitsAndProcess(t *testi
 
 	// == assert ==
 	require.NoError(t, err)
+	assert.Equal(t, []string{utils.CgroupPath(containerId)}, syscalls.mkdirAlls)
 	assert.Equal(t, []cgroupWriteCall{
 		{
 			name: filepath.Join(utils.CgroupPath(containerId), "memory.max"),

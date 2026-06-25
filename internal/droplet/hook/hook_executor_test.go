@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -53,6 +54,22 @@ func (f *fakeHookCommandFactory) Command(name string, args ...string) utils.Comm
 		cmd.err = errors.New("hook failed")
 	}
 	f.commands = append(f.commands, cmd)
+	return cmd
+}
+
+type fakeContextHookCommandFactory struct {
+	fakeHookCommandFactory
+	contextCommands int
+}
+
+func (f *fakeContextHookCommandFactory) CommandContext(ctx context.Context, name string, args ...string) utils.CommandExecutor {
+	f.contextCommands++
+	cmd := f.Command(name, args...)
+	if ctx.Err() != nil {
+		if fake, ok := cmd.(*fakeHookCommand); ok {
+			fake.err = ctx.Err()
+		}
+	}
 	return cmd
 }
 
@@ -180,4 +197,26 @@ func TestHookControllerRunHookListRejectsEmptyPath(t *testing.T) {
 	// == assert ==
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty path")
+}
+
+func TestHookControllerRunHookListUsesTimeoutContextWhenConfigured(t *testing.T) {
+	// == setup ==
+	timeout := 1
+	factory := &fakeContextHookCommandFactory{}
+	controller := &HookController{
+		commandFactory:         factory,
+		containerStatusManager: &fakeHookStatusManager{state: `{"id":"container-1"}`},
+	}
+
+	// == exercise ==
+	err := controller.RunPoststartHooks("container-1", []spec.HookObject{{
+		Path:    "/bin/hook",
+		Timeout: &timeout,
+	}})
+
+	// == assert ==
+	require.NoError(t, err)
+	assert.Equal(t, 1, factory.contextCommands)
+	require.Len(t, factory.commands, 1)
+	assert.Equal(t, "/bin/hook", factory.commands[0].name)
 }

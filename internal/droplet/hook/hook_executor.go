@@ -2,6 +2,7 @@ package hook
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -144,7 +145,10 @@ func (c *HookController) runHookList(containerId string, phase string, hookList 
 
 		// prepare hook environment
 		var stderr bytes.Buffer
-		cmd := c.commandFactory.Command(hook.Path, args...)
+		cmd, cancel := c.buildHookCommand(hook, args)
+		if cancel != nil {
+			defer cancel()
+		}
 		cmd.SetEnv(hook.Env)
 		cmd.SetStdin(bytes.NewReader([]byte(stateJson)))
 		cmd.SetStdout(os.Stdout)
@@ -152,6 +156,9 @@ func (c *HookController) runHookList(containerId string, phase string, hookList 
 
 		// execute hook
 		err := cmd.Run()
+		if cancel != nil {
+			cancel()
+		}
 		exitCode := 0
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
@@ -248,7 +255,10 @@ func (c *HookController) runHookListWithNsenter(containerId string, phase string
 		nsenterArgs = append(nsenterArgs, args...)
 
 		var stderr bytes.Buffer
-		cmd := c.commandFactory.Command("/usr/bin/nsenter", nsenterArgs...)
+		cmd, cancel := c.buildCommandWithTimeout(hook, "/usr/bin/nsenter", nsenterArgs...)
+		if cancel != nil {
+			defer cancel()
+		}
 		cmd.SetEnv(hook.Env)
 		cmd.SetStdin(bytes.NewReader([]byte(stateJson)))
 		cmd.SetStdout(os.Stdout)
@@ -256,6 +266,9 @@ func (c *HookController) runHookListWithNsenter(containerId string, phase string
 
 		// execute hook
 		err := cmd.Run()
+		if cancel != nil {
+			cancel()
+		}
 		exitCode := 0
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
@@ -299,4 +312,21 @@ func (c *HookController) runHookListWithNsenter(containerId string, phase string
 		}
 	}
 	return nil
+}
+
+func (c *HookController) buildHookCommand(hook spec.HookObject, args []string) (utils.CommandExecutor, context.CancelFunc) {
+	return c.buildCommandWithTimeout(hook, hook.Path, args...)
+}
+
+func (c *HookController) buildCommandWithTimeout(hook spec.HookObject, name string, args ...string) (utils.CommandExecutor, context.CancelFunc) {
+	if hook.Timeout == nil || *hook.Timeout <= 0 {
+		return c.commandFactory.Command(name, args...), nil
+	}
+	timeout := time.Duration(*hook.Timeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if factory, ok := c.commandFactory.(utils.ContextCommandFactory); ok {
+		return factory.CommandContext(ctx, name, args...), cancel
+	}
+	cancel()
+	return c.commandFactory.Command(name, args...), nil
 }

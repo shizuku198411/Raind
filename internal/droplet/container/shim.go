@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 func NewContainerShim() *ContainerShim {
@@ -37,10 +38,11 @@ type ContainerShim struct {
 }
 
 type ShimExecuteOption struct {
-	ContainerId string
-	Fifo        string
-	Entrypoint  []string
-	Tty         bool
+	ContainerId   string
+	Fifo          string
+	Entrypoint    []string
+	Tty           bool
+	ConsoleSocket string
 }
 
 func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
@@ -126,6 +128,18 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		}
 		defer ptmx.Close()
 		defer tty.Close()
+
+		stage = "set_console_size"
+		if err := applyConsoleSize(ptmx, spec.Process.ConsoleSize); err != nil {
+			return err
+		}
+
+		if opt.ConsoleSocket != "" {
+			stage = "send_console_socket"
+			if err := sendConsoleFileDescriptor(opt.ConsoleSocket, ptmx); err != nil {
+				return err
+			}
+		}
 
 		stage = "listen_socket"
 		sockPath = utils.SockPath(containerId)
@@ -254,6 +268,51 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	}
 
 	return waitErr
+}
+
+func applyConsoleSize(ptmx *os.File, size *spec.ConsoleSizeObject) error {
+	winsize, err := consoleWinsize(size)
+	if err != nil {
+		return err
+	}
+	if winsize == nil {
+		return nil
+	}
+	if err := pty.Setsize(ptmx, winsize); err != nil {
+		return fmt.Errorf("set console size: %w", err)
+	}
+	return nil
+}
+
+func consoleWinsize(size *spec.ConsoleSizeObject) (*pty.Winsize, error) {
+	if size == nil {
+		return nil, nil
+	}
+	if size.Height == 0 || size.Width == 0 {
+		return nil, fmt.Errorf("process.consoleSize height and width must be positive")
+	}
+	if size.Height > spec.MaxConsoleSize || size.Width > spec.MaxConsoleSize {
+		return nil, fmt.Errorf("process.consoleSize height and width must be <= %d", spec.MaxConsoleSize)
+	}
+	return &pty.Winsize{
+		Rows: uint16(size.Height),
+		Cols: uint16(size.Width),
+	}, nil
+}
+
+func sendConsoleFileDescriptor(socketPath string, console *os.File) error {
+	addr := net.UnixAddr{Name: socketPath, Net: "unix"}
+	conn, err := net.DialUnix("unix", nil, &addr)
+	if err != nil {
+		return fmt.Errorf("dial console socket: %w", err)
+	}
+	defer conn.Close()
+
+	rights := unix.UnixRights(int(console.Fd()))
+	if _, _, err := conn.WriteMsgUnix([]byte{0}, rights, nil); err != nil {
+		return fmt.Errorf("send console fd: %w", err)
+	}
+	return nil
 }
 
 const raindNamespacesPrejoinedEnv = "RAIND_NAMESPACES_PREJOINED"

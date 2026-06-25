@@ -138,6 +138,9 @@ func buildLinuxSpec(opts ConfigOptions, profile SecurityProfile) LinuxSpecObject
 				Period: 100000,
 				Quota:  80000,
 			},
+			Pids: PidsObject{
+				Limit: 512,
+			},
 		},
 		Seccomp:         cloneSeccompObject(profile.Seccomp),
 		AppArmorProfile: profile.AppArmorProfile,

@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"raind/internal/droplet/oci"
 	"raind/internal/droplet/utils"
@@ -47,6 +48,28 @@ func testConfigOptions() ConfigOptions {
 			Poststop:      []HookOption{{Path: "/bin/poststop"}},
 		},
 	}
+}
+
+func TestAnnotationObjectPreservesUnknownAnnotations(t *testing.T) {
+	raw := []byte(`{
+		"io.raind.runtime.annotation.version":"0.1.0",
+		"io.raind.net.config":"{}",
+		"io.raind.image.config":"{}",
+		"org.opencontainers.image.ref.name":"busybox:latest"
+	}`)
+
+	var annotation AnnotationObject
+	require.NoError(t, json.Unmarshal(raw, &annotation))
+	assert.Equal(t, "busybox:latest", annotation.Extra["org.opencontainers.image.ref.name"])
+
+	encoded, err := json.Marshal(annotation)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"io.raind.runtime.annotation.version":"0.1.0",
+		"io.raind.net.config":"{}",
+		"io.raind.image.config":"{}",
+		"org.opencontainers.image.ref.name":"busybox:latest"
+	}`, string(encoded))
 }
 
 func TestCreateConfigFileAndLoadConfigFileRoundTrip(t *testing.T) {
@@ -111,6 +134,7 @@ func TestBuildLinuxSpecDefaultsAndNamespaces(t *testing.T) {
 	assert.Equal(t, 1073741824, linuxSpec.Resources.Memory.Limit)
 	assert.Equal(t, 100000, linuxSpec.Resources.Cpu.Period)
 	assert.Equal(t, 80000, linuxSpec.Resources.Cpu.Quota)
+	assert.Equal(t, 512, linuxSpec.Resources.Pids.Limit)
 	require.NotNil(t, linuxSpec.Seccomp)
 	assert.Equal(t, "SCMP_ACT_ALLOW", linuxSpec.Seccomp.DefaultAction)
 	assert.Equal(t, profile.AppArmorProfile, linuxSpec.AppArmorProfile)

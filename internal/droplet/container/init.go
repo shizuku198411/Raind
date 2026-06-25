@@ -309,34 +309,276 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 	if err != nil {
 		return fmt.Errorf("mount std device: %w", err)
 	}
-	// 7. create symbolic link
+	// 7. create OCI linux devices
+	err = p.createLinuxDevices(spec.Root.Path, spec.LinuxSpec.Devices)
+	if err != nil {
+		return fmt.Errorf("create linux devices: %w", err)
+	}
+	// 8. create symbolic link
 	err = p.createSymbolicLink(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("create symbolic link: %w", err)
 	}
-	// 8. pivot_root
+	// 9. apply masked and readonly paths
+	err = p.applyMaskedPaths(spec.Root.Path, spec.LinuxSpec.MaskedPaths)
+	if err != nil {
+		return fmt.Errorf("apply masked paths: %w", err)
+	}
+	err = p.applyReadonlyPaths(spec.Root.Path, spec.LinuxSpec.ReadonlyPaths)
+	if err != nil {
+		return fmt.Errorf("apply readonly paths: %w", err)
+	}
+	// 10. apply readonly rootfs
+	if spec.Root.Readonly {
+		err = p.makeRootfsReadonly(spec.Root.Path)
+		if err != nil {
+			return fmt.Errorf("make rootfs readonly: %w", err)
+		}
+	}
+	// 11. pivot_root
 	err = p.pivotRoot(spec.Root.Path)
 	if err != nil {
 		return fmt.Errorf("pivot root: %w", err)
 	}
-	// 9. set capability
+	// 12. set capability
 	err = p.setCapability(spec.Process.Capabilities)
 	if err != nil {
 		return fmt.Errorf("set capability: %w", err)
 	}
-	// 10. install seccomp (NO_NEW_PRIVS + filter)
+	// 13. apply no_new_privileges
+	if spec.Process.NoNewPrivileges {
+		err = p.setNoNewPrivileges()
+		if err != nil {
+			return fmt.Errorf("set no_new_privileges: %w", err)
+		}
+	}
+	// 14. install seccomp (NO_NEW_PRIVS + filter)
 	if spec.LinuxSpec.Seccomp != nil {
 		err = p.seccompHandler.InstallDenyFilter(*spec.LinuxSpec.Seccomp)
 		if err != nil {
 			return fmt.Errorf("install seccomp: %w", err)
 		}
 	}
-	// 12. change current dir
+	// 15. set rlimits
+	err = p.setRlimits(spec.Process.Rlimits)
+	if err != nil {
+		return fmt.Errorf("set rlimits: %w", err)
+	}
+	// 16. set process user
+	err = p.setProcessUser(spec.Process.User)
+	if err != nil {
+		return fmt.Errorf("set process user: %w", err)
+	}
+	// 17. change current dir
 	err = p.syscallHandler.Chdir(spec.Process.Cwd)
 	if err != nil {
 		return fmt.Errorf("chdir: %w", err)
 	}
 
+	return nil
+}
+
+func (p *rootContainerEnvPreparer) makeRootfsReadonly(rootfs string) error {
+	if err := p.syscallHandler.Mount(rootfs, rootfs, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+		return err
+	}
+	return p.syscallHandler.Mount("", rootfs, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, "")
+}
+
+func (p *rootContainerEnvPreparer) createLinuxDevices(rootfs string, devices []spec.DeviceObject) error {
+	for _, device := range devices {
+		target, err := securePath(rootfs, device.Path)
+		if err != nil {
+			return err
+		}
+		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		mode, err := deviceMode(device)
+		if err != nil {
+			return err
+		}
+		dev := 0
+		if device.Type == "c" || device.Type == "u" || device.Type == "b" {
+			dev = int(unix.Mkdev(uint32(device.Major), uint32(device.Minor)))
+		}
+		if err := p.syscallHandler.Mknod(target, mode, dev); err != nil {
+			return err
+		}
+		if device.UID != nil || device.GID != nil {
+			uid := -1
+			gid := -1
+			if device.UID != nil {
+				uid = int(*device.UID)
+			}
+			if device.GID != nil {
+				gid = int(*device.GID)
+			}
+			if err := p.syscallHandler.Chown(target, uid, gid); err != nil {
+				return err
+			}
+		}
+		if device.FileMode != nil {
+			if err := p.syscallHandler.Chmod(target, os.FileMode(*device.FileMode)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deviceMode(device spec.DeviceObject) (uint32, error) {
+	perm := uint32(0666)
+	if device.FileMode != nil {
+		perm = *device.FileMode
+	}
+	switch device.Type {
+	case "c", "u":
+		return syscall.S_IFCHR | perm, nil
+	case "b":
+		return syscall.S_IFBLK | perm, nil
+	case "p":
+		return syscall.S_IFIFO | perm, nil
+	default:
+		return 0, fmt.Errorf("unsupported linux device type: %s", device.Type)
+	}
+}
+
+func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []string) error {
+	for _, path := range paths {
+		target, err := securePath(rootfs, path)
+		if err != nil {
+			return err
+		}
+		info, statErr := p.syscallHandler.Stat(target)
+		if statErr == nil && info.IsDir() {
+			if err := p.syscallHandler.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+				return err
+			}
+			if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+				return err
+			}
+			continue
+		}
+		if statErr != nil && !p.syscallHandler.IsNotExist(statErr) {
+			return statErr
+		}
+		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		if statErr != nil {
+			f, err := p.syscallHandler.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+			if err != nil {
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		}
+		if err := p.syscallHandler.Mount("/dev/null", target, "", syscall.MS_BIND, ""); err != nil {
+			return err
+		}
+		if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *rootContainerEnvPreparer) applyReadonlyPaths(rootfs string, paths []string) error {
+	for _, path := range paths {
+		target, err := securePath(rootfs, path)
+		if err != nil {
+			return err
+		}
+		if _, err := p.syscallHandler.Stat(target); err != nil {
+			if p.syscallHandler.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := p.syscallHandler.Mount(target, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return err
+		}
+		if err := p.syscallHandler.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_REC, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *rootContainerEnvPreparer) setNoNewPrivileges() error {
+	return unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+}
+
+func (p *rootContainerEnvPreparer) setRlimits(rlimits []spec.RlimitObject) error {
+	for _, item := range rlimits {
+		resource, ok := rlimitResource(item.Type)
+		if !ok {
+			return fmt.Errorf("unsupported rlimit type: %s", item.Type)
+		}
+		limit := syscall.Rlimit{Cur: item.Soft, Max: item.Hard}
+		if err := p.syscallHandler.Setrlimit(resource, &limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rlimitResource(name string) (int, bool) {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "RLIMIT_AS":
+		return unix.RLIMIT_AS, true
+	case "RLIMIT_CORE":
+		return unix.RLIMIT_CORE, true
+	case "RLIMIT_CPU":
+		return unix.RLIMIT_CPU, true
+	case "RLIMIT_DATA":
+		return unix.RLIMIT_DATA, true
+	case "RLIMIT_FSIZE":
+		return unix.RLIMIT_FSIZE, true
+	case "RLIMIT_LOCKS":
+		return unix.RLIMIT_LOCKS, true
+	case "RLIMIT_MEMLOCK":
+		return unix.RLIMIT_MEMLOCK, true
+	case "RLIMIT_MSGQUEUE":
+		return unix.RLIMIT_MSGQUEUE, true
+	case "RLIMIT_NICE":
+		return unix.RLIMIT_NICE, true
+	case "RLIMIT_NOFILE":
+		return unix.RLIMIT_NOFILE, true
+	case "RLIMIT_NPROC":
+		return unix.RLIMIT_NPROC, true
+	case "RLIMIT_RSS":
+		return unix.RLIMIT_RSS, true
+	case "RLIMIT_RTPRIO":
+		return unix.RLIMIT_RTPRIO, true
+	case "RLIMIT_RTTIME":
+		return unix.RLIMIT_RTTIME, true
+	case "RLIMIT_SIGPENDING":
+		return unix.RLIMIT_SIGPENDING, true
+	case "RLIMIT_STACK":
+		return unix.RLIMIT_STACK, true
+	default:
+		return 0, false
+	}
+}
+
+func (p *rootContainerEnvPreparer) setProcessUser(user spec.UserObject) error {
+	if len(user.AdditionalGids) > 0 {
+		if err := p.syscallHandler.Setgroups(user.AdditionalGids); err != nil {
+			return err
+		}
+	}
+	if err := p.syscallHandler.Setresgid(user.GID, user.GID, user.GID); err != nil {
+		return err
+	}
+	if err := p.syscallHandler.Setresuid(user.UID, user.UID, user.UID); err != nil {
+		return err
+	}
+	if user.Umask != nil {
+		syscall.Umask(*user.Umask)
+	}
 	return nil
 }
 
@@ -389,6 +631,10 @@ func (p *rootContainerEnvPreparer) setEnv(envlist []string) error {
 // which contains lower (image layers), upper, and work directories.
 // The overlay filesystem is mounted at the given rootfs path.
 func (p *rootContainerEnvPreparer) setupOverlay(rootfs string, imageAnnotation string) error {
+	if strings.TrimSpace(imageAnnotation) == "" {
+		return nil
+	}
+
 	// convert string to json
 	var imageConfig spec.ImageConfigObject
 	if err := utils.StringToJson(imageAnnotation, &imageConfig); err != nil {
@@ -658,6 +904,7 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 	if os.Getenv(raindNamespacesPrejoinedEnv) == "1" {
 		prerequiredMounts = filterRootlessPrejoinedMounts(prerequiredMounts)
 	}
+	prerequiredMounts = p.filterMissingManagedFileMounts(prerequiredMounts)
 
 	// user mounts
 	for _, user_mount := range mountList {
@@ -802,6 +1049,28 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 	}
 
 	return nil
+}
+
+func (p *rootContainerEnvPreparer) filterMissingManagedFileMounts(mounts []spec.MountObject) []spec.MountObject {
+	filtered := make([]spec.MountObject, 0, len(mounts))
+	for _, mountConfig := range mounts {
+		if isManagedEtcMount(mountConfig) {
+			if _, err := p.syscallHandler.Stat(mountConfig.Source); err != nil {
+				continue
+			}
+		}
+		filtered = append(filtered, mountConfig)
+	}
+	return filtered
+}
+
+func isManagedEtcMount(mountConfig spec.MountObject) bool {
+	switch filepath.Clean(mountConfig.Destination) {
+	case "/etc/resolv.conf", "/etc/hostname", "/etc/hosts":
+		return strings.Contains(filepath.Clean(mountConfig.Source), string(filepath.Separator)+"etc"+string(filepath.Separator))
+	default:
+		return false
+	}
 }
 
 func filterRootlessPrejoinedMounts(mounts []spec.MountObject) []spec.MountObject {
