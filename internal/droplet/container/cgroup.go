@@ -37,6 +37,9 @@ type containerCgroupController struct {
 // This method configures memory, CPU, and process membership
 // sequentially and returns an error if any step fails.
 func (c *containerCgroupController) prepare(containerId string, spec spec.Spec, pid int) error {
+	if !hasCgroupResourceConfig(spec.LinuxSpec.Resources) {
+		return nil
+	}
 	if err := c.syscallHandler.MkdirAll(utils.CgroupPath(containerId), 0755); err != nil {
 		return err
 	}
@@ -129,4 +132,10 @@ func (c *containerCgroupController) setProcessToCgroup(containerId string, pid i
 	}
 
 	return nil
+}
+
+func hasCgroupResourceConfig(resources spec.ResourceObject) bool {
+	return resources.Memory.Limit > 0 ||
+		(resources.Cpu.Quota > 0 && resources.Cpu.Period > 0) ||
+		resources.Pids.Limit > 0
 }

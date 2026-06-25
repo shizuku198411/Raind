@@ -613,22 +613,19 @@ func TestRootContainerEnvPreparerCreateLinuxDevicesRejectsUnsupportedType(t *tes
 	assert.Contains(t, err.Error(), "unsupported linux device type")
 }
 
-func TestRootContainerEnvPreparerApplyMaskedPathsMasksFileWithDevNull(t *testing.T) {
+func TestRootContainerEnvPreparerApplyMaskedPathsSkipsMissingProcPath(t *testing.T) {
 	// == setup ==
 	syscalls := &fakeInitSyscallHandler{}
 	preparer := &rootContainerEnvPreparer{syscallHandler: syscalls}
 
 	// == exercise ==
-	err := preparer.applyMaskedPaths("/rootfs", []string{"/proc/kcore"})
+	err := preparer.applyMaskedPaths("/rootfs", []string{"/proc/acpi"})
 
 	// == assert ==
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/rootfs/proc"}, syscalls.mkdirAlls)
-	assert.Equal(t, []string{"/rootfs/proc/kcore"}, syscalls.openFiles)
-	assert.Equal(t, []initMountCall{
-		{source: "/dev/null", target: "/rootfs/proc/kcore", fstype: "", flags: syscall.MS_BIND, data: ""},
-		{source: "", target: "/rootfs/proc/kcore", fstype: "", flags: syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY | syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC, data: ""},
-	}, syscalls.mounts)
+	assert.Empty(t, syscalls.mkdirAlls)
+	assert.Empty(t, syscalls.openFiles)
+	assert.Empty(t, syscalls.mounts)
 }
 
 func TestRootContainerEnvPreparerApplyReadonlyPathsRemountsExistingPathReadonly(t *testing.T) {

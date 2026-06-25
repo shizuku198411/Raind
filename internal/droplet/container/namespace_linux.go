@@ -123,6 +123,7 @@ type namespaceConfig struct {
 	ipc     bool
 	user    bool
 	cgroup  bool
+	time    bool
 
 	mountPath   string
 	networkPath string
@@ -131,6 +132,7 @@ type namespaceConfig struct {
 	ipcPath     string
 	userPath    string
 	cgroupPath  string
+	timePath    string
 }
 
 // buildNamespaceConfig constructs a namespaceConfig from the namespaces
@@ -208,6 +210,17 @@ func buildNamespaceConfig(spec spec.Spec) namespaceConfig {
 			}
 			if nsConfig.cgroupPath == "" {
 				nsConfig.cgroup = true
+			}
+		case "time":
+			if ns.Path != "" {
+				nsConfig.timePath = ns.Path
+				nsConfig.time = false
+				break
+			}
+			if nsConfig.timePath == "" {
+				// Accept OCI time namespaces from Docker/containerd for compatibility.
+				// Droplet does not create a separate time namespace yet.
+				nsConfig.time = true
 			}
 		}
 	}

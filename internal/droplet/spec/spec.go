@@ -135,6 +135,7 @@ type SeccompObject struct {
 
 type LinuxSpecObject struct {
 	Resources         ResourceObject    `json:"resources"`
+	CgroupsPath       string            `json:"cgroupsPath,omitempty"`
 	Namespaces        []NamespaceObject `json:"namespaces"`
 	Devices           []DeviceObject    `json:"devices,omitempty"`
 	UIDMappings       []IDMappingObject `json:"uidMappings,omitempty"`

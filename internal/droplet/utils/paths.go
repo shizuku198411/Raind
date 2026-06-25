@@ -81,3 +81,8 @@ func ExecShimLogPath(containerId string) string {
 func ContainerLogPath(containerId string) string {
 	return filepath.Join(ContainerDir(containerId), "logs", "container.log")
 }
+
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

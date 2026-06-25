@@ -121,7 +121,7 @@ func isAllowedType(fstype string, options []string) bool {
 
 func isAllowedKernelMountType(fstype string) bool {
 	switch fstype {
-	case "proc", "sysfs", "tmpfs", "devpts", "cgroup2", "mqueue":
+	case "proc", "sysfs", "tmpfs", "devpts", "cgroup", "cgroup2", "mqueue":
 		return true
 	default:
 		return false

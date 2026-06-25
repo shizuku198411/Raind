@@ -542,7 +542,7 @@ func mergeNamespaceOptions(base []spec.NamespaceOption, overrides []spec.Namespa
 
 func isValidNamespaceType(ns string) bool {
 	switch ns {
-	case "mount", "network", "uts", "pid", "ipc", "user", "cgroup":
+	case "mount", "network", "uts", "pid", "ipc", "user", "cgroup", "time":
 		return true
 	default:
 		return false

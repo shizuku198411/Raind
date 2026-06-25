@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
+	"raind/internal/droplet/spec"
 )
 
 func TestSeccompManagerAuditArchForSupportedGOARCH(t *testing.T) {
@@ -46,6 +47,18 @@ func TestSeccompManagerResolveSyscallNrNormalizesNames(t *testing.T) {
 	assert.Equal(t, uint32(unix.SYS_MOUNT), nr)
 }
 
+func TestSeccompManagerResolveSyscallNrSupportsClone3(t *testing.T) {
+	// == setup ==
+	manager := &SeccompManager{}
+
+	// == exercise ==
+	nr, ok := manager.resolveSyscallNr("clone3")
+
+	// == assert ==
+	require.True(t, ok)
+	assert.Equal(t, uint32(linuxSysClone3), nr)
+}
+
 func TestSeccompManagerResolveSyscallNrReturnsFalseForUnsupportedName(t *testing.T) {
 	// == setup ==
 	manager := &SeccompManager{}
@@ -79,4 +92,27 @@ func TestSeccompManagerSupportsCurrentGOARCH(t *testing.T) {
 
 	// == assert ==
 	require.NoError(t, err)
+}
+
+func TestSeccompManagerErrnoForRuleUsesRuleErrnoRet(t *testing.T) {
+	// == setup ==
+	manager := &SeccompManager{}
+	errnoRet := uint32(unix.ENOSYS)
+
+	// == exercise ==
+	got := manager.errnoForRule(spec.SeccompSyscallObject{ErrnoRet: &errnoRet})
+
+	// == assert ==
+	assert.Equal(t, uint32(unix.ENOSYS), got)
+}
+
+func TestSeccompManagerErrnoForRuleDefaultsToEPERM(t *testing.T) {
+	// == setup ==
+	manager := &SeccompManager{}
+
+	// == exercise ==
+	got := manager.errnoForRule(spec.SeccompSyscallObject{})
+
+	// == assert ==
+	assert.Equal(t, uint32(unix.EPERM), got)
 }

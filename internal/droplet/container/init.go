@@ -514,8 +514,13 @@ func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []strin
 			}
 			continue
 		}
-		if statErr != nil && !p.syscallHandler.IsNotExist(statErr) {
-			return statErr
+		if statErr != nil {
+			if !p.syscallHandler.IsNotExist(statErr) {
+				return statErr
+			}
+			if shouldSkipMissingMaskedPath(path) {
+				continue
+			}
 		}
 		if err := p.syscallHandler.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
@@ -537,6 +542,10 @@ func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []strin
 		}
 	}
 	return nil
+}
+
+func shouldSkipMissingMaskedPath(path string) bool {
+	return strings.HasPrefix(path, "/proc/") || strings.HasPrefix(path, "/sys/")
 }
 
 func (p *rootContainerEnvPreparer) applyReadonlyPaths(rootfs string, paths []string) error {
@@ -927,16 +936,33 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 			}
 		}
 
+		mountType := mountConfig.Type
+		mountSource := mountConfig.Source
+		mountDataForCall := mountData
+
+		// if the mountType is `cgroup`, fallback to `cgroup2`
+		if mountType == "cgroup" && hostUsesUnifiedCgroupV2() {
+			mountType = "cgroup2"
+			if mountSource == "" || mountSource == "cgroup" {
+				mountSource = "cgroup"
+			}
+			mountDataForCall = ""
+		}
+
 		// mount
 		if err := secureMount(
-			mountConfig.Source,
+			//mountConfig.Source,
+			mountSource,
 			mountPath,
-			mountConfig.Type,
+			//mountConfig.Type,
+			mountType,
 			mountFlags,
-			mountData,
+			//mountData,
+			mountDataForCall,
 			deviceMountFlag,
 		); err != nil {
-			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
+			//return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountConfig.Source, mountPath, mountConfig.Type, mountFlags, mountData, err)
+			return fmt.Errorf("mount fs failed: source=%q target=%q fstype=%q flags=0x%x data=%q: %w", mountSource, mountPath, mountType, mountFlags, mountDataForCall, err)
 		}
 		if propagation != "" {
 			if err := p.applyMountPropagation(mountPath, propagation); err != nil {
@@ -946,6 +972,10 @@ func (p *rootContainerEnvPreparer) mountFilesystem(containerId string, rootfs st
 	}
 
 	return nil
+}
+
+func hostUsesUnifiedCgroupV2() bool {
+	return utils.FileExists("/sys/fs/cgroup/cgroup.controllers")
 }
 
 func mountPropagationFlags(propagation string) (uintptr, bool) {

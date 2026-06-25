@@ -13,7 +13,7 @@ func ValidateBasic(containerSpec Spec) error {
 	if strings.TrimSpace(containerSpec.OciVersion) == "" {
 		return fmt.Errorf("ociVersion is required")
 	}
-	if containerSpec.OciVersion != "1.3.0" {
+	if !isSupportedOCIVersion(containerSpec.OciVersion) {
 		return fmt.Errorf("unsupported ociVersion: %s", containerSpec.OciVersion)
 	}
 	if strings.TrimSpace(containerSpec.Root.Path) == "" {
@@ -34,7 +34,7 @@ func ValidateBasic(containerSpec Spec) error {
 	}
 	for _, ns := range containerSpec.LinuxSpec.Namespaces {
 		switch ns.Type {
-		case "mount", "network", "uts", "pid", "ipc", "user", "cgroup":
+		case "mount", "network", "uts", "pid", "ipc", "user", "cgroup", "time":
 		default:
 			return fmt.Errorf("unsupported linux namespace type: %s", ns.Type)
 		}
@@ -105,6 +105,15 @@ func ValidateBasic(containerSpec Spec) error {
 		}
 	}
 	return nil
+}
+
+func isSupportedOCIVersion(version string) bool {
+	switch version {
+	case "1.0.0", "1.0.1", "1.0.2", "1.0.2-dev", "1.1.0", "1.2.0", "1.3.0":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateNamespacePath(nsType string, path string) error {
