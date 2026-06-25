@@ -55,6 +55,23 @@ list_all_validation_tests() {
   make -s print-validation-tests | tr ' ' '\n' | sed '/^$/d' | sort
 }
 
+host_uses_cgroup2() {
+  [[ "$(findmnt -T /sys/fs/cgroup -no FSTYPE 2>/dev/null || true)" == "cgroup2" ]]
+}
+
+requires_cgroup_v1() {
+  case "$1" in
+    ./validation/delete_only_create_resources/delete_only_create_resources.t | \
+    ./validation/delete_resources/delete_resources.t | \
+    ./validation/linux_cgroups_*/linux_cgroups_*.t)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 prepare_arm64_rootfs() {
   local arch
   arch="$(dpkg --print-architecture 2>/dev/null || true)"
@@ -124,11 +141,25 @@ main() {
   local failed=0
   local test_failed=0
   local passed_count=0
+  local skipped_count=0
   local failed_tests=()
+  local skipped_tests=()
   local output
+  local cgroup2=false
+  if host_uses_cgroup2; then
+    cgroup2=true
+  fi
   for test_path in "${test_paths[@]}"; do
     cleanup_droplet_runtime_state
     log "runtime-tools validation: ${test_path}"
+    if [[ "${cgroup2}" == "true" ]] && requires_cgroup_v1 "${test_path}"; then
+      printf 'TAP version 13\n'
+      printf 'ok 1 # SKIP %s requires cgroup v1; host uses cgroup2\n' "${test_path}"
+      printf '1..1\n'
+      skipped_count=$((skipped_count + 1))
+      skipped_tests+=("${test_path}")
+      continue
+    fi
     test_failed=0
     set +e
     output="$(sudo env PATH="${RUNTIME_PATH}" RUNTIME="${RUNTIME}" "${test_path}" 2>&1)"
@@ -157,7 +188,11 @@ main() {
     fi
   done
 
-  log "runtime-tools validation summary: ${passed_count}/${#test_paths[@]} passed"
+  log "runtime-tools validation summary: ${passed_count}/${#test_paths[@]} passed, ${skipped_count} skipped"
+  if [[ "${#skipped_tests[@]}" -ne 0 ]]; then
+    printf 'skipped runtime-tools validation tests:\n' >&2
+    printf '  %s\n' "${skipped_tests[@]}" >&2
+  fi
   if [[ "${#failed_tests[@]}" -ne 0 ]]; then
     printf 'failed runtime-tools validation tests:\n' >&2
     printf '  %s\n' "${failed_tests[@]}" >&2

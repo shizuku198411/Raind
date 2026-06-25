@@ -60,6 +60,7 @@ type StartModel struct {
 
 type DeleteModel struct {
 	ContainerId string
+	Force       bool
 }
 
 type StopModel struct {

@@ -172,6 +172,11 @@ func TestDropletHandlerLifecycleBuildsExpectedArgs(t *testing.T) {
 			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"delete", "cid"}},
 		},
 		{
+			name: "delete force",
+			run:  func(h *DropletHandler) error { return h.Delete(runtime.DeleteModel{ContainerId: "cid", Force: true}) },
+			want: commandCall{name: "/usr/local/bin/droplet", args: []string{"delete", "--force", "cid"}},
+		},
+		{
 			name: "exec",
 			run: func(h *DropletHandler) error {
 				return h.Exec(runtime.ExecModel{ContainerId: "cid", Entrypoint: []string{"/bin/echo", "ok"}})

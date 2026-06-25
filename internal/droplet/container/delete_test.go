@@ -316,7 +316,7 @@ func TestContainerDeleteForceKillsRunningContainer(t *testing.T) {
 	}}, statusManager.updates)
 	assert.Equal(t, []string{"container-1"}, specLoader.calls)
 	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
-	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
+	assert.Equal(t, []string{utils.CgroupPath("container-1"), utils.ContainerDir("container-1")}, syscalls.removeAll)
 }
 
 func TestContainerDeleteRemovesStoppedContainerState(t *testing.T) {
@@ -349,10 +349,10 @@ func TestContainerDeleteRemovesStoppedContainerState(t *testing.T) {
 	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
 	assert.Empty(t, fifoHandler.calls)
 	assert.Empty(t, syscalls.kills)
-	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
+	assert.Equal(t, []string{utils.CgroupPath("container-1"), utils.ContainerDir("container-1")}, syscalls.removeAll)
 }
 
-func TestContainerDeleteKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
+func TestContainerDeleteRejectsCreatedContainerWithoutForce(t *testing.T) {
 	// == setup ==
 	specLoader := &fakeDeleteSpecLoader{}
 	fifoHandler := &fakeDeleteFifoHandler{}
@@ -371,6 +371,35 @@ func TestContainerDeleteKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
 	err := deleteController.Delete(DeleteOption{ContainerId: "container-1"})
 
 	// == assert ==
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not stopped")
+	assert.Empty(t, syscalls.kills)
+	assert.Empty(t, statusManager.updates)
+	assert.Empty(t, specLoader.calls)
+	assert.Empty(t, statusManager.removedContainers)
+	assert.Empty(t, fifoHandler.calls)
+	assert.Empty(t, syscalls.removeAll)
+}
+
+func TestContainerDeleteForceKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
+	// == setup ==
+	specLoader := &fakeDeleteSpecLoader{}
+	fifoHandler := &fakeDeleteFifoHandler{}
+	statusManager := &fakeDeleteStatusManager{status: status.CREATED, pid: 1234}
+	hookController := &fakeDeleteHookController{}
+	syscalls := &fakeDeleteSyscallHandler{}
+	deleteController := &ContainerDelete{
+		specLoader:              specLoader,
+		fifoHandler:             fifoHandler,
+		containerStatusManager:  statusManager,
+		containerHookController: hookController,
+		syscallHandler:          syscalls,
+	}
+
+	// == exercise ==
+	err := deleteController.Delete(DeleteOption{ContainerId: "container-1", Force: true})
+
+	// == assert ==
 	require.NoError(t, err)
 	assert.Equal(t, []deleteKillCall{{pid: 1234, sig: syscall.SIGKILL}}, syscalls.kills)
 	assert.Equal(t, []deleteStatusUpdate{{
@@ -381,7 +410,7 @@ func TestContainerDeleteKillsCreatedContainerInitAndRemovesFifo(t *testing.T) {
 	}}, statusManager.updates)
 	assert.Equal(t, []string{"container-1"}, statusManager.removedContainers)
 	assert.Equal(t, []string{utils.FifoPath("container-1")}, fifoHandler.calls)
-	assert.Equal(t, []string{utils.ContainerDir("container-1")}, syscalls.removeAll)
+	assert.Equal(t, []string{utils.CgroupPath("container-1"), utils.ContainerDir("container-1")}, syscalls.removeAll)
 }
 
 func TestContainerDeleteStopsWhenPoststopHookFails(t *testing.T) {

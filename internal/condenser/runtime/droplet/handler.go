@@ -215,8 +215,11 @@ func (h *DropletHandler) Delete(deleteParameter runtime.DeleteModel) error {
 	runtimePath := utils.DropletBinPath()
 	args := []string{
 		"delete",
-		deleteParameter.ContainerId,
 	}
+	if deleteParameter.Force {
+		args = append(args, "--force")
+	}
+	args = append(args, deleteParameter.ContainerId)
 	runtimeDelete := h.commandFactory.Command(runtimePath, args...)
 	out, err := runtimeDelete.CombineOutput()
 	if err != nil {

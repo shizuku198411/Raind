@@ -86,12 +86,11 @@ func (c *ContainerDelete) Delete(opt DeleteOption) (err error) {
 		return err
 	}
 
-	// if status is running, return error
+	// OCI delete only applies to stopped containers. Created/running
+	// containers can still be removed via --force for cleanup paths.
 	stage = "check_status"
-	if containerStatus == status.RUNNING {
-		if !opt.Force {
-			return fmt.Errorf("container: %s is not stopped. current status: %s", opt.ContainerId, containerStatus)
-		}
+	if containerStatus != status.STOPPED && !opt.Force {
+		return fmt.Errorf("container: %s is not stopped. current status: %s", opt.ContainerId, containerStatus)
 	}
 
 	// if status is created or force-deleting a running container, kill init process before delete container
@@ -136,7 +135,14 @@ func (c *ContainerDelete) Delete(opt DeleteOption) (err error) {
 		}
 	}
 
-	// 6. remove runtime directory
+	// 6. remove cgroup resources created during create
+	stage = "remove_cgroup"
+	err = c.syscallHandler.RemoveAll(utils.CgroupPath(opt.ContainerId))
+	if err != nil {
+		return err
+	}
+
+	// 7. remove runtime directory
 	stage = "remove_runtime_dir"
 	err = c.syscallHandler.RemoveAll(utils.ContainerDir(opt.ContainerId))
 	if err != nil {
