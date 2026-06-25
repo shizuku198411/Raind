@@ -26,8 +26,7 @@ Examples:
   scripts/oci/runtime_tools_validation.sh state create
   scripts/oci/runtime_tools_validation.sh ./validation/state/state.t
 
-If no TEST is supplied, runs the current Droplet-compatible smoke set:
-  create state default start kill pidfile
+If no TEST is supplied, runs all runtime-tools validation tests.
 USAGE
 }
 
@@ -50,6 +49,10 @@ normalize_test() {
       printf './validation/%s/%s.t\n' "$1" "$1"
       ;;
   esac
+}
+
+list_all_validation_tests() {
+  make -s print-validation-tests | tr ' ' '\n' | sed '/^$/d' | sort
 }
 
 prepare_arm64_rootfs() {
@@ -87,6 +90,11 @@ cleanup_droplet_runtime_state() {
 }
 
 main() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+
   [[ -d "${RUNTIME_TOOLS_DIR}" ]] || fail "runtime-tools directory not found: ${RUNTIME_TOOLS_DIR}"
   command -v go >/dev/null 2>&1 || fail "go is required"
   command -v sudo >/dev/null 2>&1 || fail "sudo is required"
@@ -96,7 +104,7 @@ main() {
 
   local tests=()
   if [[ "$#" -eq 0 ]]; then
-    tests=(create state default start kill pidfile)
+    mapfile -t tests < <(list_all_validation_tests)
   else
     tests=("$@")
   fi
@@ -109,14 +117,19 @@ main() {
     test_paths+=("${test_path}")
   done
 
+  log "selected runtime-tools validation tests: ${#test_paths[@]}"
   log "build runtime-tools validation executables"
   make tool runtimetest "${test_paths[@]}"
 
   local failed=0
+  local test_failed=0
+  local passed_count=0
+  local failed_tests=()
   local output
   for test_path in "${test_paths[@]}"; do
     cleanup_droplet_runtime_state
     log "runtime-tools validation: ${test_path}"
+    test_failed=0
     set +e
     output="$(sudo env PATH="${RUNTIME_PATH}" RUNTIME="${RUNTIME}" "${test_path}" 2>&1)"
     status=$?
@@ -125,16 +138,30 @@ main() {
     if [[ "${status}" -ne 0 ]]; then
       printf 'error: %s exited with status %d\n' "${test_path}" "${status}" >&2
       failed=1
+      test_failed=1
     fi
     if ! grep -q '^1\.\.' <<<"${output}"; then
       printf 'error: %s did not emit a TAP plan\n' "${test_path}" >&2
       failed=1
+      test_failed=1
     fi
     if grep -Eq 'not ok[[:space:]][0-9]+' <<<"${output}"; then
       printf 'error: %s reported failing TAP assertions\n' "${test_path}" >&2
       failed=1
+      test_failed=1
+    fi
+    if [[ "${test_failed}" -ne 0 ]]; then
+      failed_tests+=("${test_path}")
+    else
+      passed_count=$((passed_count + 1))
     fi
   done
+
+  log "runtime-tools validation summary: ${passed_count}/${#test_paths[@]} passed"
+  if [[ "${#failed_tests[@]}" -ne 0 ]]; then
+    printf 'failed runtime-tools validation tests:\n' >&2
+    printf '  %s\n' "${failed_tests[@]}" >&2
+  fi
 
   if [[ "${failed}" -ne 0 ]]; then
     fail "runtime-tools validation failed"
