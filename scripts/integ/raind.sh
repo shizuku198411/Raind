@@ -516,7 +516,7 @@ spec:
 YAML
   run_raind resource-apply resource apply -f "${E2E_WORK_DIR}/resource-service.yaml"
   assert_output_contains resource-apply "service:"
-  assert_output_contains resource-apply "applied"
+  assert_output_contains resource-apply "created"
   run_raind resource-rm resource rm -f "${E2E_WORK_DIR}/resource-service.yaml"
   assert_output_contains resource-rm "service:"
 
