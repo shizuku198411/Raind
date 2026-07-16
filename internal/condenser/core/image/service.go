@@ -119,7 +119,7 @@ func (s *ImageService) Remove(removeParameter ServiceRemoveModel) error {
 	if err := s.removeRootlessShiftedLayerCaches(bundlePath, rootfsPath); err != nil {
 		return err
 	}
-	if err := s.filesystemHandler.RemoveAll(bundlePath); err != nil {
+	if err := utils.RemoveAllUnderRoot(s.filesystemHandler, utils.ImageRootDir, bundlePath); err != nil {
 		return err
 	}
 
@@ -141,7 +141,7 @@ func (s *ImageService) removeRootlessShiftedLayerCaches(bundlePath, rootfsPath s
 			continue
 		}
 		seen[cachePath] = struct{}{}
-		if err := s.filesystemHandler.RemoveAll(cachePath); err != nil {
+		if err := utils.RemoveAllUnderRoot(s.filesystemHandler, utils.ImageRootDir, cachePath); err != nil {
 			return fmt.Errorf("remove rootless shifted layer cache %q: %w", cachePath, err)
 		}
 	}
@@ -266,7 +266,7 @@ func (s *ImageService) GetImageStatus(imageStr string) (ImageStatusInfo, error) 
 	if err != nil {
 		if s.filesystemHandler.IsNotExist(err) {
 			_ = s.ilmHandler.RemoveImage(repo, ref)
-			_ = s.filesystemHandler.RemoveAll(bundlePath)
+			_ = utils.RemoveAllUnderRoot(s.filesystemHandler, utils.ImageRootDir, bundlePath)
 			return ImageStatusInfo{}, fmt.Errorf("%s:%s not found", repo, ref)
 		}
 		return ImageStatusInfo{}, err

@@ -778,13 +778,30 @@ func (s *RegistryDockerHub) writeFileFromTar(dstPath string, r io.Reader, mode o
 func (s *RegistryDockerHub) joinRoot(rootfs, rel string) (string, error) {
 	rel = strings.TrimPrefix(rel, "/")
 	rel = filepath.Clean(rel)
-	if rel == "." {
-		return rootfs, nil
+
+	absRoot, err := filepath.Abs(rootfs)
+	if err != nil {
+		return "", fmt.Errorf("resolve rootfs: %w", err)
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel == "." {
+		return absRoot, nil
+	}
+
+	candidate := filepath.Join(absRoot, rel)
+	absCandidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve candidate path: %w", err)
+	}
+
+	relToRoot, err := filepath.Rel(absRoot, absCandidate)
+	if err != nil {
+		return "", fmt.Errorf("rel path check failed: %w", err)
+	}
+	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes root: %s", rel)
 	}
-	return filepath.Join(rootfs, rel), nil
+
+	return absCandidate, nil
 }
 
 func (s *RegistryDockerHub) removeAllChildren(dir string) error {

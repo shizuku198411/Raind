@@ -3,7 +3,6 @@ package pvc
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -38,7 +37,10 @@ func (s *Service) Create(manifest Manifest) (vsm.PersistentVolumeClaimInfo, erro
 		return vsm.PersistentVolumeClaimInfo{}, fmt.Errorf("name already used by other persistentvolumeclaim")
 	}
 	pvcId := utils.NewUlid()
-	hostPath := filepath.Join(utils.PVCVolumeRootDir, manifest.Namespace, pvcId)
+	hostPath, err := utils.SafeJoin(utils.PVCVolumeRootDir, manifest.Namespace, pvcId)
+	if err != nil {
+		return vsm.PersistentVolumeClaimInfo{}, err
+	}
 	dataPath := filepath.Join(hostPath, "data")
 	if err := s.ensureRuntimeOwnedPath(dataPath); err != nil {
 		return vsm.PersistentVolumeClaimInfo{}, err
@@ -63,11 +65,11 @@ func (s *Service) Create(manifest Manifest) (vsm.PersistentVolumeClaimInfo, erro
 		Phase:            vsm.PVCPhaseBound,
 	}
 	if err := s.writeMetadata(hostPath, info); err != nil {
-		_ = s.fs.RemoveAll(hostPath)
+		_ = utils.RemoveAllUnderRoot(s.fs, utils.PVCVolumeRootDir, hostPath)
 		return vsm.PersistentVolumeClaimInfo{}, err
 	}
 	if err := s.vsmHandler.StorePVC(pvcId, info); err != nil {
-		_ = s.fs.RemoveAll(hostPath)
+		_ = utils.RemoveAllUnderRoot(s.fs, utils.PVCVolumeRootDir, hostPath)
 		return vsm.PersistentVolumeClaimInfo{}, err
 	}
 	return s.vsmHandler.GetPVCById(pvcId)
@@ -134,10 +136,7 @@ func (s *Service) Remove(idOrName, namespace string) (vsm.PersistentVolumeClaimI
 		return vsm.PersistentVolumeClaimInfo{}, err
 	}
 	if info.ReclaimPolicy == vsm.PVCReclaimDelete {
-		if err := s.ensureRuntimeOwnedPath(info.HostPath); err != nil {
-			return vsm.PersistentVolumeClaimInfo{}, err
-		}
-		if err := s.fs.RemoveAll(info.HostPath); err != nil {
+		if err := utils.RemoveAllUnderRoot(s.fs, utils.PVCVolumeRootDir, info.HostPath); err != nil {
 			return vsm.PersistentVolumeClaimInfo{}, fmt.Errorf("remove pvc data path: %w", err)
 		}
 	}
@@ -154,22 +153,7 @@ func (s *Service) writeMetadata(hostPath string, info vsm.PersistentVolumeClaimI
 }
 
 func (s *Service) ensureRuntimeOwnedPath(path string) error {
-	root, err := filepath.Abs(utils.PVCVolumeRootDir)
-	if err != nil {
-		return err
-	}
-	target, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return err
-	}
-	if rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." || filepath.IsAbs(rel) {
-		return fmt.Errorf("pvc path escapes runtime volume root: %s", path)
-	}
-	return nil
+	return utils.EnsurePathUnderRoot(utils.PVCVolumeRootDir, path)
 }
 
 func (s *Service) ensureNoRunningPodReference(info vsm.PersistentVolumeClaimInfo) error {

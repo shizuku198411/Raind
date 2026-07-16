@@ -487,7 +487,14 @@ func (s *ImageService) flushRunScript(state *buildState, bridge string) error {
 
 func (s *ImageService) runCommandInContainer(state *buildState, bridge string, scriptLines []string) error {
 	containerId := "build-" + utils.NewUlid()[:12]
-	containerDir := filepath.Join(utils.ContainerRootDir, containerId)
+	containerDir, err := utils.SafeJoin(utils.ContainerRootDir, containerId)
+	if err != nil {
+		return err
+	}
+	cgroupPath, err := utils.SafeJoin(utils.CgroupRuntimeDir, containerId)
+	if err != nil {
+		return err
+	}
 	upperDir := filepath.Join(containerDir, "diff")
 	workDir := filepath.Join(containerDir, "work")
 	mergedDir := filepath.Join(containerDir, "merged")
@@ -504,10 +511,10 @@ func (s *ImageService) runCommandInContainer(state *buildState, bridge string, s
 			_ = ipamHandler.Release(containerId)
 		}
 		if rollback.cgroup {
-			_ = filesystemHandler.RemoveAll(filepath.Join(utils.CgroupRuntimeDir, containerId))
+			_ = utils.RemoveAllUnderRoot(filesystemHandler, utils.CgroupRuntimeDir, cgroupPath)
 		}
 		if rollback.containerDir {
-			_ = filesystemHandler.RemoveAll(containerDir)
+			_ = utils.RemoveAllUnderRoot(filesystemHandler, utils.ContainerRootDir, containerDir)
 		}
 		if rollback.csmEntry {
 			_ = csmHandler.RemoveContainer(containerId)
