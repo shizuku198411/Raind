@@ -535,7 +535,10 @@ func (f *fakePsmHandler) GetReplicaSet(string) (psm.ReplicaSetInfo, error) {
 }
 func (f *fakePsmHandler) GetReplicaSetList() ([]psm.ReplicaSetInfo, error) { return nil, nil }
 func (f *fakePsmHandler) IsTemplateReferenced(string) (bool, error)        { return false, nil }
-func (f *fakePsmHandler) UpdateReplicaSetReplicas(string, int) error       { return nil }
+func (f *fakePsmHandler) UpdateReplicaSetSpec(string, psm.ReplicaSetSpec) error {
+	return nil
+}
+func (f *fakePsmHandler) UpdateReplicaSetReplicas(string, int) error { return nil }
 func (f *fakePsmHandler) UpdateReplicaSetReconcileStatus(string, int, string, time.Time) error {
 	return nil
 }
@@ -546,13 +549,16 @@ func (f *fakePsmHandler) GetDeployment(string) (psm.DeploymentInfo, error) {
 	return psm.DeploymentInfo{}, nil
 }
 func (f *fakePsmHandler) GetDeploymentList() ([]psm.DeploymentInfo, error) { return nil, nil }
-func (f *fakePsmHandler) UpdateDeploymentReplicas(string, int) error       { return nil }
-func (f *fakePsmHandler) UpdateDeploymentReplicaSet(string, string) error  { return nil }
-func (f *fakePsmHandler) RemoveDeployment(string) error                    { return nil }
-func (f *fakePsmHandler) RemovePod(string) error                           { return nil }
-func (f *fakePsmHandler) UpdatePod(string, string) error                   { return nil }
-func (f *fakePsmHandler) UpdatePodOwner(string, string, string) error      { return nil }
-func (f *fakePsmHandler) UpdatePodStoppedByUser(string, bool) error        { return nil }
+func (f *fakePsmHandler) UpdateDeploymentSpec(string, psm.DeploymentSpec) error {
+	return nil
+}
+func (f *fakePsmHandler) UpdateDeploymentReplicas(string, int) error      { return nil }
+func (f *fakePsmHandler) UpdateDeploymentReplicaSet(string, string) error { return nil }
+func (f *fakePsmHandler) RemoveDeployment(string) error                   { return nil }
+func (f *fakePsmHandler) RemovePod(string) error                          { return nil }
+func (f *fakePsmHandler) UpdatePod(string, string) error                  { return nil }
+func (f *fakePsmHandler) UpdatePodOwner(string, string, string) error     { return nil }
+func (f *fakePsmHandler) UpdatePodStoppedByUser(string, bool) error       { return nil }
 func (f *fakePsmHandler) UpdatePodNamespaces(int, string, string, string, string, string) error {
 	return nil
 }

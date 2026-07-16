@@ -1,6 +1,8 @@
 package pod
 
 import (
+	"errors"
+	"os"
 	"raind/internal/condenser/core/container"
 	"strings"
 )
@@ -9,14 +11,24 @@ import (
 func (s *PodService) Remove(podId string) (string, error) {
 	podInfo, err := s.psmHandler.GetPodById(podId)
 	if err != nil {
+		if isNotFoundErr(err) {
+			return podId, nil
+		}
 		return "", err
 	}
 	if err := s.psmHandler.UpdatePodStoppedByUser(podId, true); err != nil {
+		if isNotFoundErr(err) {
+			return podId, nil
+		}
 		return "", err
 	}
 
 	containers, err := s.containerHandler.GetContainersByPodId(podId)
 	if err != nil {
+		if isNotFoundErr(err) {
+			_ = s.psmHandler.RemovePod(podId)
+			return podId, nil
+		}
 		return "", err
 	}
 	var infra container.ContainerState
@@ -31,6 +43,9 @@ func (s *PodService) Remove(podId string) (string, error) {
 			return "", err
 		}
 		if _, err := s.containerHandler.Delete(container.ServiceDeleteModel{ContainerId: c.ContainerId}); err != nil {
+			if isNotFoundErr(err) {
+				continue
+			}
 			return "", err
 		}
 	}
@@ -39,10 +54,15 @@ func (s *PodService) Remove(podId string) (string, error) {
 			return "", err
 		}
 		if _, err := s.containerHandler.Delete(container.ServiceDeleteModel{ContainerId: infra.ContainerId}); err != nil {
-			return "", err
+			if !isNotFoundErr(err) {
+				return "", err
+			}
 		}
 	}
 	if err := s.psmHandler.RemovePod(podId); err != nil {
+		if isNotFoundErr(err) {
+			return podId, nil
+		}
 		return "", err
 	}
 	if podInfo.TemplateId != "" {
@@ -62,5 +82,19 @@ func (s *PodService) stopContainerIgnoreStopped(containerId string) error {
 	if strings.Contains(err.Error(), "stop operation not allowed to current container status") {
 		return nil
 	}
+	if isNotFoundErr(err) {
+		return nil
+	}
 	return err
+}
+
+func isNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such file")
 }

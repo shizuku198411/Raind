@@ -17,6 +17,7 @@ type PsmHandler interface {
 	GetReplicaSet(replicaSetId string) (ReplicaSetInfo, error)
 	GetReplicaSetList() ([]ReplicaSetInfo, error)
 	IsTemplateReferenced(templateId string) (bool, error)
+	UpdateReplicaSetSpec(replicaSetId string, spec ReplicaSetSpec) error
 	UpdateReplicaSetReplicas(replicaSetId string, replicas int) error
 	UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error
 	ClearReplicaSetReconcileStatus(replicaSetId string) error
@@ -24,6 +25,7 @@ type PsmHandler interface {
 	StoreDeployment(deploymentId string, spec DeploymentSpec) error
 	GetDeployment(deploymentId string) (DeploymentInfo, error)
 	GetDeploymentList() ([]DeploymentInfo, error)
+	UpdateDeploymentSpec(deploymentId string, spec DeploymentSpec) error
 	UpdateDeploymentReplicas(deploymentId string, replicas int) error
 	UpdateDeploymentReplicaSet(deploymentId, replicaSetId string) error
 	RemoveDeployment(deploymentId string) error

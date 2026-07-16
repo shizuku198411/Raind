@@ -211,6 +211,38 @@ func TestPodControllerRecordsBackoffWhenReplicaSetReconcileFails(t *testing.T) {
 	}
 }
 
+func TestPodServiceRemoveIgnoresAlreadyRemovedContainers(t *testing.T) {
+	psmHandler := &fakeControllerPsm{
+		pods: map[string]psm.PodInfo{
+			"pod-1": {PodId: "pod-1", TemplateId: "tpl-1"},
+		},
+	}
+	containerHandler := &fakeControllerContainerService{
+		containersByPod: map[string][]container.ContainerState{
+			"pod-1": {
+				{ContainerId: "member-1", Name: "app", State: psm.ContainerStateRunning},
+				{ContainerId: "infra-1", Name: utils.PodInfraContainerNamePrefix + "pod-1", State: psm.ContainerStateRunning},
+			},
+		},
+		deleteErr: map[string]error{
+			"member-1": fmt.Errorf("delete container failed: droplet delete failed: 2026/07/16 17:02:18 remove /etc/raind/container/member-1/state.json: no such file or directory: exit status 1"),
+			"infra-1":  fmt.Errorf("container: infra-1 not found"),
+		},
+	}
+	service := &PodService{psmHandler: psmHandler, containerHandler: containerHandler}
+
+	got, err := service.Remove("pod-1")
+	if err != nil {
+		t.Fatalf("Remove returned error: %v", err)
+	}
+	if got != "pod-1" {
+		t.Fatalf("expected pod id pod-1, got %q", got)
+	}
+	if !psmHandler.removedPods["pod-1"] {
+		t.Fatalf("expected pod state to be removed")
+	}
+}
+
 type fakeControllerPsm struct {
 	pods        map[string]psm.PodInfo
 	templates   []psm.PodTemplateInfo
@@ -246,6 +278,9 @@ func (f *fakeControllerPsm) GetReplicaSetList() ([]psm.ReplicaSetInfo, error) {
 }
 func (f *fakeControllerPsm) IsTemplateReferenced(string) (bool, error)  { return true, nil }
 func (f *fakeControllerPsm) UpdateReplicaSetReplicas(string, int) error { return nil }
+func (f *fakeControllerPsm) UpdateReplicaSetSpec(string, psm.ReplicaSetSpec) error {
+	return nil
+}
 func (f *fakeControllerPsm) UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error {
 	if f.reconcileAttempts == nil {
 		f.reconcileAttempts = make(map[string]int)
@@ -273,6 +308,9 @@ func (f *fakeControllerPsm) GetDeployment(string) (psm.DeploymentInfo, error) {
 }
 func (f *fakeControllerPsm) GetDeploymentList() ([]psm.DeploymentInfo, error) {
 	return f.deployments, nil
+}
+func (f *fakeControllerPsm) UpdateDeploymentSpec(string, psm.DeploymentSpec) error {
+	return nil
 }
 func (f *fakeControllerPsm) UpdateDeploymentReplicas(string, int) error      { return nil }
 func (f *fakeControllerPsm) UpdateDeploymentReplicaSet(string, string) error { return nil }
@@ -366,6 +404,8 @@ type fakeControllerContainerService struct {
 	containersByPod map[string][]container.ContainerState
 	stopped         map[string]bool
 	deleted         map[string]bool
+	stopErr         map[string]error
+	deleteErr       map[string]error
 }
 
 func (f *fakeControllerContainerService) Create(container.ServiceCreateModel) (string, error) {
@@ -375,6 +415,9 @@ func (f *fakeControllerContainerService) Start(container.ServiceStartModel) (str
 	return "", nil
 }
 func (f *fakeControllerContainerService) Delete(param container.ServiceDeleteModel) (string, error) {
+	if err := f.deleteErr[param.ContainerId]; err != nil {
+		return "", err
+	}
 	if f.deleted == nil {
 		f.deleted = make(map[string]bool)
 	}
@@ -382,6 +425,9 @@ func (f *fakeControllerContainerService) Delete(param container.ServiceDeleteMod
 	return param.ContainerId, nil
 }
 func (f *fakeControllerContainerService) Stop(param container.ServiceStopModel) (string, error) {
+	if err := f.stopErr[param.ContainerId]; err != nil {
+		return "", err
+	}
 	if f.stopped == nil {
 		f.stopped = make(map[string]bool)
 	}

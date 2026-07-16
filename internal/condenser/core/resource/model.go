@@ -20,12 +20,14 @@ type ApplyPodResult struct {
 	Name         string   `json:"name"`
 	Namespace    string   `json:"namespace"`
 	ContainerIds []string `json:"containerIds"`
+	Action       string   `json:"action,omitempty"`
 }
 
 type ApplyServiceResult struct {
 	ServiceId string `json:"serviceId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Action    string `json:"action,omitempty"`
 }
 
 type ApplyIngressResult struct {
@@ -33,23 +35,27 @@ type ApplyIngressResult struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
 	TLSHosts  []string `json:"tlsHosts,omitempty"`
+	Action    string   `json:"action,omitempty"`
 }
 
 type ApplyNamespaceResult struct {
 	Name    string `json:"name"`
 	Network string `json:"network"`
+	Action  string `json:"action,omitempty"`
 }
 
 type ApplyConfigMapResult struct {
 	ConfigMapId string `json:"configMapId"`
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
+	Action      string `json:"action,omitempty"`
 }
 
 type ApplySecretResult struct {
 	SecretId  string `json:"secretId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Action    string `json:"action,omitempty"`
 }
 
 type ApplyNetworkPolicyResult struct {
@@ -57,6 +63,7 @@ type ApplyNetworkPolicyResult struct {
 	Name            string `json:"name"`
 	Namespace       string `json:"namespace"`
 	GeneratedRules  int    `json:"generatedRules"`
+	Action          string `json:"action,omitempty"`
 }
 
 type ApplyPVCResult struct {
@@ -66,12 +73,14 @@ type ApplyPVCResult struct {
 	RequestedStorage string `json:"requestedStorage"`
 	RequestedBytes   uint64 `json:"requestedBytes"`
 	ReclaimPolicy    string `json:"reclaimPolicy"`
+	Action           string `json:"action,omitempty"`
 }
 
 type ApplyReplicaSetResult struct {
 	ReplicaSetId string `json:"replicaSetId"`
 	Name         string `json:"name"`
 	Namespace    string `json:"namespace"`
+	Action       string `json:"action,omitempty"`
 }
 
 type ApplyDeploymentResult struct {
@@ -79,6 +88,7 @@ type ApplyDeploymentResult struct {
 	Name         string `json:"name"`
 	Namespace    string `json:"namespace"`
 	Replicas     int    `json:"replicas"`
+	Action       string `json:"action,omitempty"`
 }
 
 type DeleteResult struct {

@@ -165,6 +165,24 @@ func (m *PsmManager) UpdateReplicaSetReplicas(replicaSetId string, replicas int)
 	})
 }
 
+func (m *PsmManager) UpdateReplicaSetSpec(replicaSetId string, spec ReplicaSetSpec) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		rs, ok := st.ReplicaSets[replicaSetId]
+		if !ok {
+			return fmt.Errorf("replicaSetId=%s not found", replicaSetId)
+		}
+		if spec.Replicas < 0 {
+			return fmt.Errorf("replicas must be >= 0")
+		}
+		rs.Spec = spec
+		rs.ReconcileAttempt = 0
+		rs.LastReconcileError = ""
+		rs.NextReconcileAt = time.Time{}
+		st.ReplicaSets[replicaSetId] = rs
+		return nil
+	})
+}
+
 func (m *PsmManager) UpdateReplicaSetReconcileStatus(replicaSetId string, attempt int, lastError string, nextReconcileAt time.Time) error {
 	return m.psmStore.withLock(func(st *PodState) error {
 		rs, ok := st.ReplicaSets[replicaSetId]
@@ -270,6 +288,22 @@ func (m *PsmManager) UpdateDeploymentReplicas(deploymentId string, replicas int)
 			return fmt.Errorf("replicas must be >= 0")
 		}
 		deploy.Spec.Replicas = replicas
+		deploy.UpdatedAt = time.Now()
+		st.Deployments[deploymentId] = deploy
+		return nil
+	})
+}
+
+func (m *PsmManager) UpdateDeploymentSpec(deploymentId string, spec DeploymentSpec) error {
+	return m.psmStore.withLock(func(st *PodState) error {
+		deploy, ok := st.Deployments[deploymentId]
+		if !ok {
+			return fmt.Errorf("deploymentId=%s not found", deploymentId)
+		}
+		if spec.Replicas < 0 {
+			return fmt.Errorf("replicas must be >= 0")
+		}
+		deploy.Spec = spec
 		deploy.UpdatedAt = time.Now()
 		st.Deployments[deploymentId] = deploy
 		return nil

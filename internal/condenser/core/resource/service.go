@@ -95,6 +95,14 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 				rollbackApplied()
 				return ApplyResult{}, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 			}
+			if existing, err := s.namespaceHandler.Get(manifest.Metadata.Name); err == nil {
+				if !stringMapEqual(existing.Labels, manifest.Metadata.Labels) || !stringMapEqual(existing.Annotations, manifest.Metadata.Annotations) {
+					rollbackApplied()
+					return ApplyResult{}, statusError(http.StatusBadRequest, "namespace update is not supported: %s", manifest.Metadata.Name)
+				}
+				result.Namespaces = append(result.Namespaces, ApplyNamespaceResult{Name: existing.Name, Network: existing.Network, Action: applyActionUnchanged})
+				continue
+			}
 			info, err := s.namespaceHandler.Create(corenamespace.ServiceCreateModel{
 				Name:        manifest.Metadata.Name,
 				Labels:      manifest.Metadata.Labels,
@@ -107,7 +115,7 @@ func (s *ResourceService) Apply(body []byte) (ApplyResult, error) {
 			rollback = append(rollback, func() {
 				_, _ = s.namespaceHandler.Remove(corenamespace.ServiceRemoveModel{Name: info.Name})
 			})
-			result.Namespaces = append(result.Namespaces, ApplyNamespaceResult{Name: info.Name, Network: info.Network})
+			result.Namespaces = append(result.Namespaces, ApplyNamespaceResult{Name: info.Name, Network: info.Network, Action: applyActionCreated})
 
 		case "Service":
 			serviceResult, undo, err := s.applyService(rawBytes)
@@ -184,8 +192,22 @@ func (s *ResourceService) applySecret(rawBytes []byte) (ApplySecretResult, func(
 	if err != nil {
 		return ApplySecretResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 	}
-	if s.secHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
-		return ApplySecretResult{}, nil, statusError(http.StatusBadRequest, "name already used by other secret")
+	if existing, err := s.secHandler.GetSecretByName(manifest.Name, manifest.Namespace); err == nil {
+		desired := sec.SecretInfo{
+			Name:      manifest.Name,
+			Namespace: defaultNamespace(manifest.Namespace),
+			Type:      manifest.Type,
+			Data:      manifest.Data,
+		}
+		if secretInfoEqual(existing, desired) {
+			return ApplySecretResult{SecretId: existing.SecretId, Name: existing.Name, Namespace: existing.Namespace, Action: applyActionUnchanged}, func() {}, nil
+		}
+		if err := s.secHandler.StoreSecret(existing.SecretId, desired); err != nil {
+			return ApplySecretResult{}, nil, statusError(http.StatusInternalServerError, "secret update failed: %v", err)
+		}
+		return ApplySecretResult{SecretId: existing.SecretId, Name: desired.Name, Namespace: desired.Namespace, Action: applyActionUpdated}, func() {
+			_ = s.secHandler.StoreSecret(existing.SecretId, existing)
+		}, nil
 	}
 	secretId := utils.NewUlid()
 	if err := s.secHandler.StoreSecret(secretId, sec.SecretInfo{
@@ -200,6 +222,7 @@ func (s *ResourceService) applySecret(rawBytes []byte) (ApplySecretResult, func(
 			SecretId:  secretId,
 			Name:      manifest.Name,
 			Namespace: manifest.Namespace,
+			Action:    applyActionCreated,
 		}, func() {
 			_ = s.secHandler.RemoveSecret(secretId)
 		}, nil
@@ -219,6 +242,7 @@ func (s *ResourceService) applyNetworkPolicy(rawBytes []byte) (ApplyNetworkPolic
 			Name:            info.Name,
 			Namespace:       info.Namespace,
 			GeneratedRules:  len(info.GeneratedRuleIds),
+			Action:          applyActionCreated,
 		}, func() {
 			_, _ = coreNetworkPolicy.NewService().Remove(info.NetworkPolicyId, "")
 		}, nil
@@ -228,6 +252,20 @@ func (s *ResourceService) applyPVC(rawBytes []byte) (ApplyPVCResult, func(), err
 	manifest, err := corePVC.DecodeK8sPVCManifest(rawBytes)
 	if err != nil {
 		return ApplyPVCResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
+	}
+	if existing, err := s.vsmHandler.GetPVCByName(manifest.Name, manifest.Namespace); err == nil {
+		if pvcManifestEqual(existing, manifest) {
+			return ApplyPVCResult{
+				PVCId:            existing.PVCId,
+				Name:             existing.Name,
+				Namespace:        existing.Namespace,
+				RequestedStorage: existing.RequestedStorage,
+				RequestedBytes:   existing.RequestedBytes,
+				ReclaimPolicy:    existing.ReclaimPolicy,
+				Action:           applyActionUnchanged,
+			}, func() {}, nil
+		}
+		return ApplyPVCResult{}, nil, statusError(http.StatusBadRequest, "persistentvolumeclaim update is not supported: %s/%s", existing.Namespace, existing.Name)
 	}
 	info, err := corePVC.NewService().Create(manifest)
 	if err != nil {
@@ -240,6 +278,7 @@ func (s *ResourceService) applyPVC(rawBytes []byte) (ApplyPVCResult, func(), err
 			RequestedStorage: info.RequestedStorage,
 			RequestedBytes:   info.RequestedBytes,
 			ReclaimPolicy:    info.ReclaimPolicy,
+			Action:           applyActionCreated,
 		}, func() {
 			_, _ = corePVC.NewService().Remove(info.PVCId, "")
 		}, nil
@@ -249,17 +288,6 @@ func (s *ResourceService) applyConfigMap(rawBytes []byte) (ApplyConfigMapResult,
 	manifest, err := coreConfigMap.DecodeK8sConfigMapManifest(rawBytes)
 	if err != nil {
 		return ApplyConfigMapResult{}, nil, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
-	}
-	if s.cfmHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
-		return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusBadRequest, "name already used by other configmap")
-	}
-	configMapId := utils.NewUlid()
-	if err := s.cfmHandler.StoreConfigMap(configMapId, cfm.ConfigMapInfo{
-		Name:      manifest.Name,
-		Namespace: manifest.Namespace,
-		Data:      manifest.Data,
-	}); err != nil {
-		return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusInternalServerError, "configmap store failed: %v", err)
 	}
 	warnings := make([]Warning, 0, len(manifest.Warnings))
 	for _, warning := range manifest.Warnings {
@@ -271,10 +299,35 @@ func (s *ResourceService) applyConfigMap(rawBytes []byte) (ApplyConfigMapResult,
 			Message:   warning.Message,
 		})
 	}
+	if existing, err := s.cfmHandler.GetConfigMapByName(manifest.Name, manifest.Namespace); err == nil {
+		desired := cfm.ConfigMapInfo{
+			Name:      manifest.Name,
+			Namespace: defaultNamespace(manifest.Namespace),
+			Data:      manifest.Data,
+		}
+		if configMapInfoEqual(existing, desired) {
+			return ApplyConfigMapResult{ConfigMapId: existing.ConfigMapId, Name: existing.Name, Namespace: existing.Namespace, Action: applyActionUnchanged}, func() {}, warnings, nil
+		}
+		if err := s.cfmHandler.StoreConfigMap(existing.ConfigMapId, desired); err != nil {
+			return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusInternalServerError, "configmap update failed: %v", err)
+		}
+		return ApplyConfigMapResult{ConfigMapId: existing.ConfigMapId, Name: desired.Name, Namespace: desired.Namespace, Action: applyActionUpdated}, func() {
+			_ = s.cfmHandler.StoreConfigMap(existing.ConfigMapId, existing)
+		}, warnings, nil
+	}
+	configMapId := utils.NewUlid()
+	if err := s.cfmHandler.StoreConfigMap(configMapId, cfm.ConfigMapInfo{
+		Name:      manifest.Name,
+		Namespace: manifest.Namespace,
+		Data:      manifest.Data,
+	}); err != nil {
+		return ApplyConfigMapResult{}, nil, nil, statusError(http.StatusInternalServerError, "configmap store failed: %v", err)
+	}
 	return ApplyConfigMapResult{
 			ConfigMapId: configMapId,
 			Name:        manifest.Name,
 			Namespace:   manifest.Namespace,
+			Action:      applyActionCreated,
 		}, func() {
 			_ = s.cfmHandler.RemoveConfigMap(configMapId)
 		}, warnings, nil
@@ -288,8 +341,34 @@ func (s *ResourceService) applyService(rawBytes []byte) (ApplyServiceResult, fun
 	if manifest.Name == "" || manifest.Namespace == "" {
 		return ApplyServiceResult{}, nil, statusError(http.StatusBadRequest, "name and namespace are required")
 	}
-	if s.ssmHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
-		return ApplyServiceResult{}, nil, statusError(http.StatusBadRequest, "name already used by other service")
+	if existing, ok, err := s.findService(manifest.Name, manifest.Namespace); err != nil {
+		return ApplyServiceResult{}, nil, statusError(http.StatusInternalServerError, "service lookup failed: %v", err)
+	} else if ok {
+		desired := ssm.ServiceInfo{
+			Name:      manifest.Name,
+			Namespace: manifest.Namespace,
+			Type:      ssm.NormalizeServiceType(manifest.Type),
+			ClusterIP: manifest.ClusterIP,
+			Selector:  manifest.Selector,
+			Ports:     manifest.Ports,
+		}
+		if desired.ClusterIP == "" {
+			desired.ClusterIP = existing.ClusterIP
+		}
+		if serviceInfoEqual(existing, desired) {
+			return ApplyServiceResult{ServiceId: existing.ServiceId, Name: existing.Name, Namespace: existing.Namespace, Action: applyActionUnchanged}, func() {}, nil
+		}
+		if err := s.ssmHandler.RemoveService(existing.ServiceId); err != nil {
+			return ApplyServiceResult{}, nil, statusError(http.StatusInternalServerError, "service update remove failed: %v", err)
+		}
+		if err := s.ssmHandler.StoreService(existing.ServiceId, desired); err != nil {
+			_ = s.ssmHandler.StoreService(existing.ServiceId, existing)
+			return ApplyServiceResult{}, nil, statusError(http.StatusInternalServerError, "service update failed: %v", err)
+		}
+		return ApplyServiceResult{ServiceId: existing.ServiceId, Name: desired.Name, Namespace: desired.Namespace, Action: applyActionUpdated}, func() {
+			_ = s.ssmHandler.RemoveService(existing.ServiceId)
+			_ = s.ssmHandler.StoreService(existing.ServiceId, existing)
+		}, nil
 	}
 	serviceId := utils.NewUlid()
 	if err := s.ssmHandler.StoreService(serviceId, ssm.ServiceInfo{
@@ -306,6 +385,7 @@ func (s *ResourceService) applyService(rawBytes []byte) (ApplyServiceResult, fun
 			ServiceId: serviceId,
 			Name:      manifest.Name,
 			Namespace: manifest.Namespace,
+			Action:    applyActionCreated,
 		}, func() {
 			_ = s.ssmHandler.RemoveService(serviceId)
 		}, nil
@@ -316,8 +396,29 @@ func (s *ResourceService) applyIngress(rawBytes []byte) (ApplyIngressResult, fun
 	if err != nil {
 		return ApplyIngressResult{}, nil, statusMessage(http.StatusBadRequest, invalidYAMLErrorMessage(err))
 	}
-	if s.ismHandler.IsNameAlreadyUsed(manifest.Name, manifest.Namespace) {
-		return ApplyIngressResult{}, nil, statusError(http.StatusBadRequest, "name already used by other ingress")
+	if existing, ok, err := s.findIngress(manifest.Name, manifest.Namespace); err != nil {
+		return ApplyIngressResult{}, nil, statusError(http.StatusInternalServerError, "ingress lookup failed: %v", err)
+	} else if ok {
+		desired := ism.IngressInfo{
+			Name:      manifest.Name,
+			Namespace: manifest.Namespace,
+			Rules:     manifest.Rules,
+			TLSHosts:  manifest.TLSHosts,
+		}
+		if ingressInfoEqual(existing, desired) {
+			return ApplyIngressResult{IngressId: existing.IngressId, Name: existing.Name, Namespace: existing.Namespace, TLSHosts: existing.TLSHosts, Action: applyActionUnchanged}, func() {}, nil
+		}
+		if len(manifest.TLSHosts) > 0 {
+			if err := coreIngress.NewTLSManager().EnsureHosts(manifest.TLSHosts); err != nil {
+				return ApplyIngressResult{}, nil, statusError(http.StatusInternalServerError, "ingress tls certificate create failed: %v", err)
+			}
+		}
+		if err := s.ismHandler.StoreIngress(existing.IngressId, desired); err != nil {
+			return ApplyIngressResult{}, nil, statusError(http.StatusInternalServerError, "ingress update failed: %v", err)
+		}
+		return ApplyIngressResult{IngressId: existing.IngressId, Name: desired.Name, Namespace: desired.Namespace, TLSHosts: desired.TLSHosts, Action: applyActionUpdated}, func() {
+			_ = s.ismHandler.StoreIngress(existing.IngressId, existing)
+		}, nil
 	}
 	if len(manifest.TLSHosts) > 0 {
 		if err := coreIngress.NewTLSManager().EnsureHosts(manifest.TLSHosts); err != nil {
@@ -338,6 +439,7 @@ func (s *ResourceService) applyIngress(rawBytes []byte) (ApplyIngressResult, fun
 			Name:      manifest.Name,
 			Namespace: manifest.Namespace,
 			TLSHosts:  manifest.TLSHosts,
+			Action:    applyActionCreated,
 		}, func() {
 			_ = s.ismHandler.RemoveIngress(ingressId)
 		}, nil
@@ -514,6 +616,11 @@ func (s *ResourceService) applyDeploymentManifest(m pod.PodManifest, result *App
 	if err := s.resolveManifestNetworks(&m); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
 	}
+	if existing, ok, err := s.findDeployment(m.Name, m.Namespace); err != nil {
+		return statusError(http.StatusInternalServerError, "deployment lookup failed: %v", err)
+	} else if ok {
+		return s.rolloutDeploymentManifest(existing, m, result, rollback)
+	}
 	if err := s.ensureResourceNameAvailable(m.Name, m.Namespace); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
 	}
@@ -542,6 +649,7 @@ func (s *ResourceService) applyDeploymentManifest(m pod.PodManifest, result *App
 		Namespace:    m.Namespace,
 		Name:         m.Name,
 		Replicas:     m.Replicas,
+		Action:       applyActionCreated,
 	})
 	return nil
 }
@@ -549,6 +657,11 @@ func (s *ResourceService) applyDeploymentManifest(m pod.PodManifest, result *App
 func (s *ResourceService) applyReplicaSetManifest(m pod.PodManifest, result *ApplyResult, rollback *[]func()) error {
 	if err := s.resolveManifestNetworks(&m); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
+	}
+	if existing, ok, err := s.findReplicaSet(m.Name, m.Namespace); err != nil {
+		return statusError(http.StatusInternalServerError, "replicaset lookup failed: %v", err)
+	} else if ok {
+		return s.rolloutReplicaSetManifest(existing, m, result, rollback)
 	}
 	if err := s.ensureResourceNameAvailable(m.Name, m.Namespace); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
@@ -577,6 +690,7 @@ func (s *ResourceService) applyReplicaSetManifest(m pod.PodManifest, result *App
 		ReplicaSetId: replicaSetId,
 		Namespace:    m.Namespace,
 		Name:         m.Name,
+		Action:       applyActionCreated,
 	})
 	return nil
 }
@@ -584,6 +698,11 @@ func (s *ResourceService) applyReplicaSetManifest(m pod.PodManifest, result *App
 func (s *ResourceService) applyPodManifest(m pod.PodManifest, result *ApplyResult, rollback *[]func()) error {
 	if err := s.resolveManifestNetworks(&m); err != nil {
 		return statusMessage(http.StatusBadRequest, err.Error())
+	}
+	if existing, ok, err := s.findPod(m.Name, m.Namespace); err != nil {
+		return statusError(http.StatusInternalServerError, "pod lookup failed: %v", err)
+	} else if ok {
+		return s.rolloutPodManifest(existing, m, result, rollback)
 	}
 	podId, err := s.podHandler.Create(pod.ServiceCreateModel{
 		Name:        m.Name,
@@ -623,20 +742,14 @@ func (s *ResourceService) applyPodManifest(m pod.PodManifest, result *ApplyResul
 		Namespace:    m.Namespace,
 		Name:         m.Name,
 		ContainerIds: containerIds,
+		Action:       applyActionCreated,
 	})
 	return nil
 }
 
 func (s *ResourceService) storeTemplate(m pod.PodManifest) (string, error) {
 	templateId := utils.NewUlid()
-	if err := s.psmHandler.StorePodTemplate(templateId, psm.PodTemplateSpec{
-		Name:        m.Name,
-		Namespace:   m.Namespace,
-		Labels:      m.Labels,
-		Annotations: m.Annotations,
-		Rootless:    m.Rootless,
-		Containers:  m.Containers,
-	}); err != nil {
+	if err := s.psmHandler.StorePodTemplate(templateId, templateSpecFromManifest(m)); err != nil {
 		return "", statusError(http.StatusInternalServerError, "template store failed: %v", err)
 	}
 	return templateId, nil

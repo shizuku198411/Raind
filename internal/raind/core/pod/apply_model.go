@@ -24,12 +24,14 @@ type PodInfo struct {
 	Name         string   `json:"name"`
 	Namespace    string   `json:"namespace"`
 	ContainerIds []string `json:"containerIds"`
+	Action       string   `json:"action,omitempty"`
 }
 
 type ReplicaSetInfo struct {
 	ReplicaSetId string `json:"replicaSetId"`
 	Name         string `json:"name"`
 	Namespace    string `json:"namespace"`
+	Action       string `json:"action,omitempty"`
 }
 
 type DeploymentInfo struct {
@@ -37,12 +39,14 @@ type DeploymentInfo struct {
 	Name         string `json:"name"`
 	Namespace    string `json:"namespace"`
 	Replicas     int    `json:"replicas"`
+	Action       string `json:"action,omitempty"`
 }
 
 type ServiceInfo struct {
 	ServiceId string `json:"serviceId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Action    string `json:"action,omitempty"`
 }
 
 type IngressInfo struct {
@@ -50,23 +54,27 @@ type IngressInfo struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
 	TLSHosts  []string `json:"tlsHosts,omitempty"`
+	Action    string   `json:"action,omitempty"`
 }
 
 type NamespaceInfo struct {
 	Name    string `json:"name"`
 	Network string `json:"network"`
+	Action  string `json:"action,omitempty"`
 }
 
 type ConfigMapInfo struct {
 	ConfigMapId string `json:"configMapId"`
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
+	Action      string `json:"action,omitempty"`
 }
 
 type SecretInfo struct {
 	SecretId  string `json:"secretId"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	Action    string `json:"action,omitempty"`
 }
 
 type NetworkPolicyInfo struct {
@@ -74,6 +82,7 @@ type NetworkPolicyInfo struct {
 	Name            string `json:"name"`
 	Namespace       string `json:"namespace"`
 	GeneratedRules  int    `json:"generatedRules"`
+	Action          string `json:"action,omitempty"`
 }
 
 type PVCInfo struct {
@@ -83,6 +92,7 @@ type PVCInfo struct {
 	RequestedStorage string `json:"requestedStorage"`
 	RequestedBytes   uint64 `json:"requestedBytes"`
 	ReclaimPolicy    string `json:"reclaimPolicy"`
+	Action           string `json:"action,omitempty"`
 }
 
 type WarningInfo struct {

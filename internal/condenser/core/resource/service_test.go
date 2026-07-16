@@ -55,6 +55,54 @@ spec:
 	assert.Empty(t, result.Warnings)
 }
 
+func TestPodTemplateSpecEqualTreatsRuntimeDefaultSecurityProfileAsEmpty(t *testing.T) {
+	stored := psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:            "nginx",
+			Image:           "nginx:alpine",
+			Network:         "rns123",
+			SecurityProfile: "default",
+		}},
+	}
+	desired := psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:    "nginx",
+			Image:   "nginx:alpine",
+			Network: "rns123",
+		}},
+	}
+
+	assert.True(t, podTemplateSpecEqual(stored, desired))
+}
+
+func TestPodTemplateSpecEqualDetectsExplicitSecurityProfileChange(t *testing.T) {
+	stored := psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:            "nginx",
+			Image:           "nginx:alpine",
+			Network:         "rns123",
+			SecurityProfile: "restricted",
+		}},
+	}
+	desired := psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:    "nginx",
+			Image:   "nginx:alpine",
+			Network: "rns123",
+		}},
+	}
+
+	assert.False(t, podTemplateSpecEqual(stored, desired))
+}
+
 func TestApplyRollsBackAlreadyAppliedDocumentsOnFailure(t *testing.T) {
 	var events []string
 	namespaceHandler := &fakeNamespaceHandler{events: &events}
@@ -197,6 +245,155 @@ stringData:
 	assert.Equal(t, "super-secret", stored.Data["DB_PASSWORD"])
 }
 
+func TestApplyRollsOutExistingDeploymentWhenTemplateChanges(t *testing.T) {
+	manager := psm.NewPsmManager(psm.NewPsmStore(filepath.Join(t.TempDir(), "psm.json")))
+	require.NoError(t, manager.StorePodTemplate("tpl-old", psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:    "app",
+			Image:   "nginx:1.25",
+			Network: "rns-demo",
+		}},
+	}))
+	require.NoError(t, manager.StoreDeployment("deploy-1", psm.DeploymentSpec{
+		Name:         "web",
+		Namespace:    "demo",
+		Replicas:     2,
+		TemplateId:   "tpl-old",
+		ReplicaSetId: "rs-1",
+		Selector:     map[string]string{"app": "web"},
+	}))
+	require.NoError(t, manager.StoreReplicaSet("rs-1", psm.ReplicaSetSpec{
+		Name:       "web",
+		Namespace:  "demo",
+		Replicas:   2,
+		TemplateId: "tpl-old",
+		Selector:   map[string]string{"app": "web"},
+	}))
+	require.NoError(t, manager.StorePod(psm.StorePodRequest{
+		PodId:      "pod-old",
+		TemplateId: "tpl-old",
+		OwnerKind:  psm.OwnerKindReplicaSet,
+		OwnerId:    "rs-1",
+		Name:       "web-old",
+		Namespace:  "demo",
+		State:      psm.PodStateRunning,
+	}))
+	podHandler := &fakeRolloutPodHandler{}
+	service := &ResourceService{
+		namespaceHandler: &fakeNamespaceHandler{},
+		psmHandler:       manager,
+		podHandler:       podHandler,
+	}
+
+	result, err := service.Apply([]byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.26
+`))
+
+	require.NoError(t, err)
+	require.Len(t, result.Deployments, 1)
+	assert.Equal(t, "deploy-1", result.Deployments[0].DeploymentId)
+	assert.Equal(t, 3, result.Deployments[0].Replicas)
+	assert.Equal(t, []string{"pod-old"}, podHandler.removed)
+
+	deploy, err := manager.GetDeployment("deploy-1")
+	require.NoError(t, err)
+	assert.NotEqual(t, "tpl-old", deploy.Spec.TemplateId)
+	assert.Equal(t, 3, deploy.Spec.Replicas)
+	rs, err := manager.GetReplicaSet("rs-1")
+	require.NoError(t, err)
+	assert.Equal(t, deploy.Spec.TemplateId, rs.Spec.TemplateId)
+	assert.Equal(t, 3, rs.Spec.Replicas)
+	tpl, err := manager.GetPodTemplate(deploy.Spec.TemplateId)
+	require.NoError(t, err)
+	require.Len(t, tpl.Spec.Containers, 1)
+	assert.Equal(t, "nginx:1.26", tpl.Spec.Containers[0].Image)
+	_, err = manager.GetPodTemplate("tpl-old")
+	assert.Error(t, err)
+}
+
+func TestApplyExistingDeploymentNoopsWhenManifestUnchanged(t *testing.T) {
+	manager := psm.NewPsmManager(psm.NewPsmStore(filepath.Join(t.TempDir(), "psm.json")))
+	require.NoError(t, manager.StorePodTemplate("tpl-existing", psm.PodTemplateSpec{
+		Name:      "web",
+		Namespace: "demo",
+		Labels:    map[string]string{"app": "web"},
+		Containers: []psm.ContainerTemplateSpec{{
+			Name:    "app",
+			Image:   "nginx:1.25",
+			Network: "rns-demo",
+		}},
+	}))
+	require.NoError(t, manager.StoreDeployment("deploy-1", psm.DeploymentSpec{
+		Name:         "web",
+		Namespace:    "demo",
+		Replicas:     2,
+		TemplateId:   "tpl-existing",
+		ReplicaSetId: "rs-1",
+		Selector:     map[string]string{"app": "web"},
+	}))
+	require.NoError(t, manager.StoreReplicaSet("rs-1", psm.ReplicaSetSpec{
+		Name:       "web",
+		Namespace:  "demo",
+		Replicas:   2,
+		TemplateId: "tpl-existing",
+		Selector:   map[string]string{"app": "web"},
+	}))
+	podHandler := &fakeRolloutPodHandler{}
+	service := &ResourceService{
+		namespaceHandler: &fakeNamespaceHandler{},
+		psmHandler:       manager,
+		podHandler:       podHandler,
+	}
+
+	result, err := service.Apply([]byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.25
+`))
+
+	require.NoError(t, err)
+	require.Len(t, result.Deployments, 1)
+	assert.Equal(t, "deploy-1", result.Deployments[0].DeploymentId)
+	assert.Empty(t, podHandler.removed)
+	deploy, err := manager.GetDeployment("deploy-1")
+	require.NoError(t, err)
+	assert.Equal(t, "tpl-existing", deploy.Spec.TemplateId)
+}
+
 func TestResolveSecretEnv(t *testing.T) {
 	secHandler := newFakeSecHandler()
 	require.NoError(t, secHandler.StoreSecret("secret-1", sec.SecretInfo{
@@ -272,7 +469,8 @@ metadata:
 }
 
 type fakeNamespaceHandler struct {
-	events *[]string
+	events     *[]string
+	namespaces map[string]corenamespace.NamespaceInfo
 }
 
 func (h *fakeNamespaceHandler) Create(model corenamespace.ServiceCreateModel) (corenamespace.NamespaceInfo, error) {
@@ -289,7 +487,12 @@ func (h *fakeNamespaceHandler) Remove(model corenamespace.ServiceRemoveModel) (s
 }
 
 func (h *fakeNamespaceHandler) Get(name string) (corenamespace.NamespaceInfo, error) {
-	return corenamespace.NamespaceInfo{Name: name, Network: "rns-" + name}, nil
+	if h.namespaces != nil {
+		if ns, ok := h.namespaces[name]; ok {
+			return ns, nil
+		}
+	}
+	return corenamespace.NamespaceInfo{}, errors.New("namespace not found")
 }
 
 func (h *fakeNamespaceHandler) List() ([]corenamespace.NamespaceInfo, error) {
@@ -318,6 +521,43 @@ type fakeCfmHandler struct {
 
 type fakeSecHandler struct {
 	items map[string]sec.SecretInfo
+}
+
+type fakeRolloutPodHandler struct {
+	removed []string
+}
+
+func (h *fakeRolloutPodHandler) Create(pod.ServiceCreateModel) (string, error) {
+	return "pod-new", nil
+}
+
+func (h *fakeRolloutPodHandler) RecreateFromTemplate(string) (string, error) {
+	return "pod-recreated", nil
+}
+
+func (h *fakeRolloutPodHandler) CreateFromTemplate(string, string) (string, error) {
+	return "pod-recreated", nil
+}
+
+func (h *fakeRolloutPodHandler) Start(podId string) (string, error) {
+	return podId, nil
+}
+
+func (h *fakeRolloutPodHandler) Stop(podId string) (string, error) {
+	return podId, nil
+}
+
+func (h *fakeRolloutPodHandler) Remove(podId string) (string, error) {
+	h.removed = append(h.removed, podId)
+	return podId, nil
+}
+
+func (h *fakeRolloutPodHandler) GetPodList() ([]pod.PodState, error) {
+	return nil, nil
+}
+
+func (h *fakeRolloutPodHandler) GetPodById(string) (pod.PodState, error) {
+	return pod.PodState{}, nil
 }
 
 func newFakeSecHandler() *fakeSecHandler {

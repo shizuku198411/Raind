@@ -463,6 +463,18 @@ assert_output_contains() {
   fi
 }
 
+assert_output_matches() {
+  local name="$1"
+  local pattern="$2"
+  local out="${E2E_WORK_DIR}/${name}.out"
+
+  if ! grep -Eq -- "${pattern}" "${out}"; then
+    printf '%s\n' "--- ${out} ---" >&2
+    cat "${out}" >&2
+    fail "expected output to match: ${pattern}"
+  fi
+}
+
 assert_output_not_contains() {
   local name="$1"
   local pattern="$2"
@@ -2016,6 +2028,358 @@ YAML
   wait_resource_namespace_absent svc-namespace-removed "${ns}"
 }
 
+test_resource_rollout_apply() {
+  local yaml="${E2E_WORK_DIR}/rollout.yaml"
+  local ns="e2e-rollout-ns-${SUFFIX}"
+  local host_a="e2e-rollout-a-${SUFFIX}.local"
+  local host_b="e2e-rollout-b-${SUFFIX}.local"
+  local nodeport_a=$((22100 + SUFFIX % 1000))
+  local nodeport_b=$((23100 + SUFFIX % 1000))
+  local secret_a secret_b
+  secret_a="$(printf 'rollout-a-%s' "${SUFFIX}" | base64 | tr -d '\n')"
+  secret_b="$(printf 'rollout-b-%s' "${SUFFIX}" | base64 | tr -d '\n')"
+
+  log "resource rollout apply test"
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollout-config
+  namespace: ${ns}
+data:
+  VERSION: v1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rollout-secret
+  namespace: ${ns}
+type: Opaque
+data:
+  TOKEN: ${secret_a}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rollout-data
+  namespace: ${ns}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rollout-pod
+  namespace: ${ns}
+  labels:
+    app: rollout-pod
+spec:
+  containers:
+  - name: web
+    image: nginx:latest
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: rollout-rs
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollout-rs
+  template:
+    metadata:
+      labels:
+        app: rollout-rs
+    spec:
+      containers:
+      - name: web
+        image: nginx:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout-deploy
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollout-deploy
+  template:
+    metadata:
+      labels:
+        app: rollout-deploy
+    spec:
+      containers:
+      - name: web
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-svc
+  namespace: ${ns}
+spec:
+  type: ClusterIP
+  selector:
+    app: rollout-deploy
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-nodeport
+  namespace: ${ns}
+spec:
+  type: NodePort
+  selector:
+    app: rollout-deploy
+  ports:
+  - port: ${nodeport_a}
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rollout-ingress
+  namespace: ${ns}
+spec:
+  rules:
+  - host: ${host_a}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rollout-svc
+            port:
+              number: 80
+YAML
+
+  run_resource_apply_with_retry rollout-create "${yaml}"
+  assert_output_matches rollout-create '^namespace: .* created'
+  assert_output_matches rollout-create '^configmap: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^secret: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^persistentvolumeclaim: [[:alnum:]]+ created '
+  assert_output_matches rollout-create '^pod: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^replicaset: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^deployment: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^service: [[:alnum:]]+ created$'
+  assert_output_matches rollout-create '^ingress: [[:alnum:]]+ created$'
+  wait_pod_row_ready rollout-pod-ready rollout-pod resource pod ls --namespace "${ns}"
+  wait_resource_row_ready rollout-rs-ready rollout-rs 1 resource replicaset ls --namespace "${ns}"
+  wait_resource_row_ready rollout-deploy-ready rollout-deploy 1 resource deployment ls --namespace "${ns}"
+  wait_http_ok "http://${HOST_ADDR}:${nodeport_a}/"
+  wait_http_ok_host "http://${HOST_ADDR}:7780/" "${host_a}"
+
+  run_resource_apply_with_retry rollout-unchanged "${yaml}"
+  assert_output_matches rollout-unchanged '^namespace: .* unchanged'
+  assert_output_matches rollout-unchanged '^configmap: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^secret: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^persistentvolumeclaim: [[:alnum:]]+ unchanged '
+  assert_output_matches rollout-unchanged '^pod: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^replicaset: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^deployment: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^service: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-unchanged '^ingress: [[:alnum:]]+ unchanged$'
+
+  cat >"${yaml}" <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollout-config
+  namespace: ${ns}
+data:
+  VERSION: v2
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rollout-secret
+  namespace: ${ns}
+type: Opaque
+data:
+  TOKEN: ${secret_b}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rollout-data
+  namespace: ${ns}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rollout-pod
+  namespace: ${ns}
+  labels:
+    app: rollout-pod
+spec:
+  containers:
+  - name: web
+    image: nginx:alpine
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: rollout-rs
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollout-rs
+  template:
+    metadata:
+      labels:
+        app: rollout-rs
+    spec:
+      containers:
+      - name: web
+        image: nginx:alpine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout-deploy
+  namespace: ${ns}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollout-deploy
+  template:
+    metadata:
+      labels:
+        app: rollout-deploy
+    spec:
+      containers:
+      - name: web
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-svc
+  namespace: ${ns}
+spec:
+  type: ClusterIP
+  selector:
+    app: rollout-deploy
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollout-nodeport
+  namespace: ${ns}
+spec:
+  type: NodePort
+  selector:
+    app: rollout-deploy
+  ports:
+  - port: ${nodeport_b}
+    targetPort: 80
+    protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rollout-ingress
+  namespace: ${ns}
+spec:
+  rules:
+  - host: ${host_a}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: rollout-svc
+            port:
+              number: 80
+YAML
+
+  run_resource_apply_with_retry rollout-update "${yaml}"
+  assert_output_matches rollout-update '^namespace: .* unchanged'
+  assert_output_matches rollout-update '^configmap: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^secret: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^persistentvolumeclaim: [[:alnum:]]+ unchanged '
+  assert_output_matches rollout-update '^pod: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^replicaset: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^deployment: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^service: [[:alnum:]]+ updated$'
+  assert_output_matches rollout-update '^ingress: [[:alnum:]]+ unchanged$'
+  wait_pod_row_ready rollout-pod-updated rollout-pod resource pod ls --namespace "${ns}"
+  wait_resource_row_ready rollout-rs-updated rollout-rs 1 resource replicaset ls --namespace "${ns}"
+  wait_resource_row_ready rollout-deploy-updated rollout-deploy 1 resource deployment ls --namespace "${ns}"
+  wait_http_ok "http://${HOST_ADDR}:${nodeport_b}/"
+  wait_http_ok_host "http://${HOST_ADDR}:7780/" "${host_a}"
+  run_raind rollout-container-ls container ls -p
+  assert_output_contains rollout-container-ls "nginx:alpine"
+
+  sed -i "s/${host_a}/${host_b}/g" "${yaml}"
+  run_resource_apply_with_retry rollout-ingress-host-update "${yaml}"
+  assert_output_matches rollout-ingress-host-update '^namespace: .* unchanged'
+  assert_output_matches rollout-ingress-host-update '^configmap: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^secret: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^persistentvolumeclaim: [[:alnum:]]+ unchanged '
+  assert_output_matches rollout-ingress-host-update '^pod: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^replicaset: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^deployment: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^service: [[:alnum:]]+ unchanged$'
+  assert_output_matches rollout-ingress-host-update '^ingress: [[:alnum:]]+ updated$'
+  wait_http_ok "http://${HOST_ADDR}:${nodeport_b}/"
+  wait_http_ok_host "http://${HOST_ADDR}:7780/" "${host_b}"
+
+  run_raind rollout-rm resource rm -f "${yaml}"
+  assert_output_contains rollout-rm "ingress:"
+  assert_output_contains rollout-rm "service:"
+  assert_output_contains rollout-rm "deployment:"
+  assert_output_contains rollout-rm "replicaset:"
+  assert_output_contains rollout-rm "pod:"
+  assert_output_contains rollout-rm "persistentvolumeclaim:"
+  assert_output_contains rollout-rm "secret:"
+  assert_output_contains rollout-rm "configmap:"
+  assert_output_contains rollout-rm "namespace:"
+  wait_resource_namespace_absent rollout-namespace-removed "${ns}"
+}
+
 test_resource_yaml_all_kinds() {
   local port=$((21100 + SUFFIX % 1000))
   local yaml="${E2E_WORK_DIR}/all-kinds.yaml"
@@ -2174,6 +2538,7 @@ main() {
   test_resource_replicaset
   test_resource_deployment
   test_resource_service
+  test_resource_rollout_apply
   test_resource_yaml_all_kinds
 
   log "raind deploy e2e completed"

@@ -38,6 +38,12 @@ func TestPsmManagerStoresPodsAndReplicaSets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, rs.Spec.Replicas)
 
+	require.NoError(t, manager.UpdateReplicaSetSpec("rs-1", ReplicaSetSpec{Name: "web", Namespace: "default", Replicas: 4, TemplateId: "tpl-2", Selector: map[string]string{"app": "web"}}))
+	rs, err = manager.GetReplicaSet("rs-1")
+	require.NoError(t, err)
+	assert.Equal(t, "tpl-2", rs.Spec.TemplateId)
+	assert.Equal(t, 4, rs.Spec.Replicas)
+
 	next := time.Now().Add(time.Minute).Truncate(time.Second)
 	require.NoError(t, manager.UpdateReplicaSetReconcileStatus("rs-1", 2, "create failed", next))
 	rs, err = manager.GetReplicaSet("rs-1")
@@ -55,4 +61,18 @@ func TestPsmManagerStoresPodsAndReplicaSets(t *testing.T) {
 
 	require.NoError(t, manager.RemoveReplicaSet("rs-1"))
 	require.NoError(t, manager.RemovePod("pod-1"))
+}
+
+func TestPsmManagerUpdatesDeploymentSpec(t *testing.T) {
+	manager := NewPsmManager(NewPsmStore(filepath.Join(t.TempDir(), "psm.json")))
+	require.NoError(t, manager.StoreDeployment("deploy-1", DeploymentSpec{Name: "web", Namespace: "default", Replicas: 2, TemplateId: "tpl-1"}))
+
+	require.NoError(t, manager.UpdateDeploymentSpec("deploy-1", DeploymentSpec{Name: "web", Namespace: "default", Replicas: 3, TemplateId: "tpl-2", ReplicaSetId: "rs-2"}))
+
+	deploy, err := manager.GetDeployment("deploy-1")
+	require.NoError(t, err)
+	assert.Equal(t, 3, deploy.Spec.Replicas)
+	assert.Equal(t, "tpl-2", deploy.Spec.TemplateId)
+	assert.Equal(t, "rs-2", deploy.Spec.ReplicaSetId)
+	assert.False(t, deploy.UpdatedAt.IsZero())
 }
