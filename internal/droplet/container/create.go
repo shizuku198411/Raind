@@ -84,25 +84,32 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		LoadSpec:               c.specSecureLoad,
 		PrepareBundleConfig:    prepareBundleConfig,
 		BundlePathForContainer: bundlePathForContainer,
-		RootlessConfigFromSpec: rootlessConfigFromSpec,
-		PrepareRootlessShiftedImageLayers: func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error) {
-			return prepareRootlessShiftedImageLayers(containerId, containerSpec, rootlessConfig)
+		CreateFifo:             c.fifoCreator.createFifo,
+		RootlessPreparer: createop.RootlessPreparer{
+			ConfigFromSpec: rootlessConfigFromSpec,
+			PrepareShiftedImageLayers: func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error) {
+				return prepareRootlessShiftedImageLayers(containerId, containerSpec, rootlessConfig)
+			},
+			RewriteSpecAndHash:        rewriteContainerSpecAndHash,
+			PrepareFifo:               prepareRootlessFifo,
+			PrepareWritableFilesystem: prepareRootlessWritableFilesystem,
 		},
-		RewriteContainerSpecAndHash:       rewriteContainerSpecAndHash,
-		ShouldSkipHostSideSetup:           shouldSkipHostSideSetupForNestedRootless,
-		CreateFifo:                        c.fifoCreator.createFifo,
-		PrepareRootlessFifo:               prepareRootlessFifo,
-		PrepareRootlessWritableFilesystem: prepareRootlessWritableFilesystem,
-		CleanupShimFile:                   c.cleanupShimFile,
-		ExecuteShim:                       c.processExecutor.executeShim,
-		WaitInitPid:                       c.waitInitPid,
-		WrapInitPidWaitError:              c.wrapInitPidWaitError,
-		WriteContainerPidFile:             writeContainerPidFile,
-		WriteExternalPidFileMarker:        writeExternalPidFileMarker,
-		PrepareCgroup:                     c.containerCgroupPreparer.prepare,
-		PrepareNetwork:                    c.containerNetworkPreparer.prepare,
-		ContainerStatusManager:            c.containerStatusManager,
-		ContainerHookController:           c.containerHookController,
+		InitSupervisor: createop.InitSupervisor{
+			CleanupShimFile:            c.cleanupShimFile,
+			ExecuteShim:                c.processExecutor.executeShim,
+			WaitInitPid:                c.waitInitPid,
+			WrapInitPidWaitError:       c.wrapInitPidWaitError,
+			WriteContainerPidFile:      writeContainerPidFile,
+			WriteExternalPidFileMarker: writeExternalPidFileMarker,
+		},
+		HostResourcePreparer: createop.HostResourcePreparer{
+			ShouldSkipHostSideSetup: shouldSkipHostSideSetupForNestedRootless,
+			PrepareCgroup:           c.containerCgroupPreparer.prepare,
+			PrepareNetwork:          c.containerNetworkPreparer.prepare,
+			WrapInitPidWaitError:    c.wrapInitPidWaitError,
+		},
+		ContainerStatusManager:  c.containerStatusManager,
+		ContainerHookController: c.containerHookController,
 	}
 	return controller.Create(createop.Option{
 		ContainerId:   opt.ContainerId,

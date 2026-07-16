@@ -21,26 +21,49 @@ type Option struct {
 }
 
 type Controller struct {
-	LoadSpec                          func(containerId string) (spec.Spec, error)
-	PrepareBundleConfig               func(containerId string, bundle string) error
-	BundlePathForContainer            func(containerId string, bundle string) (string, error)
-	RootlessConfigFromSpec            func(containerSpec spec.Spec) (spec.RootlessConfigObject, bool)
-	PrepareRootlessShiftedImageLayers func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error)
-	RewriteContainerSpecAndHash       func(containerId string, containerSpec spec.Spec) error
-	ShouldSkipHostSideSetup           func(containerSpec spec.Spec) bool
-	CreateFifo                        func(path string) error
-	PrepareRootlessFifo               func(path string, rootlessConfig spec.RootlessConfigObject) error
-	PrepareRootlessWritableFilesystem func(containerSpec spec.Spec) error
-	CleanupShimFile                   func(containerId string) error
-	ExecuteShim                       func(containerId string, containerSpec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error)
-	WaitInitPid                       func(containerId string, timeout time.Duration, pollInterval time.Duration) (int, error)
-	WrapInitPidWaitError              func(containerId string, err error) error
-	WriteContainerPidFile             func(pidFile string, pid int) error
-	WriteExternalPidFileMarker        func(containerId string, pidFile string) error
-	PrepareCgroup                     func(containerId string, containerSpec spec.Spec, pid int) error
-	PrepareNetwork                    func(containerId string, pid int, annotation spec.AnnotationObject) error
-	ContainerStatusManager            status.ContainerStatusManager
-	ContainerHookController           hook.ContainerHookController
+	LoadSpec                func(containerId string) (spec.Spec, error)
+	PrepareBundleConfig     func(containerId string, bundle string) error
+	BundlePathForContainer  func(containerId string, bundle string) (string, error)
+	CreateFifo              func(path string) error
+	RootlessPreparer        RootlessPreparer
+	InitSupervisor          InitSupervisor
+	HostResourcePreparer    HostResourcePreparer
+	ContainerStatusManager  status.ContainerStatusManager
+	ContainerHookController hook.ContainerHookController
+}
+
+type RootlessPreparer struct {
+	ConfigFromSpec            func(containerSpec spec.Spec) (spec.RootlessConfigObject, bool)
+	PrepareShiftedImageLayers func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error)
+	RewriteSpecAndHash        func(containerId string, containerSpec spec.Spec) error
+	PrepareFifo               func(path string, rootlessConfig spec.RootlessConfigObject) error
+	PrepareWritableFilesystem func(containerSpec spec.Spec) error
+}
+
+type RootlessPlan struct {
+	Config  spec.RootlessConfigObject
+	Enabled bool
+}
+
+type InitSupervisor struct {
+	CleanupShimFile            func(containerId string) error
+	ExecuteShim                func(containerId string, containerSpec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error)
+	WaitInitPid                func(containerId string, timeout time.Duration, pollInterval time.Duration) (int, error)
+	WrapInitPidWaitError       func(containerId string, err error) error
+	WriteContainerPidFile      func(pidFile string, pid int) error
+	WriteExternalPidFileMarker func(containerId string, pidFile string) error
+}
+
+type InitProcess struct {
+	InitPid int
+	ShimPid int
+}
+
+type HostResourcePreparer struct {
+	ShouldSkipHostSideSetup func(containerSpec spec.Spec) bool
+	PrepareCgroup           func(containerId string, containerSpec spec.Spec, pid int) error
+	PrepareNetwork          func(containerId string, pid int, annotation spec.AnnotationObject) error
+	WrapInitPidWaitError    func(containerId string, err error) error
 }
 
 func (c *Controller) Create(opt Option) (err error) {
@@ -87,20 +110,13 @@ func (c *Controller) Create(opt Option) (err error) {
 		return fmt.Errorf("--console-socket requires --tty or process.terminal=true")
 	}
 
-	if rootlessConfig, ok := c.RootlessConfigFromSpec(containerSpec); ok {
-		stage = "prepare_rootless_shifted_image_layers"
-		containerSpec, err = c.PrepareRootlessShiftedImageLayers(opt.ContainerId, containerSpec, rootlessConfig)
-		if err != nil {
-			return err
-		}
-
-		stage = "rewrite_rootless_spec"
-		err = c.RewriteContainerSpecAndHash(opt.ContainerId, containerSpec)
-		if err != nil {
-			return err
-		}
+	var rootlessPlan RootlessPlan
+	containerSpec, rootlessPlan, err = c.RootlessPreparer.PrepareSpec(opt.ContainerId, containerSpec, func(next string) {
+		stage = next
+	})
+	if err != nil {
+		return err
 	}
-	nestedRootless := c.ShouldSkipHostSideSetup(containerSpec)
 
 	stage = "create_state"
 	err = c.ContainerStatusManager.CreateStatusFile(
@@ -130,76 +146,34 @@ func (c *Controller) Create(opt Option) (err error) {
 	if err != nil {
 		return err
 	}
-	if rootlessConfig, ok := c.RootlessConfigFromSpec(containerSpec); ok {
-		stage = "prepare_rootless_fifo"
-		err = c.PrepareRootlessFifo(fifo, rootlessConfig)
-		if err != nil {
-			return err
-		}
-
-		stage = "prepare_rootless_writable_filesystem"
-		err = c.PrepareRootlessWritableFilesystem(containerSpec)
-		if err != nil {
-			return err
-		}
-	}
-
-	var (
-		initPid int
-		shimPid int
-	)
-	stage = "cleanup_shim_file"
-	err = c.CleanupShimFile(opt.ContainerId)
+	err = c.RootlessPreparer.PrepareRuntime(fifo, containerSpec, rootlessPlan, func(next string) {
+		stage = next
+	})
 	if err != nil {
 		return err
 	}
 
-	stage = "execute_shim"
-	pid, err = c.ExecuteShim(opt.ContainerId, containerSpec, fifo, tty, opt.ConsoleSocket)
+	initProcess, err := c.InitSupervisor.StartAndWait(opt.ContainerId, containerSpec, fifo, tty, opt.ConsoleSocket, opt.PidFile, func(next string) {
+		stage = next
+	})
 	if err != nil {
 		return err
 	}
-	shimPid = pid
+	pid = initProcess.InitPid
 
-	stage = "wait_init_pid"
-	initPid, err = c.WaitInitPid(opt.ContainerId, 10*time.Second, 20*time.Millisecond)
-	if err != nil {
-		return c.WrapInitPidWaitError(opt.ContainerId, err)
-	}
-	pid = initPid
-	stage = "write_pid_file"
-	err = c.WriteContainerPidFile(opt.PidFile, initPid)
+	err = c.HostResourcePreparer.Prepare(opt.ContainerId, containerSpec, initProcess.InitPid, func(next string) {
+		stage = next
+	})
 	if err != nil {
 		return err
-	}
-	stage = "write_pid_file_marker"
-	err = c.WriteExternalPidFileMarker(opt.ContainerId, opt.PidFile)
-	if err != nil {
-		return err
-	}
-
-	if !nestedRootless {
-		stage = "setup_cgroup"
-		err = c.PrepareCgroup(opt.ContainerId, containerSpec, initPid)
-		if err != nil {
-			return c.WrapInitPidWaitError(opt.ContainerId, err)
-		}
-	}
-
-	if !nestedRootless {
-		stage = "setup_network"
-		err = c.PrepareNetwork(opt.ContainerId, initPid, containerSpec.Annotations)
-		if err != nil {
-			return err
-		}
 	}
 
 	stage = "update_state"
 	err = c.ContainerStatusManager.UpdateStatus(
 		opt.ContainerId,
 		status.CREATED,
-		initPid,
-		shimPid,
+		initProcess.InitPid,
+		initProcess.ShimPid,
 	)
 	if err != nil {
 		return err
@@ -224,4 +198,83 @@ func (c *Controller) Create(opt Option) (err error) {
 		return err
 	}
 	return nil
+}
+
+func (p RootlessPreparer) PrepareSpec(containerId string, containerSpec spec.Spec, setStage func(string)) (spec.Spec, RootlessPlan, error) {
+	rootlessConfig, ok := p.ConfigFromSpec(containerSpec)
+	if !ok {
+		return containerSpec, RootlessPlan{}, nil
+	}
+
+	setStage("prepare_rootless_shifted_image_layers")
+	updatedSpec, err := p.PrepareShiftedImageLayers(containerId, containerSpec, rootlessConfig)
+	if err != nil {
+		return spec.Spec{}, RootlessPlan{}, err
+	}
+
+	setStage("rewrite_rootless_spec")
+	if err := p.RewriteSpecAndHash(containerId, updatedSpec); err != nil {
+		return spec.Spec{}, RootlessPlan{}, err
+	}
+
+	return updatedSpec, RootlessPlan{Config: rootlessConfig, Enabled: true}, nil
+}
+
+func (p RootlessPreparer) PrepareRuntime(fifo string, containerSpec spec.Spec, plan RootlessPlan, setStage func(string)) error {
+	if !plan.Enabled {
+		return nil
+	}
+
+	setStage("prepare_rootless_fifo")
+	if err := p.PrepareFifo(fifo, plan.Config); err != nil {
+		return err
+	}
+
+	setStage("prepare_rootless_writable_filesystem")
+	return p.PrepareWritableFilesystem(containerSpec)
+}
+
+func (s InitSupervisor) StartAndWait(containerId string, containerSpec spec.Spec, fifo string, tty bool, consoleSocket string, pidFile string, setStage func(string)) (InitProcess, error) {
+	setStage("cleanup_shim_file")
+	if err := s.CleanupShimFile(containerId); err != nil {
+		return InitProcess{}, err
+	}
+
+	setStage("execute_shim")
+	shimPid, err := s.ExecuteShim(containerId, containerSpec, fifo, tty, consoleSocket)
+	if err != nil {
+		return InitProcess{}, err
+	}
+
+	setStage("wait_init_pid")
+	initPid, err := s.WaitInitPid(containerId, 10*time.Second, 20*time.Millisecond)
+	if err != nil {
+		return InitProcess{}, s.WrapInitPidWaitError(containerId, err)
+	}
+
+	setStage("write_pid_file")
+	if err := s.WriteContainerPidFile(pidFile, initPid); err != nil {
+		return InitProcess{}, err
+	}
+
+	setStage("write_pid_file_marker")
+	if err := s.WriteExternalPidFileMarker(containerId, pidFile); err != nil {
+		return InitProcess{}, err
+	}
+
+	return InitProcess{InitPid: initPid, ShimPid: shimPid}, nil
+}
+
+func (p HostResourcePreparer) Prepare(containerId string, containerSpec spec.Spec, initPid int, setStage func(string)) error {
+	if p.ShouldSkipHostSideSetup(containerSpec) {
+		return nil
+	}
+
+	setStage("setup_cgroup")
+	if err := p.PrepareCgroup(containerId, containerSpec, initPid); err != nil {
+		return p.WrapInitPidWaitError(containerId, err)
+	}
+
+	setStage("setup_network")
+	return p.PrepareNetwork(containerId, initPid, containerSpec.Annotations)
 }
