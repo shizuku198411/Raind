@@ -10,6 +10,7 @@ import (
 
 	"raind/internal/condenser/registry"
 	"raind/internal/condenser/store/ilm"
+	"raind/internal/condenser/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,20 +35,23 @@ func TestImageServicePullStoresImageAfterRegistryPull(t *testing.T) {
 }
 
 func TestImageServiceRemoveDeletesBundleAndStoreEntry(t *testing.T) {
-	ilmHandler := &fakeImageIlmHandler{bundlePath: "/bundle", rootfsPath: "/bundle/rootfs"}
+	bundlePath := filepath.Join(utils.LayerRootDir, "library", "alpine", "latest")
+	ilmHandler := &fakeImageIlmHandler{bundlePath: bundlePath, rootfsPath: filepath.Join(bundlePath, "rootfs")}
 	fsHandler := &fakeImageFilesystemHandler{}
 	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
 
 	err := service.Remove(ServiceRemoveModel{Image: "alpine:latest"})
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/bundle/rootless-shifted", "/bundle"}, fsHandler.removedAll)
+	assert.Equal(t, []string{filepath.Join(bundlePath, "rootless-shifted"), bundlePath}, fsHandler.removedAll)
 	assert.Equal(t, "library/alpine", ilmHandler.removedRepo)
 	assert.Equal(t, "latest", ilmHandler.removedRef)
 }
 
 func TestImageServiceRemoveDeletesRootlessCacheBesideRootfs(t *testing.T) {
-	ilmHandler := &fakeImageIlmHandler{bundlePath: "/image/bundle", rootfsPath: "/image/layers/local/app/latest/rootfs"}
+	bundlePath := filepath.Join(utils.ImageRootDir, "bundles", "local", "app", "latest")
+	rootfsPath := filepath.Join(utils.LayerRootDir, "local", "app", "latest", "rootfs")
+	ilmHandler := &fakeImageIlmHandler{bundlePath: bundlePath, rootfsPath: rootfsPath}
 	fsHandler := &fakeImageFilesystemHandler{}
 	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
 
@@ -55,15 +59,16 @@ func TestImageServiceRemoveDeletesRootlessCacheBesideRootfs(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{
-		"/image/bundle/rootless-shifted",
-		"/image/layers/local/app/latest/rootless-shifted",
-		"/image/bundle",
+		filepath.Join(bundlePath, "rootless-shifted"),
+		filepath.Join(filepath.Dir(rootfsPath), "rootless-shifted"),
+		bundlePath,
 	}, fsHandler.removedAll)
 }
 
 func TestImageServiceStatusRemovesStaleEntryWhenManifestMissing(t *testing.T) {
+	bundlePath := filepath.Join(utils.LayerRootDir, "library", "alpine", "latest")
 	ilmHandler := &fakeImageIlmHandler{
-		bundlePath: "/bundle",
+		bundlePath: bundlePath,
 		configPath: "/config.json",
 		info:       ilm.ImageInfo{Repository: "library/alpine", Reference: "latest", CreatedAt: time.Now()},
 	}
@@ -75,7 +80,20 @@ func TestImageServiceStatusRemovesStaleEntryWhenManifestMissing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "library/alpine:latest not found")
 	assert.Equal(t, "library/alpine", ilmHandler.removedRepo)
-	assert.Equal(t, []string{"/bundle"}, fsHandler.removedAll)
+	assert.Equal(t, []string{bundlePath}, fsHandler.removedAll)
+}
+
+func TestImageServiceRemoveRejectsBundleOutsideImageRoot(t *testing.T) {
+	ilmHandler := &fakeImageIlmHandler{bundlePath: "/tmp/bundle", rootfsPath: "/tmp/bundle/rootfs"}
+	fsHandler := &fakeImageFilesystemHandler{}
+	service := &ImageService{filesystemHandler: fsHandler, ilmHandler: ilmHandler}
+
+	err := service.Remove(ServiceRemoveModel{Image: "alpine:latest"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path escapes root")
+	assert.Empty(t, fsHandler.removedAll)
+	assert.Empty(t, ilmHandler.removedRepo)
 }
 
 func TestSafeJoinRejectsTarTraversal(t *testing.T) {

@@ -2,7 +2,6 @@ package container
 
 import (
 	"fmt"
-	"path/filepath"
 	"raind/internal/condenser/core/network"
 	"raind/internal/condenser/runtime"
 	"raind/internal/condenser/utils"
@@ -142,15 +141,21 @@ func (s *ContainerService) releaseAddress(containerId string) error {
 }
 
 func (s *ContainerService) deleteContainerDirectory(containerId string) error {
-	containerDir := filepath.Join(utils.ContainerRootDir, containerId)
-	if err := s.filesystemHandler.RemoveAll(containerDir); err != nil {
+	containerDir, err := utils.SafeJoin(utils.ContainerRootDir, containerId)
+	if err != nil {
+		return err
+	}
+	if err := utils.RemoveAllUnderRoot(s.filesystemHandler, utils.ContainerRootDir, containerDir); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (s *ContainerService) deleteCgroupSubtree(containerId string) error {
-	cgroupPath := filepath.Join(utils.CgroupRuntimeDir, containerId)
+	cgroupPath, err := utils.SafeJoin(utils.CgroupRuntimeDir, containerId)
+	if err != nil {
+		return err
+	}
 	if err := s.filesystemHandler.Remove(cgroupPath); err != nil {
 		return err
 	}
