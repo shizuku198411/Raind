@@ -9,6 +9,7 @@ import (
 	"time"
 
 	createop "raind/internal/droplet/container/create"
+	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/hook"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
@@ -86,7 +87,7 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		BundlePathForContainer: bundlePathForContainer,
 		CreateFifo:             c.fifoCreator.createFifo,
 		RootlessPreparer: createop.RootlessPreparer{
-			ConfigFromSpec: rootlessConfigFromSpec,
+			BuildPlan: rootlessPlanFromSpec,
 			PrepareShiftedImageLayers: func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error) {
 				return prepareRootlessShiftedImageLayers(containerId, containerSpec, rootlessConfig)
 			},
@@ -103,10 +104,9 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 			WriteExternalPidFileMarker: writeExternalPidFileMarker,
 		},
 		HostResourcePreparer: createop.HostResourcePreparer{
-			ShouldSkipHostSideSetup: shouldSkipHostSideSetupForNestedRootless,
-			PrepareCgroup:           c.containerCgroupPreparer.prepare,
-			PrepareNetwork:          c.containerNetworkPreparer.prepare,
-			WrapInitPidWaitError:    c.wrapInitPidWaitError,
+			PrepareCgroup:        c.containerCgroupPreparer.prepare,
+			PrepareNetwork:       c.containerNetworkPreparer.prepare,
+			WrapInitPidWaitError: c.wrapInitPidWaitError,
 		},
 		ContainerStatusManager:  c.containerStatusManager,
 		ContainerHookController: c.containerHookController,
@@ -119,10 +119,6 @@ func (c *ContainerCreator) Create(opt CreateOption) (err error) {
 		PrintPidFlag:  opt.PrintPidFlag,
 		TtyFlag:       opt.TtyFlag,
 	})
-}
-
-func shouldSkipHostSideSetupForNestedRootless(containerSpec spec.Spec) bool {
-	return isRootlessSpec(containerSpec) && currentUserNamespaceDiffersFromInit()
 }
 
 func (c *ContainerCreator) specSecureLoad(containerId string) (spec.Spec, error) {
@@ -165,8 +161,8 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	if err != nil {
 		return -1, err
 	}
-	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
-		if err := prepareRootlessInitLog(logPath, rootlessConfig); err != nil {
+	if rootlessPlan := rootlessPlanFromSpec(spec); rootlessPlan.Enabled {
+		if err := prepareRootlessInitLog(logPath, rootlessPlan); err != nil {
 			_ = f.Close()
 			return -1, err
 		}
@@ -188,12 +184,8 @@ func (c *containerInitExecutor) executeInit(containerId string, spec spec.Spec, 
 	return cmd.Pid(), nil
 }
 
-func prepareRootlessInitLog(path string, rootlessConfig spec.RootlessConfigObject) error {
-	if currentUserNamespaceDiffersFromInit() {
-		return nil
-	}
-	uid, gid := rootlessHostRootID(rootlessConfig)
-	return os.Chown(path, uid, gid)
+func prepareRootlessInitLog(path string, rootlessPlan rootless.Plan) error {
+	return rootless.ChownToHostRoot(path, rootlessPlan)
 }
 
 func (c *containerInitExecutor) executeShim(containerId string, spec spec.Spec, fifo string, tty bool, consoleSocket string) (int, error) {

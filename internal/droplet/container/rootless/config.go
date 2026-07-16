@@ -19,12 +19,25 @@ type IDMapPolicy struct {
 	rootGID int
 }
 
+type Plan struct {
+	Config      spec.RootlessConfigObject
+	Enabled     bool
+	Nested      bool
+	Policy      IDMapPolicy
+	HostRootUID int
+	HostRootGID int
+}
+
 func ConfigFromSpec(containerSpec spec.Spec) (spec.RootlessConfigObject, bool) {
-	if containerSpec.Annotations.Rootless == "" {
+	return ConfigFromAnnotation(containerSpec.Annotations)
+}
+
+func ConfigFromAnnotation(annotation spec.AnnotationObject) (spec.RootlessConfigObject, bool) {
+	if annotation.Rootless == "" {
 		return spec.RootlessConfigObject{}, false
 	}
 	var rootless spec.RootlessConfigObject
-	if err := utils.StringToJson(containerSpec.Annotations.Rootless, &rootless); err != nil {
+	if err := utils.StringToJson(annotation.Rootless, &rootless); err != nil {
 		return spec.RootlessConfigObject{}, false
 	}
 	if !rootless.Enabled {
@@ -34,9 +47,58 @@ func ConfigFromSpec(containerSpec spec.Spec) (spec.RootlessConfigObject, bool) {
 	return rootless, true
 }
 
+func PlanFromSpec(containerSpec spec.Spec) Plan {
+	cfg, ok := ConfigFromSpec(containerSpec)
+	if !ok {
+		return Plan{}
+	}
+	return PlanFromConfig(cfg)
+}
+
+func PlanFromConfig(cfg spec.RootlessConfigObject) Plan {
+	if !cfg.Enabled {
+		return Plan{}
+	}
+	cfg.Mode = ModeOrDefault(cfg.Mode)
+	policy := IDMapPolicyFromConfig(cfg)
+	hostRootUID, hostRootGID := policy.HostRootID()
+	return Plan{
+		Config:      cfg,
+		Enabled:     true,
+		Nested:      CurrentUserNamespaceDiffersFromInit(),
+		Policy:      policy,
+		HostRootUID: hostRootUID,
+		HostRootGID: hostRootGID,
+	}
+}
+
 func IsSpec(containerSpec spec.Spec) bool {
 	_, ok := ConfigFromSpec(containerSpec)
 	return ok
+}
+
+func IsAnnotation(annotation spec.AnnotationObject) bool {
+	_, ok := ConfigFromAnnotation(annotation)
+	return ok
+}
+
+func (p Plan) ShouldPrepareHostResources() bool {
+	return !p.Enabled || !p.Nested
+}
+
+func (p Plan) ShouldPrepareHostOwnedFiles() bool {
+	return p.Enabled && !p.Nested
+}
+
+func (p Plan) ShouldPrejoinNamespaces(hasJoinTargets bool) bool {
+	return p.Enabled && hasJoinTargets
+}
+
+func ChownToHostRoot(path string, plan Plan) error {
+	if !plan.ShouldPrepareHostOwnedFiles() {
+		return nil
+	}
+	return os.Chown(path, plan.HostRootUID, plan.HostRootGID)
 }
 
 func IsNonInitialUserNamespace(uidMap string) bool {

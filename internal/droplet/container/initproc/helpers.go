@@ -51,7 +51,7 @@ func LookupEntrypointPath(arg0 string, env []string) (string, error) {
 
 func ShouldSkipHostname(containerSpec spec.Spec, prejoinedNamespaces bool) bool {
 	nsConfig := namespace.BuildConfig(containerSpec)
-	return nsConfig.UTSPath() != "" || (prejoinedNamespaces && rootless.IsSpec(containerSpec))
+	return nsConfig.UTSPath() != "" || (prejoinedNamespaces && rootless.PlanFromSpec(containerSpec).Enabled)
 }
 
 func IsOCIBundleMode(containerId string) bool {

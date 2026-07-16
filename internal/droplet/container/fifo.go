@@ -1,8 +1,8 @@
 package container
 
 import (
-	"os"
 	fifopkg "raind/internal/droplet/container/fifo"
+	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/spec"
 	"time"
 )
@@ -110,9 +110,5 @@ func (c *containerFifoHandler) writeFifoWithTimeout(path string, timeout time.Du
 // range (100000:100000 by default). Keeping the FIFO mode at 0600 is fine as
 // long as the FIFO owner is the host ID that represents namespace root.
 func prepareRootlessFifo(path string, rootlessConfig spec.RootlessConfigObject) error {
-	if currentUserNamespaceDiffersFromInit() {
-		return nil
-	}
-	uid, gid := rootlessHostRootID(rootlessConfig)
-	return os.Chown(path, uid, gid)
+	return rootless.ChownToHostRoot(path, rootless.PlanFromConfig(rootlessConfig))
 }

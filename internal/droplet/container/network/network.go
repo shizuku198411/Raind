@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
 	"strings"
@@ -302,12 +303,5 @@ func BuildNamedNetnsPath(netnsName string) string {
 }
 
 func IsRootlessAnnotation(annotation spec.AnnotationObject) bool {
-	if annotation.Rootless == "" {
-		return false
-	}
-	var rootless spec.RootlessConfigObject
-	if err := utils.StringToJson(annotation.Rootless, &rootless); err != nil {
-		return false
-	}
-	return rootless.Enabled
+	return rootless.IsAnnotation(annotation)
 }

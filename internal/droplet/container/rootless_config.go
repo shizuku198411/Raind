@@ -18,6 +18,10 @@ func rootlessConfigFromSpec(containerSpec spec.Spec) (spec.RootlessConfigObject,
 	return rootless.ConfigFromSpec(containerSpec)
 }
 
+func rootlessPlanFromSpec(containerSpec spec.Spec) rootless.Plan {
+	return rootless.PlanFromSpec(containerSpec)
+}
+
 func isRootlessSpec(containerSpec spec.Spec) bool {
 	return rootless.IsSpec(containerSpec)
 }

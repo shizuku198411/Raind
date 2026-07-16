@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/hook"
 	"raind/internal/droplet/spec"
@@ -34,17 +35,14 @@ type Controller struct {
 }
 
 type RootlessPreparer struct {
-	ConfigFromSpec            func(containerSpec spec.Spec) (spec.RootlessConfigObject, bool)
+	BuildPlan                 func(containerSpec spec.Spec) rootless.Plan
 	PrepareShiftedImageLayers func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error)
 	RewriteSpecAndHash        func(containerId string, containerSpec spec.Spec) error
 	PrepareFifo               func(path string, rootlessConfig spec.RootlessConfigObject) error
 	PrepareWritableFilesystem func(containerSpec spec.Spec) error
 }
 
-type RootlessPlan struct {
-	Config  spec.RootlessConfigObject
-	Enabled bool
-}
+type RootlessPlan = rootless.Plan
 
 type InitSupervisor struct {
 	CleanupShimFile            func(containerId string) error
@@ -61,10 +59,9 @@ type InitProcess struct {
 }
 
 type HostResourcePreparer struct {
-	ShouldSkipHostSideSetup func(containerSpec spec.Spec) bool
-	PrepareCgroup           func(containerId string, containerSpec spec.Spec, pid int) error
-	PrepareNetwork          func(containerId string, pid int, annotation spec.AnnotationObject) error
-	WrapInitPidWaitError    func(containerId string, err error) error
+	PrepareCgroup        func(containerId string, containerSpec spec.Spec, pid int) error
+	PrepareNetwork       func(containerId string, pid int, annotation spec.AnnotationObject) error
+	WrapInitPidWaitError func(containerId string, err error) error
 }
 
 func (c *Controller) Create(opt Option) (err error) {
@@ -140,7 +137,7 @@ func (c *Controller) Create(opt Option) (err error) {
 	}
 	auditLog.SetPid(initProcess.InitPid)
 
-	err = c.HostResourcePreparer.Prepare(opt.ContainerId, containerSpec, initProcess.InitPid, auditLog.Stage)
+	err = c.HostResourcePreparer.Prepare(opt.ContainerId, containerSpec, initProcess.InitPid, rootlessPlan, auditLog.Stage)
 	if err != nil {
 		return err
 	}
@@ -179,13 +176,13 @@ func (c *Controller) Create(opt Option) (err error) {
 }
 
 func (p RootlessPreparer) PrepareSpec(containerId string, containerSpec spec.Spec, setStage func(string)) (spec.Spec, RootlessPlan, error) {
-	rootlessConfig, ok := p.ConfigFromSpec(containerSpec)
-	if !ok {
-		return containerSpec, RootlessPlan{}, nil
+	plan := p.BuildPlan(containerSpec)
+	if !plan.Enabled {
+		return containerSpec, plan, nil
 	}
 
 	setStage("prepare_rootless_shifted_image_layers")
-	updatedSpec, err := p.PrepareShiftedImageLayers(containerId, containerSpec, rootlessConfig)
+	updatedSpec, err := p.PrepareShiftedImageLayers(containerId, containerSpec, plan.Config)
 	if err != nil {
 		return spec.Spec{}, RootlessPlan{}, err
 	}
@@ -195,7 +192,7 @@ func (p RootlessPreparer) PrepareSpec(containerId string, containerSpec spec.Spe
 		return spec.Spec{}, RootlessPlan{}, err
 	}
 
-	return updatedSpec, RootlessPlan{Config: rootlessConfig, Enabled: true}, nil
+	return updatedSpec, plan, nil
 }
 
 func (p RootlessPreparer) PrepareRuntime(fifo string, containerSpec spec.Spec, plan RootlessPlan, setStage func(string)) error {
@@ -243,8 +240,8 @@ func (s InitSupervisor) StartAndWait(containerId string, containerSpec spec.Spec
 	return InitProcess{InitPid: initPid, ShimPid: shimPid}, nil
 }
 
-func (p HostResourcePreparer) Prepare(containerId string, containerSpec spec.Spec, initPid int, setStage func(string)) error {
-	if p.ShouldSkipHostSideSetup(containerSpec) {
+func (p HostResourcePreparer) Prepare(containerId string, containerSpec spec.Spec, initPid int, rootlessPlan RootlessPlan, setStage func(string)) error {
+	if !rootlessPlan.ShouldPrepareHostResources() {
 		return nil
 	}
 

@@ -158,8 +158,8 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 			return err
 		}
 		defer initLog.Close()
-		if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
-			if err := prepareRootlessInitLog(logPath, rootlessConfig); err != nil {
+		if rootlessPlan := rootlessPlanFromSpec(spec); rootlessPlan.Enabled {
+			if err := prepareRootlessInitLog(logPath, rootlessPlan); err != nil {
 				return err
 			}
 		}
@@ -355,10 +355,8 @@ func prejoinRootlessPathNamespaces(containerSpec spec.Spec) (bool, func(), error
 }
 
 func shouldPrejoinRootlessPathNamespaces(containerSpec spec.Spec) bool {
-	if !isRootlessSpec(containerSpec) {
-		return false
-	}
-	return len(buildNamespaceJoinTargets(containerSpec)) > 0
+	plan := rootlessPlanFromSpec(containerSpec)
+	return plan.ShouldPrejoinNamespaces(len(buildNamespaceJoinTargets(containerSpec)) > 0)
 }
 
 func allowRootlessSharedNetworkLowPorts() error {
