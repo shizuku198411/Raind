@@ -186,64 +186,23 @@ func renderBash(bin string, commands []topCommandInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# bash completion for %s\n", bin)
 	fmt.Fprintf(&b, "_%s_complete() {\n", bin)
-	fmt.Fprint(&b, "  local cur prev\n")
+	fmt.Fprint(&b, "  local cur out directive candidates\n")
 	fmt.Fprint(&b, "  COMPREPLY=()\n")
 	fmt.Fprint(&b, "  cur=\"${COMP_WORDS[COMP_CWORD]}\"\n")
-	fmt.Fprint(&b, "  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n\n")
-
-	fmt.Fprintf(&b, "  local top_commands=\"%s\"\n\n", strings.Join(topCommandNames(commands), " "))
-
-	fmt.Fprint(&b, "  if [[ $COMP_CWORD -eq 1 ]]; then\n")
-	fmt.Fprint(&b, "    COMPREPLY=( $(compgen -W \"${top_commands}\" -- \"${cur}\") )\n")
-	fmt.Fprint(&b, "    return 0\n")
-	fmt.Fprint(&b, "  fi\n\n")
-
-	fmt.Fprint(&b, "  case \"${COMP_WORDS[1]}\" in\n")
-	for _, top := range commands {
-		caseLabel := bashCaseLabel(append([]string{top.Name}, top.Aliases...))
-		fmt.Fprintf(&b, "    %s)\n", caseLabel)
-		if len(top.Subcommands) > 0 {
-			fmt.Fprintf(&b, "      local subcommands=\"%s\"\n", strings.Join(subcommandNames(top.Subcommands), " "))
-			fmt.Fprint(&b, "      if [[ $COMP_CWORD -eq 2 ]]; then\n")
-			fmt.Fprint(&b, "        COMPREPLY=( $(compgen -W \"${subcommands}\" -- \"${cur}\") )\n")
-			fmt.Fprint(&b, "        return 0\n")
-			fmt.Fprint(&b, "      fi\n\n")
-			fmt.Fprint(&b, "      case \"${COMP_WORDS[2]}\" in\n")
-			for _, sub := range top.Subcommands {
-				subCase := bashCaseLabel(append([]string{sub.Name}, sub.Aliases...))
-				flags := collectFlagForms(sub.Flags)
-				fmt.Fprintf(&b, "        %s)\n", subCase)
-				if len(sub.Subcommands) > 0 {
-					fmt.Fprintf(&b, "          local subsubcommands=\"%s\"\n", strings.Join(subcommandNames(sub.Subcommands), " "))
-					fmt.Fprint(&b, "          if [[ $COMP_CWORD -eq 3 ]]; then\n")
-					fmt.Fprint(&b, "            COMPREPLY=( $(compgen -W \"${subsubcommands}\" -- \"${cur}\") )\n")
-					fmt.Fprint(&b, "            return 0\n")
-					fmt.Fprint(&b, "          fi\n\n")
-					fmt.Fprint(&b, "          case \"${COMP_WORDS[3]}\" in\n")
-					for _, subsub := range sub.Subcommands {
-						subsubCase := bashCaseLabel(append([]string{subsub.Name}, subsub.Aliases...))
-						subsubFlags := collectFlagForms(subsub.Flags)
-						if len(subsubFlags) == 0 {
-							continue
-						}
-						fmt.Fprintf(&b, "            %s)\n", subsubCase)
-						fmt.Fprintf(&b, "              COMPREPLY=( $(compgen -W \"%s\" -- \"${cur}\") )\n", strings.Join(subsubFlags, " "))
-						fmt.Fprint(&b, "              return 0\n")
-						fmt.Fprint(&b, "              ;;\n")
-					}
-					fmt.Fprint(&b, "          esac\n")
-				} else if len(flags) > 0 {
-					fmt.Fprintf(&b, "          COMPREPLY=( $(compgen -W \"%s\" -- \"${cur}\") )\n", strings.Join(flags, " "))
-					fmt.Fprint(&b, "          return 0\n")
-				}
-				fmt.Fprint(&b, "          ;;\n")
-			}
-			fmt.Fprint(&b, "      esac\n")
-		}
-		fmt.Fprint(&b, "      ;;\n")
-	}
+	fmt.Fprintf(&b, "  out=$(%s __complete \"${COMP_WORDS[@]:1}\" 2>/dev/null)\n", bin)
+	b.WriteString("  directive=$(printf '%s\\n' \"$out\" | tail -n 1)\n")
+	b.WriteString("  candidates=$(printf '%s\\n' \"$out\" | sed '$d')\n\n")
+	fmt.Fprint(&b, "  case \"$directive\" in\n")
+	fmt.Fprint(&b, "    :default)\n")
+	fmt.Fprint(&b, "      compopt -o default 2>/dev/null\n")
+	fmt.Fprint(&b, "      ;;\n")
+	fmt.Fprint(&b, "    :dirs)\n")
+	fmt.Fprint(&b, "      compopt -o dirnames 2>/dev/null\n")
+	fmt.Fprint(&b, "      ;;\n")
 	fmt.Fprint(&b, "  esac\n\n")
-
+	fmt.Fprint(&b, "  if [[ -n \"$candidates\" ]]; then\n")
+	fmt.Fprint(&b, "    mapfile -t COMPREPLY < <(compgen -W \"$candidates\" -- \"$cur\")\n")
+	fmt.Fprint(&b, "  fi\n")
 	fmt.Fprint(&b, "  return 0\n")
 	fmt.Fprint(&b, "}\n\n")
 	fmt.Fprintf(&b, "complete -F _%s_complete %s\n", bin, bin)
@@ -262,57 +221,21 @@ func renderZsh(bin string, commands []topCommandInfo) string {
 func renderFish(bin string, commands []topCommandInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# fish completion for %s\n", bin)
-
-	topNames := strings.Join(topCommandNames(commands), " ")
-	fmt.Fprintf(&b, "complete -c %s -n 'test (count (commandline -opc)) -eq 1' -a '%s'\n", bin, topNames)
-
-	for _, top := range commands {
-		topMatch := fishSeenSubcommand(top)
-		if len(top.Subcommands) > 0 {
-			subNames := strings.Join(subcommandNames(top.Subcommands), " ")
-			fmt.Fprintf(&b, "complete -c %s -n '%s; and test (count (commandline -opc)) -eq 2' -a '%s'\n", bin, topMatch, subNames)
-		}
-		for _, sub := range top.Subcommands {
-			subMatch := fishSeenSubcommand(sub)
-			if len(sub.Subcommands) > 0 {
-				subSubNames := strings.Join(subcommandNames(sub.Subcommands), " ")
-				fmt.Fprintf(&b, "complete -c %s -n '%s; and %s; and test (count (commandline -opc)) -eq 3' -a '%s'\n", bin, topMatch, subMatch, subSubNames)
-			}
-			flags := sub.Flags
-			if len(flags) == 0 {
-				// still allow sub-sub flags below
-			} else {
-				for _, flag := range flags {
-					flagForms := fishFlagForms(flag)
-					for _, form := range flagForms {
-						requiresArg := ""
-						if flag.TakesValue {
-							requiresArg = " -r"
-						}
-						fmt.Fprintf(&b, "complete -c %s -n '%s; and %s' %s%s\n", bin, topMatch, subMatch, form, requiresArg)
-					}
-				}
-			}
-
-			for _, subsub := range sub.Subcommands {
-				subSubMatch := fishSeenSubcommand(subsub)
-				if len(subsub.Flags) == 0 {
-					continue
-				}
-				for _, flag := range subsub.Flags {
-					flagForms := fishFlagForms(flag)
-					for _, form := range flagForms {
-						requiresArg := ""
-						if flag.TakesValue {
-							requiresArg = " -r"
-						}
-						fmt.Fprintf(&b, "complete -c %s -n '%s; and %s; and %s' %s%s\n", bin, topMatch, subMatch, subSubMatch, form, requiresArg)
-					}
-				}
-			}
-		}
-	}
-
+	fmt.Fprintf(&b, "function __%s_complete\n", bin)
+	fmt.Fprint(&b, "  set -l args (commandline -opc)\n")
+	fmt.Fprint(&b, "  set -e args[1]\n")
+	fmt.Fprint(&b, "  set -a args (commandline -ct)\n")
+	fmt.Fprintf(&b, "  set -l out (%s __complete $args 2>/dev/null)\n", bin)
+	fmt.Fprint(&b, "  set -l directive $out[-1]\n")
+	b.WriteString("  printf '%s\\n' $out | string match -rv '^:'\n")
+	fmt.Fprint(&b, "  switch $directive\n")
+	fmt.Fprint(&b, "    case :default\n")
+	fmt.Fprint(&b, "      __fish_complete_path (commandline -ct)\n")
+	fmt.Fprint(&b, "    case :dirs\n")
+	fmt.Fprint(&b, "      __fish_complete_directories (commandline -ct)\n")
+	fmt.Fprint(&b, "  end\n")
+	fmt.Fprint(&b, "end\n")
+	fmt.Fprintf(&b, "complete -c %s -f -a '(__%s_complete)'\n", bin, bin)
 	return b.String()
 }
 

@@ -9,6 +9,9 @@ INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 RAIND_GROUP="${RAIND_GROUP:-raind}"
+BASH_COMPLETION_DIR="${BASH_COMPLETION_DIR:-/usr/share/bash-completion/completions}"
+ZSH_COMPLETION_DIR="${ZSH_COMPLETION_DIR:-/usr/share/zsh/vendor-completions}"
+FISH_COMPLETION_DIR="${FISH_COMPLETION_DIR:-/usr/share/fish/vendor_completions.d}"
 
 BINARIES=(
   "raind"
@@ -107,6 +110,27 @@ install_binaries_to_usr_local() {
     [[ -x "${src}" ]] || fail "missing built binary: ${src}. run: workshop run raind-dev -- build"
     sudo_cmd install -m 0755 "${src}" "${dst}"
   done
+
+  install_completions_to_system
+}
+
+install_completions_to_system() {
+  local raind_bin="${ROOT_DIR}/bin/raind"
+  [[ -x "${raind_bin}" ]] || fail "missing built binary: ${raind_bin}. run: workshop run raind-dev -- build"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  "${raind_bin}" completion bash > "${tmp_dir}/raind"
+  "${raind_bin}" completion zsh > "${tmp_dir}/_raind"
+  "${raind_bin}" completion fish > "${tmp_dir}/raind.fish"
+
+  log "install shell completions"
+  sudo_cmd install -d "${BASH_COMPLETION_DIR}" "${ZSH_COMPLETION_DIR}" "${FISH_COMPLETION_DIR}"
+  sudo_cmd install -m 0644 "${tmp_dir}/raind" "${BASH_COMPLETION_DIR}/raind"
+  sudo_cmd install -m 0644 "${tmp_dir}/_raind" "${ZSH_COMPLETION_DIR}/_raind"
+  sudo_cmd install -m 0644 "${tmp_dir}/raind.fish" "${FISH_COMPLETION_DIR}/raind.fish"
+  rm -rf "${tmp_dir}"
 }
 
 assert_ports_free() {

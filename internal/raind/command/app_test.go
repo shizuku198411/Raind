@@ -70,9 +70,9 @@ func TestCompletionCommandsRenderSupportedShells(t *testing.T) {
 		shell string
 		want  string
 	}{
-		{shell: "bash", want: "_raind_complete"},
+		{shell: "bash", want: "raind __complete"},
 		{shell: "zsh", want: "#compdef raind"},
-		{shell: "fish", want: "complete -c raind"},
+		{shell: "fish", want: "__raind_complete"},
 	}
 
 	for _, tt := range tests {
@@ -87,6 +87,55 @@ func TestCompletionCommandsRenderSupportedShells(t *testing.T) {
 			assert.Contains(t, out.String(), tt.want)
 		})
 	}
+}
+
+func TestCompleteSuggestsTopLevelCommands(t *testing.T) {
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "__complete", ""})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "container\n")
+	assert.Contains(t, out.String(), "resource\n")
+	assert.Contains(t, out.String(), ":nofile\n")
+}
+
+func TestCompleteSuggestsResourceKinds(t *testing.T) {
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "__complete", "resource", "get", ""})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "deployment\n")
+	assert.Contains(t, out.String(), "pod\n")
+	assert.Contains(t, out.String(), ":nofile\n")
+}
+
+func TestCompleteUsesFileCompletionForApply(t *testing.T) {
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "__complete", "resource", "apply", "-f", ""})
+
+	require.NoError(t, err)
+	assert.Equal(t, ":default\n", out.String())
+}
+
+func TestCompleteSuggestsFlags(t *testing.T) {
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "__complete", "resource", "get", "--n"})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "--namespace\n")
+	assert.Contains(t, out.String(), ":nofile\n")
 }
 
 func TestCompletionRejectsUnsupportedShell(t *testing.T) {
