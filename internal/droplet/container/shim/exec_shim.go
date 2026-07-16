@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"raind/internal/droplet/container/attachio"
-	"raind/internal/droplet/logs"
+	"raind/internal/droplet/container/audit"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
 
@@ -23,30 +23,13 @@ type ExecShim struct {
 }
 
 func (c *ExecShim) Execute(containerId string, containerPid string, entrypoint []string) (err error) {
-	var (
-		specFile spec.Spec
-		event    = "exec_shim"
-		stage    string
-		pid      int
-	)
+	var specFile spec.Spec
 
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: containerId,
-			Event:       event,
-			Stage:       stage,
-			Pid:         pid,
-			Spec:        &specFile,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(containerId, "exec_shim")
+	auditLog.SetSpec(&specFile)
+	defer auditLog.Record(&err)
 
-	stage = "open_log"
+	auditLog.Stage("open_log")
 	shimLog, err := os.OpenFile(utils.ExecShimLogPath(containerId), os.O_CREATE|os.O_WRONLY, 0640)
 	if err != nil {
 		return err
@@ -54,7 +37,7 @@ func (c *ExecShim) Execute(containerId string, containerPid string, entrypoint [
 	defer shimLog.Close()
 	logger := log.New(shimLog, "exec_shim: ", log.LstdFlags|log.Lmicroseconds)
 
-	stage = "remove_old_socket"
+	auditLog.Stage("remove_old_socket")
 	sockPath := utils.ExecSockPath(containerId)
 	err = os.Remove(sockPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -62,21 +45,21 @@ func (c *ExecShim) Execute(containerId string, containerPid string, entrypoint [
 		return err
 	}
 
-	stage = "open_pty"
+	auditLog.Stage("open_pty")
 	ptmx, tty, err := pty.Open()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(sockPath) }()
 
-	stage = "listen_socket"
+	auditLog.Stage("listen_socket")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		logger.Printf("unix socket listen failed: %v", err)
 		return err
 	}
 
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	specFile, err = c.LoadSpec(containerId)
 	if err != nil {
 		logger.Printf("load spec failed: %v", err)
@@ -102,14 +85,14 @@ func (c *ExecShim) Execute(containerId string, containerPid string, entrypoint [
 		Ctty:    0,
 	})
 
-	stage = "exec_command"
+	auditLog.Stage("exec_command")
 	err = cmd.Start()
 	if err != nil {
 		logger.Printf("nsenter failed: %v", err)
 		return err
 	}
 	nsenterPid := cmd.Pid()
-	pid = nsenterPid
+	auditLog.SetPid(nsenterPid)
 	logger.Printf("nsenter started pid=%d", nsenterPid)
 
 	_ = tty.Close()

@@ -6,7 +6,8 @@ import (
 	"slices"
 	"strconv"
 
-	"raind/internal/droplet/logs"
+	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -29,57 +30,40 @@ type Controller struct {
 }
 
 func (c *Controller) Exec(opt Option) (err error) {
-	var (
-		event = "exec"
-		stage string
-		pid   int
-	)
+	auditLog := audit.New(opt.ContainerId, "exec")
+	auditLog.SetCommand(&opt.Entrypoint)
+	defer auditLog.Record(&err)
 
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Command:     &opt.Entrypoint,
-			Pid:         pid,
-			Result:      result,
-			Error:       err,
-		})
-	}()
-
-	stage = "get_status"
-	containerStatus, err := c.ContainerStatusManager.GetStatusFromId(opt.ContainerId)
+	auditLog.Stage("get_status")
+	containerStatus, err := statusflow.Current(c.ContainerStatusManager, opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
-	stage = "check_status"
-	if containerStatus != status.RUNNING {
-		return fmt.Errorf("container: %s not running.", opt.ContainerId)
+	auditLog.Stage("check_status")
+	if err := statusflow.EnsureRunning(opt.ContainerId, containerStatus); err != nil {
+		return err
 	}
 
-	stage = "get_pid"
+	auditLog.Stage("get_pid")
 	containerPid, err := c.ContainerStatusManager.GetPidFromId(opt.ContainerId)
 	if err != nil {
 		return err
 	}
+	auditLog.SetPid(containerPid)
 
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	containerSpec, err := c.LoadSpec(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
 	if opt.Tty {
-		stage = "exec_shim"
+		auditLog.Stage("exec_shim")
 		return c.ExecuteShim(containerPid, opt)
 	}
 
-	stage = "exec_nsenter"
+	auditLog.Stage("exec_nsenter")
 	return c.executeNsenter(containerPid, containerSpec, opt)
 }
 

@@ -8,7 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"raind/internal/droplet/container/attachio"
-	"raind/internal/droplet/logs"
+	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -45,40 +46,24 @@ type ShimExecuteOption struct {
 
 func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	var (
-		spec  spec.Spec
-		event = "shim"
-		stage string
-		pid   int
+		spec spec.Spec
 	)
 
 	containerId := opt.ContainerId
 
-	// audit log
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: containerId,
-			Event:       event,
-			Stage:       stage,
-			Pid:         pid,
-			Spec:        &spec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(containerId, "shim")
+	auditLog.SetSpec(&spec)
+	defer auditLog.Record(&err)
 
 	// 1. load config.json
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	spec, err = c.specSecureLoad(containerId)
 	if err != nil {
 		return err
 	}
 
 	// open shim log
-	stage = "open_log"
+	auditLog.Stage("open_log")
 	shimLog, err := os.OpenFile(utils.ShimLogPath(containerId), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
 	if err != nil {
 		return err
@@ -87,7 +72,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	logger := log.New(shimLog, "shim: ", log.LstdFlags|log.Lmicroseconds)
 
 	// 2. prepare init subcommand
-	stage = "prepare_init_command"
+	auditLog.Stage("prepare_init_command")
 	initArgs := append([]string{"init", containerId, opt.Fifo}, opt.Entrypoint...)
 	cmdName := utils.SelfBinPath()
 	cmdArgs := initArgs
@@ -122,7 +107,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		sockPath string
 	)
 	if opt.Tty {
-		stage = "open_pty"
+		auditLog.Stage("open_pty")
 		ptmx, tty, err = pty.Open()
 		if err != nil {
 			return err
@@ -130,19 +115,19 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		defer ptmx.Close()
 		defer tty.Close()
 
-		stage = "set_console_size"
+		auditLog.Stage("set_console_size")
 		if err := applyConsoleSize(ptmx, spec.Process.ConsoleSize); err != nil {
 			return err
 		}
 
 		if opt.ConsoleSocket != "" {
-			stage = "send_console_socket"
+			auditLog.Stage("send_console_socket")
 			if err := sendConsoleFileDescriptor(opt.ConsoleSocket, ptmx); err != nil {
 				return err
 			}
 		}
 
-		stage = "listen_socket"
+		auditLog.Stage("listen_socket")
 		sockPath = utils.SockPath(containerId)
 		ln, err = net.Listen("unix", sockPath)
 		if err != nil {
@@ -166,7 +151,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		h.StartPump()
 		go attachio.AcceptLoop(ln, h, logger)
 	} else {
-		stage = "open_init_log"
+		auditLog.Stage("open_init_log")
 		logPath := utils.ContainerLogPath(containerId)
 		initLog, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 		if err != nil {
@@ -206,7 +191,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	cmd.SetSysProcAttr(sysProcAttr)
 
 	// 4. execute init subcommand
-	stage = "exec_init"
+	auditLog.Stage("exec_init")
 	err = cmd.Start()
 	if err != nil {
 		logger.Printf("init start failed: %v", err)
@@ -221,11 +206,11 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 		}
 		initPid = childPID
 	}
-	pid = initPid
+	auditLog.SetPid(initPid)
 	logger.Printf("init started pid=%d tty=%t", initPid, opt.Tty)
 
 	// 5. create pidfile
-	stage = "create_pid_file"
+	auditLog.Stage("create_pid_file")
 	err = c.writeInitPid(containerId, initPid)
 	if err != nil {
 		logger.Printf("writeInitPid failed: %v", err)
@@ -235,18 +220,19 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	if opt.Tty {
 		// The child process already inherited the slave side. Close the shim copy so
 		// ptmx observes EOF once the container process exits.
-		stage = "close_tty"
+		auditLog.Stage("close_tty")
 		_ = tty.Close()
 	}
 
 	// 6. wait init process
-	stage = "wait_init"
+	auditLog.Stage("wait_init")
 	waitErr := cmd.Wait()
 	logger.Printf("init exited: %v", waitErr)
 
 	// 7. update state
-	stage = "update_state"
-	err = c.containerStatusManager.UpdateStatus(
+	auditLog.Stage("update_state")
+	err = statusflow.Transition(
+		c.containerStatusManager,
 		containerId,
 		status.STOPPED,
 		0,
@@ -257,7 +243,7 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 	}
 
 	// 8. set exit code, reason and message
-	stage = "update_exit_status"
+	auditLog.Stage("update_exit_status")
 	exitCode := c.InitExitCode(cmd)
 	err = c.containerStatusManager.UpdateExitCode(containerId, exitCode)
 	if err != nil {

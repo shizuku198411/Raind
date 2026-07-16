@@ -1,10 +1,9 @@
 package start
 
 import (
-	"fmt"
-
+	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/hook"
-	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -27,43 +26,28 @@ type Controller struct {
 }
 
 func (c *Controller) Execute(opt Option) (err error) {
-	var (
-		specFile spec.Spec
-		event    = "start"
-		stage    string
-	)
+	var specFile spec.Spec
 
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Spec:        &specFile,
-			Stage:       stage,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(opt.ContainerId, "start")
+	auditLog.SetSpec(&specFile)
+	defer auditLog.Record(&err)
 
-	stage = "check_status"
-	containerStatus, err := c.ContainerStatusManager.GetStatusFromId(opt.ContainerId)
+	auditLog.Stage("check_status")
+	containerStatus, err := statusflow.Current(c.ContainerStatusManager, opt.ContainerId)
 	if err != nil {
 		return err
 	}
-	if containerStatus != status.CREATED {
-		return fmt.Errorf("container: %s is not created. currnet status: %s", opt.ContainerId, containerStatus)
+	if err := statusflow.EnsureCreated(opt.ContainerId, containerStatus); err != nil {
+		return err
 	}
 
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	specFile, err = c.LoadSpec(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
-	stage = "hook_startContainer"
+	auditLog.Stage("hook_startContainer")
 	err = c.ContainerHookController.RunStartContainerHooks(
 		opt.ContainerId,
 		specFile.Hooks.StartContainer,
@@ -72,21 +56,22 @@ func (c *Controller) Execute(opt Option) (err error) {
 		return err
 	}
 
-	stage = "write_fifo"
+	auditLog.Stage("write_fifo")
 	fifo := utils.FifoPath(opt.ContainerId)
 	err = c.WriteFifo(fifo)
 	if err != nil {
 		return err
 	}
 
-	stage = "remove_fifo"
+	auditLog.Stage("remove_fifo")
 	err = c.RemoveFifo(fifo)
 	if err != nil {
 		return err
 	}
 
-	stage = "update_state"
-	err = c.ContainerStatusManager.UpdateStatus(
+	auditLog.Stage("update_state")
+	err = statusflow.Transition(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		status.RUNNING,
 		-1, // no update
@@ -96,7 +81,7 @@ func (c *Controller) Execute(opt Option) (err error) {
 		return err
 	}
 
-	stage = "hook_poststart"
+	auditLog.Stage("hook_poststart")
 	err = c.ContainerHookController.RunPoststartHooks(
 		opt.ContainerId,
 		specFile.Hooks.Poststart,

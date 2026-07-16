@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"raind/internal/droplet/container/audit"
 	"raind/internal/droplet/container/signals"
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/hook"
-	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -33,37 +34,22 @@ type Controller struct {
 func (c *Controller) Kill(opt Option) (err error) {
 	var (
 		specFile spec.Spec
-		event    = "kill"
-		stage    string
 		signal   []string
-		pid      int
 	)
 
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Spec:        &specFile,
-			Pid:         pid,
-			Signals:     &signal,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(opt.ContainerId, "kill")
+	auditLog.SetSpec(&specFile)
+	auditLog.SetSignals(&signal)
+	defer auditLog.Record(&err)
 
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	specFile, err = c.LoadSpec(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
-	stage = "get_status"
-	containerStatus, err := c.ContainerStatusManager.GetStatusFromId(opt.ContainerId)
+	auditLog.Stage("get_status")
+	containerStatus, err := statusflow.Current(c.ContainerStatusManager, opt.ContainerId)
 	if err != nil {
 		return err
 	}
@@ -73,26 +59,26 @@ func (c *Controller) Kill(opt Option) (err error) {
 	}
 	signal = append(signal, signalName)
 
-	stage = "check_status"
-	if containerStatus != status.RUNNING && containerStatus != status.CREATED {
+	auditLog.Stage("check_status")
+	if !statusflow.IsAllowed(containerStatus, status.RUNNING, status.CREATED) {
 		if containerStatus == status.STOPPED && signalName == "KILL" && HasExternalPidFileMarker(c.SyscallHandler, opt.ContainerId) {
 			return nil
 		}
 		return fmt.Errorf("container: %s neither created nor running.", opt.ContainerId)
 	}
 
-	stage = "get_pid"
+	auditLog.Stage("get_pid")
 	containerPid, err := c.ContainerStatusManager.GetPidFromId(opt.ContainerId)
 	if err != nil {
 		return err
 	}
-	stage = "get_shim_pid"
+	auditLog.Stage("get_shim_pid")
 	shimPid, err := c.ContainerStatusManager.GetShimPidFromId(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
-	stage = "send_signal"
+	auditLog.Stage("send_signal")
 	procStartTime, err := ReadProcStartTime(containerPid)
 	if err != nil {
 		return err
@@ -105,15 +91,16 @@ func (c *Controller) Kill(opt Option) (err error) {
 	if err != nil {
 		return err
 	}
+	auditLog.SetPid(containerPid)
 	if signalName == "TERM" {
-		stage = "wait_exit_grace"
+		auditLog.Stage("wait_exit_grace")
 		err = WaitProcessExit(procIdentity, 3*time.Second)
 		if err != nil {
-			stage = "send_sigkill"
+			auditLog.Stage("send_sigkill")
 			_ = c.SyscallHandler.Kill(containerPid, signals.Map["KILL"])
 			signal = append(signal, "KILL")
 
-			stage = "wait_exit_kill"
+			auditLog.Stage("wait_exit_kill")
 			err = WaitProcessExit(procIdentity, 5*time.Second)
 			if err != nil {
 				return fmt.Errorf("failed to stop container pid=%d: %w", containerPid, err)
@@ -121,26 +108,18 @@ func (c *Controller) Kill(opt Option) (err error) {
 		}
 	}
 	if signalName == "KILL" {
-		stage = "wait_exit_signal"
+		auditLog.Stage("wait_exit_signal")
 		_ = WaitProcessExit(procIdentity, 5*time.Second)
 	}
-	stoppedBySignal := containerStatus == status.CREATED || signalName == "TERM" || signalName == "KILL"
+	nextStatus, nextPid, nextShimPid, stoppedBySignal := statusflow.KillTransition(containerStatus, signalName)
 
-	stage = "cleanup_shim"
+	auditLog.Stage("cleanup_shim")
 	if stoppedBySignal && shimPid > 0 {
 		_ = CleanupShim(c.SyscallHandler, opt.ContainerId)
 	}
 
-	stage = "update_state"
-	nextStatus := status.STOPPED
-	nextPid := 0
-	nextShimPid := 0
-	if !stoppedBySignal {
-		nextStatus = status.RUNNING
-		nextPid = -1
-		nextShimPid = -1
-	}
-	err = c.ContainerStatusManager.UpdateStatus(opt.ContainerId, nextStatus, nextPid, nextShimPid)
+	auditLog.Stage("update_state")
+	err = statusflow.Transition(c.ContainerStatusManager, opt.ContainerId, nextStatus, nextPid, nextShimPid)
 	if err != nil {
 		return err
 	}
@@ -148,7 +127,7 @@ func (c *Controller) Kill(opt Option) (err error) {
 	if !stoppedBySignal {
 		return nil
 	}
-	stage = "hook_stopContainer"
+	auditLog.Stage("hook_stopContainer")
 	err = c.ContainerHookController.RunStopContainerHooks(
 		opt.ContainerId,
 		specFile.Hooks.StopContainer,

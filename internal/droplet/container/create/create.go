@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/hook"
-	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -67,36 +68,19 @@ type HostResourcePreparer struct {
 }
 
 func (c *Controller) Create(opt Option) (err error) {
-	var (
-		containerSpec spec.Spec
-		event         = "create"
-		stage         string
-		pid           int
-	)
+	var containerSpec spec.Spec
 
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Pid:         pid,
-			Spec:        &containerSpec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(opt.ContainerId, "create")
+	auditLog.SetSpec(&containerSpec)
+	defer auditLog.Record(&err)
 
-	stage = "prepare_bundle_config"
+	auditLog.Stage("prepare_bundle_config")
 	err = c.PrepareBundleConfig(opt.ContainerId, opt.Bundle)
 	if err != nil {
 		return err
 	}
 
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	containerSpec, err = c.LoadSpec(opt.ContainerId)
 	if err != nil {
 		return err
@@ -111,15 +95,14 @@ func (c *Controller) Create(opt Option) (err error) {
 	}
 
 	var rootlessPlan RootlessPlan
-	containerSpec, rootlessPlan, err = c.RootlessPreparer.PrepareSpec(opt.ContainerId, containerSpec, func(next string) {
-		stage = next
-	})
+	containerSpec, rootlessPlan, err = c.RootlessPreparer.PrepareSpec(opt.ContainerId, containerSpec, auditLog.Stage)
 	if err != nil {
 		return err
 	}
 
-	stage = "create_state"
-	err = c.ContainerStatusManager.CreateStatusFile(
+	auditLog.Stage("create_state")
+	err = statusflow.Create(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		0,
 		status.CREATING,
@@ -131,7 +114,7 @@ func (c *Controller) Create(opt Option) (err error) {
 		return err
 	}
 
-	stage = "hook_create_runtime"
+	auditLog.Stage("hook_create_runtime")
 	err = c.ContainerHookController.RunCreateRuntimeHooks(
 		opt.ContainerId,
 		containerSpec.Hooks.CreateRuntime,
@@ -140,36 +123,31 @@ func (c *Controller) Create(opt Option) (err error) {
 		return err
 	}
 
-	stage = "create_fifo"
+	auditLog.Stage("create_fifo")
 	fifo := utils.FifoPath(opt.ContainerId)
 	err = c.CreateFifo(fifo)
 	if err != nil {
 		return err
 	}
-	err = c.RootlessPreparer.PrepareRuntime(fifo, containerSpec, rootlessPlan, func(next string) {
-		stage = next
-	})
+	err = c.RootlessPreparer.PrepareRuntime(fifo, containerSpec, rootlessPlan, auditLog.Stage)
 	if err != nil {
 		return err
 	}
 
-	initProcess, err := c.InitSupervisor.StartAndWait(opt.ContainerId, containerSpec, fifo, tty, opt.ConsoleSocket, opt.PidFile, func(next string) {
-		stage = next
-	})
+	initProcess, err := c.InitSupervisor.StartAndWait(opt.ContainerId, containerSpec, fifo, tty, opt.ConsoleSocket, opt.PidFile, auditLog.Stage)
 	if err != nil {
 		return err
 	}
-	pid = initProcess.InitPid
+	auditLog.SetPid(initProcess.InitPid)
 
-	err = c.HostResourcePreparer.Prepare(opt.ContainerId, containerSpec, initProcess.InitPid, func(next string) {
-		stage = next
-	})
+	err = c.HostResourcePreparer.Prepare(opt.ContainerId, containerSpec, initProcess.InitPid, auditLog.Stage)
 	if err != nil {
 		return err
 	}
 
-	stage = "update_state"
-	err = c.ContainerStatusManager.UpdateStatus(
+	auditLog.Stage("update_state")
+	err = statusflow.Transition(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		status.CREATED,
 		initProcess.InitPid,
@@ -179,7 +157,7 @@ func (c *Controller) Create(opt Option) (err error) {
 		return err
 	}
 	if len(containerSpec.Hooks.Prestart) > 0 {
-		stage = "hook_prestart"
+		auditLog.Stage("hook_prestart")
 		err = c.ContainerHookController.RunCreateRuntimeHooks(
 			opt.ContainerId,
 			containerSpec.Hooks.Prestart,
@@ -189,7 +167,7 @@ func (c *Controller) Create(opt Option) (err error) {
 		}
 	}
 
-	stage = "hook_create_container"
+	auditLog.Stage("hook_create_container")
 	err = c.ContainerHookController.RunCreateContainerHooks(
 		opt.ContainerId,
 		containerSpec.Hooks.CreateContainer,

@@ -5,6 +5,7 @@ import (
 	"os"
 	"syscall"
 
+	"raind/internal/droplet/container/statusflow"
 	"raind/internal/droplet/hook"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
@@ -55,7 +56,8 @@ func (c *Controller) Run(opt Option) error {
 		return err
 	}
 
-	if err := c.ContainerStatusManager.CreateStatusFile(
+	if err := statusflow.Create(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		0,
 		status.CREATING,
@@ -111,7 +113,8 @@ func (c *Controller) Run(opt Option) error {
 		return err
 	}
 
-	if err := c.ContainerStatusManager.UpdateStatus(
+	if err := statusflow.Transition(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		status.CREATED,
 		initPid,
@@ -146,7 +149,8 @@ func (c *Controller) Run(opt Option) error {
 		return err
 	}
 
-	if err := c.ContainerStatusManager.UpdateStatus(
+	if err := statusflow.Transition(
+		c.ContainerStatusManager,
 		opt.ContainerId,
 		status.RUNNING,
 		-1,
@@ -167,7 +171,8 @@ func (c *Controller) Run(opt Option) error {
 			return err
 		}
 
-		if err := c.ContainerStatusManager.UpdateStatus(
+		if err := statusflow.Transition(
+			c.ContainerStatusManager,
 			opt.ContainerId,
 			status.STOPPED,
 			0,

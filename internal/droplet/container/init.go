@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"raind/internal/droplet/container/audit"
 	"raind/internal/droplet/container/initproc"
-	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/utils"
 	"runtime"
@@ -74,60 +74,46 @@ func (c *ContainerInit) Execute(opt InitOption) (err error) {
 	defer runtime.UnlockOSThread()
 
 	var (
-		spec  spec.Spec
-		event = "init"
-		stage string
+		spec spec.Spec
 	)
 
-	// audit log
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Spec:        &spec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(opt.ContainerId, "init")
+	auditLog.SetSpec(&spec)
+	defer auditLog.Record(&err)
 
 	fifo := opt.Fifo
 	entrypoint := opt.Entrypoint
 
 	// 1. load config.json
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	spec, err = c.specSecureLoad(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
 	// 2. read fifo for waiting start signal
-	stage = "read_fifo"
+	auditLog.Stage("read_fifo")
 	err = c.fifoReader.readFifo(fifo)
 	if err != nil {
 		return err
 	}
 
 	// 3. prepare container environment
-	stage = "prepare"
+	auditLog.Stage("prepare")
 	err = c.containerEnvPreparer.prepare(opt.ContainerId, spec)
 	if err != nil {
 		return err
 	}
 
 	// 4. apply AppArmor Profile Onexec
-	stage = "apply_apparmor"
+	auditLog.Stage("apply_apparmor")
 	err = c.appArmorHandler.ApplyAAProfileOnExec(spec.LinuxSpec.AppArmorProfile)
 	if err != nil {
 		return err
 	}
 
 	// 5. replace process with the container entrypoint
-	stage = "exec_entrypoint"
+	auditLog.Stage("exec_entrypoint")
 	// lookup entrypoint[0]'s abstract path
 	arg0, err := c.lookEntrypointPath(entrypoint[0], spec.Process.Env)
 	if err != nil {

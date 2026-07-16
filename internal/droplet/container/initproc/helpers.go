@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 	"raind/internal/droplet/container/namespace"
+	"raind/internal/droplet/container/pathenv"
 	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
@@ -35,17 +36,7 @@ func LookupEntrypointPath(arg0 string, env []string) (string, error) {
 		return arg0, nil
 	}
 
-	pathVal := ""
-	for _, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			pathVal = strings.TrimPrefix(e, "PATH=")
-			break
-		}
-	}
-	if pathVal == "" {
-		pathVal = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	}
-
+	pathVal := pathenv.OrDefault(env)
 	for _, dir := range strings.Split(pathVal, ":") {
 		if dir == "" {
 			dir = "."
