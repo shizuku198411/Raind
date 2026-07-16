@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	createop "raind/internal/droplet/container/create"
 	"raind/internal/droplet/hook"
-	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
@@ -80,205 +80,38 @@ type ContainerCreator struct {
 // This method performs no low-level work itself and relies entirely on
 // its collaborators. If any step fails, the error is returned immediately.
 func (c *ContainerCreator) Create(opt CreateOption) (err error) {
-	var (
-		spec  spec.Spec
-		event = "create"
-		stage string
-		pid   int
-	)
-
-	// audit log
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Pid:         pid,
-			Spec:        &spec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
-
-	// 1. load config.json
-	stage = "prepare_bundle_config"
-	err = prepareBundleConfig(opt.ContainerId, opt.Bundle)
-	if err != nil {
-		return err
+	controller := createop.Controller{
+		LoadSpec:               c.specSecureLoad,
+		PrepareBundleConfig:    prepareBundleConfig,
+		BundlePathForContainer: bundlePathForContainer,
+		RootlessConfigFromSpec: rootlessConfigFromSpec,
+		PrepareRootlessShiftedImageLayers: func(containerId string, containerSpec spec.Spec, rootlessConfig spec.RootlessConfigObject) (spec.Spec, error) {
+			return prepareRootlessShiftedImageLayers(containerId, containerSpec, rootlessConfig)
+		},
+		RewriteContainerSpecAndHash:       rewriteContainerSpecAndHash,
+		ShouldSkipHostSideSetup:           shouldSkipHostSideSetupForNestedRootless,
+		CreateFifo:                        c.fifoCreator.createFifo,
+		PrepareRootlessFifo:               prepareRootlessFifo,
+		PrepareRootlessWritableFilesystem: prepareRootlessWritableFilesystem,
+		CleanupShimFile:                   c.cleanupShimFile,
+		ExecuteShim:                       c.processExecutor.executeShim,
+		WaitInitPid:                       c.waitInitPid,
+		WrapInitPidWaitError:              c.wrapInitPidWaitError,
+		WriteContainerPidFile:             writeContainerPidFile,
+		WriteExternalPidFileMarker:        writeExternalPidFileMarker,
+		PrepareCgroup:                     c.containerCgroupPreparer.prepare,
+		PrepareNetwork:                    c.containerNetworkPreparer.prepare,
+		ContainerStatusManager:            c.containerStatusManager,
+		ContainerHookController:           c.containerHookController,
 	}
-
-	stage = "load_spec"
-	spec, err = c.specSecureLoad(opt.ContainerId)
-	if err != nil {
-		return err
-	}
-	bundlePath, err := bundlePathForContainer(opt.ContainerId, opt.Bundle)
-	if err != nil {
-		return err
-	}
-	tty := opt.TtyFlag || spec.Process.Terminal
-	if opt.ConsoleSocket != "" && !tty {
-		return fmt.Errorf("--console-socket requires --tty or process.terminal=true")
-	}
-
-	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
-		stage = "prepare_rootless_shifted_image_layers"
-		spec, err = prepareRootlessShiftedImageLayers(opt.ContainerId, spec, rootlessConfig)
-		if err != nil {
-			return err
-		}
-
-		stage = "rewrite_rootless_spec"
-		err = rewriteContainerSpecAndHash(opt.ContainerId, spec)
-		if err != nil {
-			return err
-		}
-	}
-	nestedRootless := shouldSkipHostSideSetupForNestedRootless(spec)
-
-	// 2. create state.json
-	//      status = creating
-	//      pid = 0
-	stage = "create_state"
-	err = c.containerStatusManager.CreateStatusFile(
-		opt.ContainerId,
-		0,
-		status.CREATING,
-		spec.Root.Path,
-		bundlePath,
-		spec.Annotations,
-	)
-	if err != nil {
-		return err
-	}
-
-	// 3. HOOK: createRuntime
-	stage = "hook_create_runtime"
-	err = c.containerHookController.RunCreateRuntimeHooks(
-		opt.ContainerId,
-		spec.Hooks.CreateRuntime,
-	)
-	if err != nil {
-		return err
-	}
-
-	// 4. create fifo
-	stage = "create_fifo"
-	fifo := utils.FifoPath(opt.ContainerId)
-	err = c.fifoCreator.createFifo(fifo)
-	if err != nil {
-		return err
-	}
-	if rootlessConfig, ok := rootlessConfigFromSpec(spec); ok {
-		stage = "prepare_rootless_fifo"
-		err = prepareRootlessFifo(fifo, rootlessConfig)
-		if err != nil {
-			return err
-		}
-
-		stage = "prepare_rootless_writable_filesystem"
-		err = prepareRootlessWritableFilesystem(spec)
-		if err != nil {
-			return err
-		}
-	}
-
-	// 5. execute shim/supervisor subcommand.
-	//
-	// The shim is now used for both TTY and non-TTY containers so that it can
-	// wait for the container init process and persist the final exit status.
-	// TTY handling remains optional inside the shim.
-	var (
-		initPid int
-		shimPid int
-	)
-	stage = "cleanup_shim_file"
-	err = c.cleanupShimFile(opt.ContainerId)
-	if err != nil {
-		return err
-	}
-
-	stage = "execute_shim"
-	pid, err = c.processExecutor.executeShim(opt.ContainerId, spec, fifo, tty, opt.ConsoleSocket)
-	if err != nil {
-		return err
-	}
-	shimPid = pid
-
-	// wait for pidfile from shim
-	stage = "wait_init_pid"
-	initPid, err = c.waitInitPid(opt.ContainerId, 10*time.Second, 20*time.Millisecond)
-	if err != nil {
-		return c.wrapInitPidWaitError(opt.ContainerId, err)
-	}
-	pid = initPid
-	stage = "write_pid_file"
-	err = writeContainerPidFile(opt.PidFile, initPid)
-	if err != nil {
-		return err
-	}
-	stage = "write_pid_file_marker"
-	err = writeExternalPidFileMarker(opt.ContainerId, opt.PidFile)
-	if err != nil {
-		return err
-	}
-
-	// 6. cgroup setup
-	if !nestedRootless {
-		stage = "setup_cgroup"
-		err = c.containerCgroupPreparer.prepare(opt.ContainerId, spec, initPid)
-		if err != nil {
-			return c.wrapInitPidWaitError(opt.ContainerId, err)
-		}
-	}
-
-	// 7. network setup
-	if !nestedRootless {
-		stage = "setup_network"
-		err = c.containerNetworkPreparer.prepare(opt.ContainerId, initPid, spec.Annotations)
-		if err != nil {
-			return err
-		}
-	}
-
-	// 8. update state.json
-	//      status = created
-	//      pid    = init pid
-	stage = "update_state"
-	err = c.containerStatusManager.UpdateStatus(
-		opt.ContainerId,
-		status.CREATED,
-		initPid,
-		shimPid,
-	)
-	if err != nil {
-		return err
-	}
-	if len(spec.Hooks.Prestart) > 0 {
-		stage = "hook_prestart"
-		err = c.containerHookController.RunCreateRuntimeHooks(
-			opt.ContainerId,
-			spec.Hooks.Prestart,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	// 9. HOOK: createContainer
-	stage = "hook_create_container"
-	err = c.containerHookController.RunCreateContainerHooks(
-		opt.ContainerId,
-		spec.Hooks.CreateContainer,
-	)
-	if err != nil {
-		return err
-	}
-	return nil
+	return controller.Create(createop.Option{
+		ContainerId:   opt.ContainerId,
+		Bundle:        opt.Bundle,
+		ConsoleSocket: opt.ConsoleSocket,
+		PidFile:       opt.PidFile,
+		PrintPidFlag:  opt.PrintPidFlag,
+		TtyFlag:       opt.TtyFlag,
+	})
 }
 
 func shouldSkipHostSideSetupForNestedRootless(containerSpec spec.Spec) bool {
@@ -286,56 +119,7 @@ func shouldSkipHostSideSetupForNestedRootless(containerSpec spec.Spec) bool {
 }
 
 func (c *ContainerCreator) specSecureLoad(containerId string) (spec.Spec, error) {
-	fileHashPath := utils.ConfigFileHashPath(containerId)
-
-	// 1. calculate current config.json file hash
-	beforeLoadedHash, err := utils.Sha256File(utils.ConfigFilePath(containerId))
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 2. write to file
-	if err := utils.WriteJsonToFile(
-		fileHashPath,
-		spec.SpecHash{
-			Sha256: beforeLoadedHash,
-		},
-	); err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 3. load config.json
-	specFile, err := c.specLoader.loadFile(containerId)
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 4. re-calculate config.json file hash
-	afterLoadedHash, err := utils.Sha256File(utils.ConfigFilePath(containerId))
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 5. load file sha256 from file
-	var specFileHash spec.SpecHash
-	if err := utils.ReadJsonFile(
-		fileHashPath,
-		&specFileHash,
-	); err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 6. assert
-	// protect hash value tampering
-	if beforeLoadedHash != specFileHash.Sha256 {
-		return spec.Spec{}, fmt.Errorf("config.json hash validation failed: expect=%s, got=%s", beforeLoadedHash, specFileHash.Sha256)
-	}
-	// protect config.json tampering
-	if specFileHash.Sha256 != afterLoadedHash {
-		return spec.Spec{}, fmt.Errorf("config.json hash validation failed: expect=%s, got=%s", specFileHash.Sha256, afterLoadedHash)
-	}
-
-	return specFile, nil
+	return sealAndLoadSpec(containerId, c.specLoader)
 }
 
 // processExecutor defines the behavior for spawning the container init process.

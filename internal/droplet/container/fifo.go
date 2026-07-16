@@ -1,14 +1,10 @@
 package container
 
 import (
-	"errors"
-	"fmt"
 	"os"
+	fifopkg "raind/internal/droplet/container/fifo"
 	"raind/internal/droplet/spec"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // fifoCreator creates a FIFO (named pipe) at the given path.
@@ -51,7 +47,7 @@ type fifoWriter interface {
 // while allowing callers to depend only on the subset of behavior they
 // require via small, focused interfaces.
 func newContainerFifoHandler() *containerFifoHandler {
-	return &containerFifoHandler{}
+	return &containerFifoHandler{handler: fifopkg.NewHandler()}
 }
 
 // containerFifoHandler implements the FIFO creation, deletion,
@@ -60,33 +56,27 @@ func newContainerFifoHandler() *containerFifoHandler {
 // It is the default implementation used by the runtime. Individual
 // components (create / init / start) depend only on the minimal
 // interface required for their role.
-type containerFifoHandler struct{}
+type containerFifoHandler struct {
+	handler *fifopkg.Handler
+}
 
 const (
-	fifoWriteTimeout       = 5 * time.Second
-	fifoWriteRetryInterval = 20 * time.Millisecond
+	fifoWriteTimeout       = fifopkg.WriteTimeout
+	fifoWriteRetryInterval = fifopkg.WriteRetryInterval
 )
 
 // createFifo creates a named pipe (FIFO) at the specified path.
 //
 // The FIFO is created with mode 0600 to limit access to the owner.
 func (c *containerFifoHandler) createFifo(path string) error {
-	if err := syscall.Mkfifo(path, 0o600); err != nil {
-		return err
-	}
-
-	return nil
+	return c.handler.Create(path)
 }
 
 // removeFifo removes the FIFO at the given path.
 //
 // An error is returned if the file cannot be removed.
 func (c *containerFifoHandler) removeFifo(path string) error {
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-
-	return nil
+	return c.handler.Remove(path)
 }
 
 // readFifo waits on the FIFO at the given path.
@@ -96,18 +86,7 @@ func (c *containerFifoHandler) removeFifo(path string) error {
 //
 // This behavior is used as a synchronization barrier for the init process.
 func (c *containerFifoHandler) readFifo(path string) error {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 1)
-	if _, err := f.Read(buf); err != nil {
-		return err
-	}
-
-	return nil
+	return c.handler.Read(path)
 }
 
 // writeFifo sends a synchronization signal by writing a single byte
@@ -115,45 +94,14 @@ func (c *containerFifoHandler) readFifo(path string) error {
 //
 // This unblocks the reader side, which is waiting in readFifo.
 func (c *containerFifoHandler) writeFifo(path string) error {
-	return c.writeFifoWithTimeout(path, fifoWriteTimeout)
+	return c.handler.Write(path)
 }
 
 // writeFifoWithTimeout waits until the FIFO has a reader and writes the start
 // signal. Opening a FIFO with O_WRONLY blocks forever when no reader is present,
 // so this method uses O_NONBLOCK and retries ENXIO until timeout.
 func (c *containerFifoHandler) writeFifoWithTimeout(path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for {
-		fd, err := unix.Open(path, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-		if err == nil {
-			defer unix.Close(fd)
-
-			for {
-				n, err := unix.Write(fd, []byte{1})
-				if err == nil {
-					if n != 1 {
-						return fmt.Errorf("fifo write %s: short write: wrote %d bytes", path, n)
-					}
-					return nil
-				}
-				if errors.Is(err, unix.EINTR) {
-					continue
-				}
-				return fmt.Errorf("fifo write %s: %w", path, err)
-			}
-		}
-
-		if !errors.Is(err, unix.ENXIO) && !errors.Is(err, unix.EINTR) {
-			return fmt.Errorf("fifo open %s: %w", path, err)
-		}
-
-		if timeout <= 0 || time.Now().After(deadline) {
-			return fmt.Errorf("fifo open %s: timed out waiting for reader after %s", path, timeout)
-		}
-
-		time.Sleep(fifoWriteRetryInterval)
-	}
+	return c.handler.WriteWithTimeout(path, timeout)
 }
 
 // prepareRootlessFifo makes the startup FIFO accessible to the container init

@@ -13,3 +13,5 @@ prime/
 stage/
 overlay/
 runtime-tools/
+.agents/
+.codex/

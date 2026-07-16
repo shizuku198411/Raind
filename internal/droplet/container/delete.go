@@ -1,10 +1,8 @@
 package container
 
 import (
-	"fmt"
+	deleteop "raind/internal/droplet/container/delete"
 	"raind/internal/droplet/hook"
-	"raind/internal/droplet/logs"
-	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
 )
@@ -22,16 +20,7 @@ func NewContainerDelete() *ContainerDelete {
 	}
 }
 
-// ContainerDelete orchestrates the container deletion flow.
-//
-// It is responsible for:
-//   - Validating the current container status
-//   - Loading the OCI spec (for hooks)
-//   - Executing poststop hooks
-//   - Removing the container state file
-//
-// Low-level operations are delegated to its collaborators so that
-// the logic can be tested and substituted.
+// ContainerDelete is the compatibility facade for the delete operation.
 type ContainerDelete struct {
 	specLoader  specLoader
 	fifoHandler interface {
@@ -42,138 +31,24 @@ type ContainerDelete struct {
 	syscallHandler          utils.KernelSyscallHandler
 }
 
-// Delete executes the container deletion pipeline for the given container ID.
-//
-// The workflow is:
-//  1. Check the container status and fail if it is still running
-//  2. Load the OCI spec (config.json)
-//  3. Run poststop hooks
-//  4. Remove the container state file (state.json)
-//  5. Remove the FIFO if the container status is created
-//  6. Remove the container runtime directory
-//
-// If any step fails, the error is returned immediately and subsequent
-// steps are not executed.
-func (c *ContainerDelete) Delete(opt DeleteOption) (err error) {
-	var (
-		spec  spec.Spec
-		event = "delete"
-		stage string
-		pid   int
-	)
-
-	// audit log
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Pid:         pid,
-			Spec:        &spec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
-
-	// 1. check container status
-	stage = "get_status"
-	containerStatus, err := c.containerStatusManager.GetStatusFromId(opt.ContainerId)
-	if err != nil {
-		return err
+func (c *ContainerDelete) Delete(opt DeleteOption) error {
+	controller := deleteop.Controller{
+		LoadSpec:                c.specLoader.loadFile,
+		RemoveFifo:              c.fifoHandler.removeFifo,
+		ContainerStatusManager:  c.containerStatusManager,
+		ContainerHookController: c.containerHookController,
+		SyscallHandler:          c.syscallHandler,
 	}
-
-	// OCI delete only applies to stopped containers. Created/running
-	// containers can still be removed via --force for cleanup paths.
-	stage = "check_status"
-	if containerStatus != status.STOPPED && !opt.Force {
-		return fmt.Errorf("container: %s is not stopped. current status: %s", opt.ContainerId, containerStatus)
-	}
-
-	// if status is created or force-deleting a running container, kill init process before delete container
-	stage = "kill_process_before_remove"
-	if containerStatus == status.CREATED || (containerStatus == status.RUNNING && opt.Force) {
-		err = c.killInitProcess(opt.ContainerId)
-		if err != nil {
-			return fmt.Errorf("kill init process failed: %w", err)
-		}
-	}
-
-	// 2. load config.json
-	stage = "load_spec"
-	spec, err = c.specLoader.loadFile(opt.ContainerId)
-	if err != nil {
-		return err
-	}
-
-	// 3. HOOK: poststop
-	stage = "hook_poststop"
-	err = c.containerHookController.RunPoststopHooks(
-		opt.ContainerId,
-		spec.Hooks.Poststop,
-	)
-	if err != nil {
-		return err
-	}
-
-	// 4. remove state.json
-	stage = "remove_state"
-	err = c.containerStatusManager.RemoveStatusFile(opt.ContainerId)
-	if err != nil {
-		return err
-	}
-
-	// 5. remove exec.fifo if status is created
-	stage = "remove_fifo"
-	if containerStatus == status.CREATED {
-		err = c.fifoHandler.removeFifo(utils.FifoPath(opt.ContainerId))
-		if err != nil {
-			return err
-		}
-	}
-
-	// 6. remove cgroup resources created during create
-	stage = "remove_cgroup"
-	err = c.syscallHandler.RemoveAll(utils.CgroupPath(opt.ContainerId))
-	if err != nil {
-		return err
-	}
-
-	// 7. remove runtime directory
-	stage = "remove_runtime_dir"
-	err = c.syscallHandler.RemoveAll(utils.ContainerDir(opt.ContainerId))
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return controller.Delete(deleteop.Option{
+		ContainerId: opt.ContainerId,
+		Force:       opt.Force,
+	})
 }
 
 func (c *ContainerDelete) killInitProcess(containerId string) error {
-	containerPid, containerPidErr := c.containerStatusManager.GetPidFromId(containerId)
-	if containerPidErr != nil {
-		return containerPidErr
+	controller := deleteop.Controller{
+		ContainerStatusManager: c.containerStatusManager,
+		SyscallHandler:         c.syscallHandler,
 	}
-
-	// 1. send signal to pid
-	if err := c.syscallHandler.Kill(containerPid, signalMap["KILL"]); err != nil {
-		return err
-	}
-
-	// 2. update status file
-	//      status = stopped
-	//      pid = 0
-	//		shimPid = 0
-	if err := c.containerStatusManager.UpdateStatus(
-		containerId,
-		status.STOPPED,
-		0,
-		0,
-	); err != nil {
-		return err
-	}
-	return nil
+	return controller.KillInitProcess(containerId)
 }

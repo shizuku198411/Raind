@@ -1,21 +1,19 @@
 package container
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"raind/internal/droplet/container/attachio"
 	"raind/internal/droplet/logs"
 	"raind/internal/droplet/spec"
 	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
 	"runtime"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -164,9 +162,9 @@ func (c *ContainerShim) Execute(opt ShimExecuteOption) (err error) {
 
 		// Start accepting attach connections before init starts. The attach client
 		// may connect immediately after create/start returns.
-		h := newHub(ptmx, containerLog, logger)
-		h.startPump()
-		go c.acceptLoop(ln, h, logger)
+		h := attachio.NewHub(ptmx, containerLog, logger)
+		h.StartPump()
+		go attachio.AcceptLoop(ln, h, logger)
 	} else {
 		stage = "open_init_log"
 		logPath := utils.ContainerLogPath(containerId)
@@ -386,35 +384,7 @@ func allowRootlessSharedNetworkLowPorts() error {
 }
 
 func (c *ContainerShim) specSecureLoad(containerId string) (spec.Spec, error) {
-	fileHashPath := utils.ConfigFileHashPath(containerId)
-
-	// 1. load hash string
-	var specFileHash spec.SpecHash
-	if err := utils.ReadJsonFile(
-		fileHashPath,
-		&specFileHash,
-	); err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 2. calculate current config.json file hash
-	currentHash, err := utils.Sha256File(utils.ConfigFilePath(containerId))
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 3. assert
-	if specFileHash.Sha256 != currentHash {
-		return spec.Spec{}, fmt.Errorf("config.json hash validation failed: expect=%s, got=%s", specFileHash.Sha256, currentHash)
-	}
-
-	// 4. load config.json
-	specFile, err := c.specLoader.loadFile(containerId)
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	return specFile, nil
+	return verifyAndLoadSpec(containerId, c.specLoader)
 }
 
 // WriteInitPid atomically writes initPid to pidfile.
@@ -515,135 +485,4 @@ func (c *ContainerShim) SetReasonAndMessage(containerId string, exitCode int, re
 		return nil
 	}
 	return nil
-}
-
-func (c *ContainerShim) readFramesAndApply(r io.Reader, ptmx *os.File) error {
-	h := make([]byte, 1+4)
-	for {
-		if _, err := io.ReadFull(r, h); err != nil {
-			return err
-		}
-		typ := h[0]
-		n := binary.BigEndian.Uint32(h[1:5])
-
-		// safety limit (e.g. 8MB)
-		if n > 8*1024*1024 {
-			return fmt.Errorf("frame too large: %d", n)
-		}
-
-		payload := make([]byte, n)
-		if n > 0 {
-			if _, err := io.ReadFull(r, payload); err != nil {
-				return err
-			}
-		}
-
-		switch typ {
-		case frameData:
-			if len(payload) > 0 {
-				if _, err := ptmx.Write(payload); err != nil {
-					return err
-				}
-			}
-		case frameResize:
-			if len(payload) != 4 {
-				continue
-			}
-			rows := binary.BigEndian.Uint16(payload[0:2])
-			cols := binary.BigEndian.Uint16(payload[2:4])
-			_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
-		default:
-			// unknown frame -> ignore
-		}
-	}
-}
-
-func (c *ContainerShim) acceptLoop(ln net.Listener, h *hub, logger *log.Logger) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			if logger != nil {
-				logger.Printf("accept error: %v", err)
-			}
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		if logger != nil {
-			logger.Printf("attach connected")
-		}
-
-		h.attach(conn)
-
-		// conn -> ptmx (framed)
-		go func(cc net.Conn) {
-			_ = c.readFramesAndApply(cc, h.ptmx)
-			h.detach(cc)
-			_ = cc.Close()
-			if logger != nil {
-				logger.Printf("attach disconnected")
-			}
-		}(conn)
-	}
-}
-
-type hub struct {
-	ptmx *os.File
-
-	mu      sync.Mutex
-	conn    net.Conn // nil if detached
-	console *os.File // console.log
-	logger  *log.Logger
-}
-
-func newHub(ptmx *os.File, console *os.File, logger *log.Logger) *hub {
-	return &hub{ptmx: ptmx, console: console, logger: logger}
-}
-
-func (h *hub) attach(c net.Conn) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// single attach only: close previous
-	if h.conn != nil {
-		_ = h.conn.Close()
-	}
-	h.conn = c
-}
-
-func (h *hub) detach(c net.Conn) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.conn == c {
-		h.conn = nil
-	}
-}
-
-func (h *hub) startPump() {
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := h.ptmx.Read(buf)
-			if n > 0 {
-				if h.console != nil {
-					_, _ = h.console.Write(buf[:n])
-				}
-
-				h.mu.Lock()
-				c := h.conn
-				h.mu.Unlock()
-				if c != nil {
-					_, _ = c.Write(buf[:n])
-				}
-			}
-			if err != nil {
-				if h.logger != nil {
-					h.logger.Printf("ptmx read end: %v", err)
-				}
-				return
-			}
-		}
-	}()
 }

@@ -1,8 +1,6 @@
 package container
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -134,68 +132,6 @@ func TestContainerShimSetReasonAndMessageMapsExitCode(t *testing.T) {
 	}, statusManager.reasonUpdates)
 }
 
-func TestContainerShimReadFramesAndApplyWritesDataFrame(t *testing.T) {
-	// == setup ==
-	shim := &ContainerShim{}
-	ptmx, err := os.CreateTemp("", "raind-shim-ptmx-*")
-	require.NoError(t, err)
-	defer ptmx.Close()
-	var input bytes.Buffer
-	input.Write(buildFrameForTest(frameData, []byte("hello")))
-
-	// == exercise ==
-	err = shim.readFramesAndApply(&input, ptmx)
-
-	// == assert ==
-	require.ErrorIs(t, err, io.EOF)
-	data, err := os.ReadFile(ptmx.Name())
-	require.NoError(t, err)
-	assert.Equal(t, "hello", string(data))
-}
-
-func TestContainerShimReadFramesAndApplyRejectsTooLargeFrame(t *testing.T) {
-	// == setup ==
-	shim := &ContainerShim{}
-	ptmx, err := os.CreateTemp("", "raind-shim-ptmx-*")
-	require.NoError(t, err)
-	defer ptmx.Close()
-	var input bytes.Buffer
-	header := make([]byte, 5)
-	header[0] = frameData
-	binary.BigEndian.PutUint32(header[1:5], 8*1024*1024+1)
-	input.Write(header)
-
-	// == exercise ==
-	err = shim.readFramesAndApply(&input, ptmx)
-
-	// == assert ==
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "frame too large")
-}
-
-func TestContainerShimHubAttachReplacesPreviousConnection(t *testing.T) {
-	// == setup ==
-	ptmx, err := os.CreateTemp("", "raind-shim-ptmx-*")
-	require.NoError(t, err)
-	defer ptmx.Close()
-	h := newHub(ptmx, nil, nil)
-	oldConnA, oldConnB := netPipeForTest(t)
-	defer oldConnB.Close()
-	newConnA, newConnB := netPipeForTest(t)
-	defer newConnA.Close()
-	defer newConnB.Close()
-
-	// == exercise ==
-	h.attach(oldConnA)
-	h.attach(newConnA)
-
-	// == assert ==
-	assert.Equal(t, newConnA, h.conn)
-	_ = oldConnB.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
-	_, err = oldConnB.Write([]byte("x"))
-	require.Error(t, err)
-}
-
 func TestSendConsoleFileDescriptorSendsReadableFD(t *testing.T) {
 	// == setup ==
 	socketPath := filepath.Join(t.TempDir(), "console.sock")
@@ -287,25 +223,4 @@ func TestConsoleWinsizeRejectsInvalidConsoleSize(t *testing.T) {
 	_, err = consoleWinsize(&spec.ConsoleSizeObject{Height: 24, Width: spec.MaxConsoleSize + 1})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "process.consoleSize")
-}
-
-func buildFrameForTest(typ byte, payload []byte) []byte {
-	frame := make([]byte, 5+len(payload))
-	frame[0] = typ
-	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
-	copy(frame[5:], payload)
-	return frame
-}
-
-func buildTooLargeFrameForTest(typ byte) []byte {
-	frame := make([]byte, 5)
-	frame[0] = typ
-	binary.BigEndian.PutUint32(frame[1:5], 8*1024*1024+1)
-	return frame
-}
-
-func netPipeForTest(t *testing.T) (net.Conn, net.Conn) {
-	t.Helper()
-	a, b := net.Pipe()
-	return a, b
 }

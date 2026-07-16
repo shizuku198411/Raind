@@ -1,12 +1,12 @@
 package container
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/signal"
+	"raind/internal/droplet/container/attachio"
 	"raind/internal/droplet/utils"
 	"sync"
 	"syscall"
@@ -17,11 +17,6 @@ import (
 func NewContainerAttach() *ContainerAttach {
 	return &ContainerAttach{}
 }
-
-const (
-	frameData   = 0x00
-	frameResize = 0x01
-)
 
 type ContainerAttach struct{}
 
@@ -84,7 +79,7 @@ func (c *ContainerAttach) pumpStdinFramed(conn net.Conn, r io.Reader) error {
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
-			if werr := c.writeFrame(conn, frameData, buf[:n]); werr != nil {
+			if werr := c.writeFrame(conn, attachio.FrameData, buf[:n]); werr != nil {
 				return werr
 			}
 		}
@@ -119,21 +114,10 @@ func (c *ContainerAttach) sendResize(conn net.Conn) error {
 		return err
 	}
 	payload := make([]byte, 4)
-	binary.BigEndian.PutUint16(payload[0:2], uint16(h)) // rows
-	binary.BigEndian.PutUint16(payload[2:4], uint16(w)) // cols
-	return c.writeFrame(conn, frameResize, payload)
+	attachio.PutWinsize(payload, uint16(h), uint16(w))
+	return c.writeFrame(conn, attachio.FrameResize, payload)
 }
 
 func (c *ContainerAttach) writeFrame(w io.Writer, typ byte, payload []byte) error {
-	h := make([]byte, 1+4)
-	h[0] = typ
-	binary.BigEndian.PutUint32(h[1:5], uint32(len(payload)))
-	if _, err := w.Write(h); err != nil {
-		return err
-	}
-	if len(payload) > 0 {
-		_, err := w.Write(payload)
-		return err
-	}
-	return nil
+	return attachio.WriteFrame(w, typ, payload)
 }
