@@ -3,6 +3,7 @@ package container
 import (
 	"fmt"
 	"path/filepath"
+	"raind/internal/droplet/container/pathenv"
 	"raind/internal/droplet/spec"
 	"strings"
 
@@ -70,10 +71,5 @@ func resolveExecEntrypoint(containerPid string, containerSpec spec.Spec, entrypo
 }
 
 func execPathEnv(env []string) string {
-	for _, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			return strings.TrimPrefix(e, "PATH=")
-		}
-	}
-	return "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	return pathenv.OrDefault(env)
 }

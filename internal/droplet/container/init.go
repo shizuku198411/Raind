@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"raind/internal/droplet/logs"
+	"raind/internal/droplet/container/audit"
+	"raind/internal/droplet/container/initproc"
 	"raind/internal/droplet/spec"
-	"raind/internal/droplet/status"
 	"raind/internal/droplet/utils"
 	"runtime"
 	"strconv"
@@ -74,60 +74,46 @@ func (c *ContainerInit) Execute(opt InitOption) (err error) {
 	defer runtime.UnlockOSThread()
 
 	var (
-		spec  spec.Spec
-		event = "init"
-		stage string
+		spec spec.Spec
 	)
 
-	// audit log
-	defer func() {
-		result := "success"
-		if err != nil {
-			result = "fail"
-		}
-		_ = logs.RecordAuditLog(logs.AuditRecord{
-			ContainerId: opt.ContainerId,
-			Event:       event,
-			Stage:       stage,
-			Spec:        &spec,
-			Result:      result,
-			Error:       err,
-		})
-	}()
+	auditLog := audit.New(opt.ContainerId, "init")
+	auditLog.SetSpec(&spec)
+	defer auditLog.Record(&err)
 
 	fifo := opt.Fifo
 	entrypoint := opt.Entrypoint
 
 	// 1. load config.json
-	stage = "load_spec"
+	auditLog.Stage("load_spec")
 	spec, err = c.specSecureLoad(opt.ContainerId)
 	if err != nil {
 		return err
 	}
 
 	// 2. read fifo for waiting start signal
-	stage = "read_fifo"
+	auditLog.Stage("read_fifo")
 	err = c.fifoReader.readFifo(fifo)
 	if err != nil {
 		return err
 	}
 
 	// 3. prepare container environment
-	stage = "prepare"
+	auditLog.Stage("prepare")
 	err = c.containerEnvPreparer.prepare(opt.ContainerId, spec)
 	if err != nil {
 		return err
 	}
 
 	// 4. apply AppArmor Profile Onexec
-	stage = "apply_apparmor"
+	auditLog.Stage("apply_apparmor")
 	err = c.appArmorHandler.ApplyAAProfileOnExec(spec.LinuxSpec.AppArmorProfile)
 	if err != nil {
 		return err
 	}
 
 	// 5. replace process with the container entrypoint
-	stage = "exec_entrypoint"
+	auditLog.Stage("exec_entrypoint")
 	// lookup entrypoint[0]'s abstract path
 	arg0, err := c.lookEntrypointPath(entrypoint[0], spec.Process.Env)
 	if err != nil {
@@ -146,56 +132,11 @@ func (c *ContainerInit) Execute(opt InitOption) (err error) {
 }
 
 func (c *ContainerInit) closeAllExcept012() {
-	ents, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		return
-	}
-	for _, e := range ents {
-		fd, err := strconv.Atoi(e.Name())
-		if err != nil || fd < 3 {
-			continue
-		}
-		_ = syscall.Close(fd)
-	}
+	initproc.CloseAllExcept012()
 }
 
 func (c *ContainerInit) specSecureLoad(containerId string) (spec.Spec, error) {
-	fileHashPath := utils.ConfigFileHashPath(containerId)
-
-	// 1. load hash string
-	var specFileHash spec.SpecHash
-	if err := utils.ReadJsonFile(
-		fileHashPath,
-		&specFileHash,
-	); err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 2. calculate current config.json file hash
-	currentHash, err := utils.Sha256File(utils.ConfigFilePath(containerId))
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 3. assert
-	if specFileHash.Sha256 != currentHash {
-		return spec.Spec{}, fmt.Errorf("config.json hash validation failed: expect=%s, got=%s", specFileHash.Sha256, currentHash)
-	}
-
-	// 4. load config.json
-	specFile, err := c.specLoader.loadFile(containerId)
-	if err != nil {
-		return spec.Spec{}, err
-	}
-
-	// 5. remove hash file
-	if err := os.Remove(fileHashPath); err != nil {
-		if !shouldIgnoreSpecHashRemoveError(specFile, err) {
-			return spec.Spec{}, err
-		}
-	}
-
-	return specFile, nil
+	return verifyLoadAndConsumeSpecHash(containerId, c.specLoader)
 }
 
 func shouldIgnoreSpecHashRemoveError(containerSpec spec.Spec, err error) bool {
@@ -203,32 +144,7 @@ func shouldIgnoreSpecHashRemoveError(containerSpec spec.Spec, err error) bool {
 }
 
 func (c *ContainerInit) lookEntrypointPath(arg0 string, env []string) (string, error) {
-	// if arg0 has "/", it already abstract path
-	if strings.Contains(arg0, "/") {
-		return arg0, nil
-	}
-	// set PATH value
-	var pathVal string
-	for _, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			pathVal = strings.TrimPrefix(e, "PATH=")
-			break
-		}
-	}
-	if pathVal == "" {
-		pathVal = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	}
-
-	for _, dir := range strings.Split(pathVal, ":") {
-		if dir == "" {
-			dir = "."
-		}
-		cand := filepath.Join(dir, arg0)
-		if err := unix.Access(cand, unix.X_OK); err == nil {
-			return cand, nil
-		}
-	}
-	return "", fmt.Errorf("%s: not found in PATH", arg0)
+	return initproc.LookupEntrypointPath(arg0, env)
 }
 
 // containerEnvPreparer defines the behavior for preparing the container
@@ -407,8 +323,7 @@ func (p *rootContainerEnvPreparer) prepare(containerId string, spec spec.Spec) (
 }
 
 func shouldSkipInitHostname(containerSpec spec.Spec, prejoinedNamespaces bool) bool {
-	nsConfig := buildNamespaceConfig(containerSpec)
-	return nsConfig.utsPath != "" || (prejoinedNamespaces && isRootlessSpec(containerSpec))
+	return initproc.ShouldSkipHostname(containerSpec, prejoinedNamespaces)
 }
 
 func (p *rootContainerEnvPreparer) makeMountsPrivate() error {
@@ -432,11 +347,7 @@ func (p *rootContainerEnvPreparer) applyMountPropagation(target string, propagat
 }
 
 func isOCIBundleMode(containerId string) bool {
-	var state status.StatusObject
-	if err := utils.ReadJsonFile(utils.ContainerStatePath(containerId), &state); err != nil {
-		return false
-	}
-	return state.Bundle != "" && filepath.Clean(state.Bundle) != filepath.Clean(utils.ContainerDir(containerId))
+	return initproc.IsOCIBundleMode(containerId)
 }
 
 func (p *rootContainerEnvPreparer) createLinuxDevices(rootfs string, devices []spec.DeviceObject) error {
@@ -482,20 +393,7 @@ func (p *rootContainerEnvPreparer) createLinuxDevices(rootfs string, devices []s
 }
 
 func deviceMode(device spec.DeviceObject) (uint32, error) {
-	perm := uint32(0666)
-	if device.FileMode != nil {
-		perm = *device.FileMode
-	}
-	switch device.Type {
-	case "c", "u":
-		return syscall.S_IFCHR | perm, nil
-	case "b":
-		return syscall.S_IFBLK | perm, nil
-	case "p":
-		return syscall.S_IFIFO | perm, nil
-	default:
-		return 0, fmt.Errorf("unsupported linux device type: %s", device.Type)
-	}
+	return initproc.DeviceMode(device)
 }
 
 func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []string) error {
@@ -545,7 +443,7 @@ func (p *rootContainerEnvPreparer) applyMaskedPaths(rootfs string, paths []strin
 }
 
 func shouldSkipMissingMaskedPath(path string) bool {
-	return strings.HasPrefix(path, "/proc/") || strings.HasPrefix(path, "/sys/")
+	return initproc.ShouldSkipMissingMaskedPath(path)
 }
 
 func (p *rootContainerEnvPreparer) applyReadonlyPaths(rootfs string, paths []string) error {
@@ -599,42 +497,7 @@ func (p *rootContainerEnvPreparer) setRlimits(rlimits []spec.RlimitObject) error
 }
 
 func rlimitResource(name string) (int, bool) {
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "RLIMIT_AS":
-		return unix.RLIMIT_AS, true
-	case "RLIMIT_CORE":
-		return unix.RLIMIT_CORE, true
-	case "RLIMIT_CPU":
-		return unix.RLIMIT_CPU, true
-	case "RLIMIT_DATA":
-		return unix.RLIMIT_DATA, true
-	case "RLIMIT_FSIZE":
-		return unix.RLIMIT_FSIZE, true
-	case "RLIMIT_LOCKS":
-		return unix.RLIMIT_LOCKS, true
-	case "RLIMIT_MEMLOCK":
-		return unix.RLIMIT_MEMLOCK, true
-	case "RLIMIT_MSGQUEUE":
-		return unix.RLIMIT_MSGQUEUE, true
-	case "RLIMIT_NICE":
-		return unix.RLIMIT_NICE, true
-	case "RLIMIT_NOFILE":
-		return unix.RLIMIT_NOFILE, true
-	case "RLIMIT_NPROC":
-		return unix.RLIMIT_NPROC, true
-	case "RLIMIT_RSS":
-		return unix.RLIMIT_RSS, true
-	case "RLIMIT_RTPRIO":
-		return unix.RLIMIT_RTPRIO, true
-	case "RLIMIT_RTTIME":
-		return unix.RLIMIT_RTTIME, true
-	case "RLIMIT_SIGPENDING":
-		return unix.RLIMIT_SIGPENDING, true
-	case "RLIMIT_STACK":
-		return unix.RLIMIT_STACK, true
-	default:
-		return 0, false
-	}
+	return initproc.RlimitResource(name)
 }
 
 func (p *rootContainerEnvPreparer) setProcessUser(user spec.UserObject) error {

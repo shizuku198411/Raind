@@ -3,6 +3,7 @@ package container
 import (
 	"bytes"
 	"encoding/binary"
+	"raind/internal/droplet/container/attachio"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,13 +17,13 @@ func TestContainerAttachWriteFrameWritesTypeLengthAndPayload(t *testing.T) {
 	payload := []byte("hello")
 
 	// == exercise ==
-	err := attach.writeFrame(&out, frameData, payload)
+	err := attach.writeFrame(&out, attachio.FrameData, payload)
 
 	// == assert ==
 	require.NoError(t, err)
 	written := out.Bytes()
 	require.Len(t, written, 10)
-	assert.Equal(t, byte(frameData), written[0])
+	assert.Equal(t, byte(attachio.FrameData), written[0])
 	assert.Equal(t, uint32(len(payload)), binary.BigEndian.Uint32(written[1:5]))
 	assert.Equal(t, payload, written[5:])
 }
@@ -33,12 +34,12 @@ func TestContainerAttachWriteFrameAllowsEmptyPayload(t *testing.T) {
 	attach := &ContainerAttach{}
 
 	// == exercise ==
-	err := attach.writeFrame(&out, frameResize, nil)
+	err := attach.writeFrame(&out, attachio.FrameResize, nil)
 
 	// == assert ==
 	require.NoError(t, err)
 	written := out.Bytes()
 	require.Len(t, written, 5)
-	assert.Equal(t, byte(frameResize), written[0])
+	assert.Equal(t, byte(attachio.FrameResize), written[0])
 	assert.Equal(t, uint32(0), binary.BigEndian.Uint32(written[1:5]))
 }

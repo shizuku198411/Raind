@@ -1,13 +1,8 @@
 package container
 
 import (
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-
+	"raind/internal/droplet/container/rootless"
 	"raind/internal/droplet/spec"
-	"raind/internal/droplet/utils"
 )
 
 type rootlessIDMapPolicy struct {
@@ -20,129 +15,64 @@ type rootlessIDMapPolicy struct {
 }
 
 func rootlessConfigFromSpec(containerSpec spec.Spec) (spec.RootlessConfigObject, bool) {
-	if containerSpec.Annotations.Rootless == "" {
-		return spec.RootlessConfigObject{}, false
-	}
-	var rootless spec.RootlessConfigObject
-	if err := utils.StringToJson(containerSpec.Annotations.Rootless, &rootless); err != nil {
-		return spec.RootlessConfigObject{}, false
-	}
-	if !rootless.Enabled {
-		return spec.RootlessConfigObject{}, false
-	}
-	rootless.Mode = rootlessModeOrDefault(rootless.Mode)
-	return rootless, true
+	return rootless.ConfigFromSpec(containerSpec)
+}
+
+func rootlessPlanFromSpec(containerSpec spec.Spec) rootless.Plan {
+	return rootless.PlanFromSpec(containerSpec)
 }
 
 func isRootlessSpec(containerSpec spec.Spec) bool {
-	_, ok := rootlessConfigFromSpec(containerSpec)
-	return ok
+	return rootless.IsSpec(containerSpec)
 }
 
 func isNonInitialUserNamespace(uidMap string) bool {
-	for _, line := range strings.Split(uidMap, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		containerID, err := strconv.ParseUint(fields[0], 10, 64)
-		if err != nil || containerID != 0 {
-			continue
-		}
-		hostID, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			return false
-		}
-		return hostID != 0
-	}
-	return false
+	return rootless.IsNonInitialUserNamespace(uidMap)
 }
 
 func userNamespaceDiffersFromInit(selfUIDMap string, initUIDMap string) bool {
-	selfUIDMap = strings.TrimSpace(selfUIDMap)
-	initUIDMap = strings.TrimSpace(initUIDMap)
-	return selfUIDMap != "" && initUIDMap != "" && selfUIDMap != initUIDMap
+	return rootless.UserNamespaceDiffersFromInit(selfUIDMap, initUIDMap)
 }
 
 func currentUserNamespaceDiffersFromInit() bool {
-	selfUIDMap, err := os.ReadFile("/proc/self/uid_map")
-	if err != nil {
-		return false
-	}
-	initUIDMap, err := os.ReadFile("/proc/1/uid_map")
-	if err != nil {
-		return false
-	}
-	return userNamespaceDiffersFromInit(string(selfUIDMap), string(initUIDMap))
+	return rootless.CurrentUserNamespaceDiffersFromInit()
 }
 
 func rootlessModeOrDefault(mode string) string {
-	switch mode {
-	case "", spec.RootlessModeShiftedRoot:
-		return spec.RootlessModeShiftedRoot
-	case spec.RootlessModeLoginRoot:
-		return spec.RootlessModeLoginRoot
-	default:
-		return spec.RootlessModeShiftedRoot
-	}
+	return rootless.ModeOrDefault(mode)
 }
 
 func rootlessIDMapPolicyFromConfig(cfg spec.RootlessConfigObject) rootlessIDMapPolicy {
-	uidBase, gidBase, mapSize := rootlessIDMapConfig()
-	policy := rootlessIDMapPolicy{
-		mode:    rootlessModeOrDefault(cfg.Mode),
-		uidBase: uidBase,
-		gidBase: gidBase,
-		mapSize: mapSize,
-		rootUID: cfg.HostRootUID,
-		rootGID: cfg.HostRootGID,
-	}
-	if policy.mode == spec.RootlessModeLoginRoot {
-		if policy.rootUID <= 0 {
-			policy.rootUID = os.Getuid()
-		}
-		if policy.rootGID <= 0 {
-			policy.rootGID = os.Getgid()
-		}
-	} else {
-		policy.rootUID, policy.rootGID = policy.hostRootID()
-	}
-	return policy
+	return rootlessIDMapPolicyFromRootless(rootless.IDMapPolicyFromConfig(cfg))
 }
 
 func (p rootlessIDMapPolicy) hostRootID() (uid int, gid int) {
-	if p.mode == spec.RootlessModeLoginRoot {
-		return p.rootUID, p.rootGID
-	}
-	return p.uidBase, p.gidBase
+	return p.toRootless().HostRootID()
 }
 
 func (p rootlessIDMapPolicy) mapUID(path string, uid int) (int, error) {
-	if uid < 0 || uid >= p.mapSize {
-		return 0, fmt.Errorf("uid outside rootless map: path=%s uid=%d map_size=%d", path, uid, p.mapSize)
-	}
-	if p.mode == spec.RootlessModeLoginRoot {
-		if uid == 0 {
-			return p.rootUID, nil
-		}
-		return p.uidBase + uid - 1, nil
-	}
-	return p.uidBase + uid, nil
+	return p.toRootless().MapUID(path, uid)
 }
 
 func (p rootlessIDMapPolicy) mapGID(path string, gid int) (int, error) {
-	if gid < 0 || gid >= p.mapSize {
-		return 0, fmt.Errorf("gid outside rootless map: path=%s gid=%d map_size=%d", path, gid, p.mapSize)
-	}
-	if p.mode == spec.RootlessModeLoginRoot {
-		if gid == 0 {
-			return p.rootGID, nil
-		}
-		return p.gidBase + gid - 1, nil
-	}
-	return p.gidBase + gid, nil
+	return p.toRootless().MapGID(path, gid)
 }
 
 func rootlessHostRootID(cfg spec.RootlessConfigObject) (uid int, gid int) {
-	return rootlessIDMapPolicyFromConfig(cfg).hostRootID()
+	return rootless.HostRootID(cfg)
+}
+
+func (p rootlessIDMapPolicy) toRootless() rootless.IDMapPolicy {
+	return rootless.NewIDMapPolicy(p.mode, p.uidBase, p.gidBase, p.mapSize, p.rootUID, p.rootGID)
+}
+
+func rootlessIDMapPolicyFromRootless(p rootless.IDMapPolicy) rootlessIDMapPolicy {
+	return rootlessIDMapPolicy{
+		mode:    p.Mode(),
+		uidBase: p.UIDBase(),
+		gidBase: p.GIDBase(),
+		mapSize: p.MapSize(),
+		rootUID: p.RootUID(),
+		rootGID: p.RootGID(),
+	}
 }

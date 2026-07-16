@@ -1,90 +1,31 @@
 package container
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"raind/internal/droplet/spec"
-	"raind/internal/droplet/utils"
+	"raind/internal/droplet/container/bundle"
 )
 
-const ociConfigFileName = "config.json"
+const ociConfigFileName = bundle.OCIConfigFileName
 
-func bundlePathForContainer(containerId string, bundle string) (string, error) {
-	if bundle == "" {
-		return utils.ContainerDir(containerId), nil
-	}
-
-	abs, err := filepath.Abs(bundle)
-	if err != nil {
-		return "", err
-	}
-	if info, err := os.Stat(abs); err != nil {
-		return "", fmt.Errorf("stat bundle: %w", err)
-	} else if !info.IsDir() {
-		return "", fmt.Errorf("bundle is not a directory: %s", abs)
-	}
-	return abs, nil
+func bundlePathForContainer(containerId string, bundlePath string) (string, error) {
+	return bundle.PathForContainer(containerId, bundlePath)
 }
 
-func prepareBundleConfig(containerId string, bundle string) error {
-	if bundle == "" {
-		return nil
-	}
-
-	bundlePath, err := bundlePathForContainer(containerId, bundle)
-	if err != nil {
-		return err
-	}
-
-	configPath := filepath.Join(bundlePath, ociConfigFileName)
-	containerSpec, err := spec.LoadConfigFile(configPath)
-	if err != nil {
-		return fmt.Errorf("load bundle config: %w", err)
-	}
-	if err := spec.ValidateBasic(containerSpec); err != nil {
-		return fmt.Errorf("validate bundle config: %w", err)
-	}
-	containerSpec.Root.Path = resolveBundleRootPath(bundlePath, containerSpec.Root.Path)
-
-	if err := os.MkdirAll(filepath.Join(utils.ContainerDir(containerId), "logs"), 0755); err != nil {
-		return fmt.Errorf("create runtime bundle dir: %w", err)
-	}
-	if err := utils.WriteJsonToFile(utils.ConfigFilePath(containerId), containerSpec); err != nil {
-		return fmt.Errorf("write runtime config: %w", err)
-	}
-	return nil
+func prepareBundleConfig(containerId string, bundlePath string) error {
+	return bundle.PrepareConfig(containerId, bundlePath)
 }
 
 func resolveBundleRootPath(bundlePath string, rootPath string) string {
-	if rootPath == "" || filepath.IsAbs(rootPath) {
-		return rootPath
-	}
-	return filepath.Join(bundlePath, rootPath)
+	return bundle.ResolveRootPath(bundlePath, rootPath)
 }
 
 func writeContainerPidFile(pidFile string, pid int) error {
-	if pidFile == "" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0644)
+	return bundle.WriteContainerPidFile(pidFile, pid)
 }
 
 func writeExternalPidFileMarker(containerId string, pidFile string) error {
-	if pidFile == "" {
-		return nil
-	}
-	return os.WriteFile(utils.ExternalPidFileMarkerPath(containerId), []byte(pidFile), 0644)
+	return bundle.WriteExternalPidFileMarker(containerId, pidFile)
 }
 
 func writeSpecHashFile(containerId string) error {
-	hash, err := utils.Sha256File(utils.ConfigFilePath(containerId))
-	if err != nil {
-		return err
-	}
-	return utils.WriteJsonToFile(utils.ConfigFileHashPath(containerId), spec.SpecHash{Sha256: hash})
+	return writeCurrentSpecHash(containerId)
 }
