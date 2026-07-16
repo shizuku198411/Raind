@@ -8,6 +8,9 @@ SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SERVICE_NAME="${SERVICE_NAME:-raind-daemon.service}"
 RAIND_GROUP="${RAIND_GROUP:-raind}"
 VERSION_FILE="${ROOT_DIR}/VERSION"
+BASH_COMPLETION_DIR="${BASH_COMPLETION_DIR:-/usr/share/bash-completion/completions}"
+ZSH_COMPLETION_DIR="${ZSH_COMPLETION_DIR:-/usr/share/zsh/vendor-completions}"
+FISH_COMPLETION_DIR="${FISH_COMPLETION_DIR:-/usr/share/fish/vendor_completions.d}"
 
 BINARIES=(
   "bin/raind"
@@ -97,6 +100,31 @@ install_binaries() {
     echo "==> install ${src} -> ${dst}"
     install -m 0755 "${src}" "${dst}"
   done
+
+  install_completions
+}
+
+install_completions() {
+  local raind_bin="${ROOT_DIR}/bin/raind"
+  if [[ ! -x "${raind_bin}" ]]; then
+    echo "error: missing executable binary: ${raind_bin}" >&2
+    echo "hint: run './scripts/build.sh build' first." >&2
+    exit 1
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  "${raind_bin}" completion bash > "${tmp_dir}/raind"
+  "${raind_bin}" completion zsh > "${tmp_dir}/_raind"
+  "${raind_bin}" completion fish > "${tmp_dir}/raind.fish"
+
+  echo "==> install shell completions"
+  install -d "${BASH_COMPLETION_DIR}" "${ZSH_COMPLETION_DIR}" "${FISH_COMPLETION_DIR}"
+  install -m 0644 "${tmp_dir}/raind" "${BASH_COMPLETION_DIR}/raind"
+  install -m 0644 "${tmp_dir}/_raind" "${ZSH_COMPLETION_DIR}/_raind"
+  install -m 0644 "${tmp_dir}/raind.fish" "${FISH_COMPLETION_DIR}/raind.fish"
+  rm -rf "${tmp_dir}"
 }
 
 write_service_file() {
@@ -144,7 +172,7 @@ Usage: $0 [bootstrap|build|install|enable-service|all]
 
   bootstrap       Download Go modules
   build           Build all components
-  install         Install built binaries to ${INSTALL_DIR}
+  install         Install built binaries and shell completions
   enable-service  Create and start ${SERVICE_NAME}
   all             Build, install, and enable service
 USAGE

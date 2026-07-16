@@ -13,6 +13,7 @@ confinement: classic
 apps:
   raind:
     command: bin/raind
+    completer: bin/raind-completion.bash
     environment:
       RAIND_DROPLET_BIN: $SNAP/bin/droplet
       RAIND_HOOK_AGENT_BIN: $SNAP/bin/condenser-hook-agent
@@ -61,3 +62,4 @@ parts:
       install -m 0755 bin/condenser "$CRAFT_PART_INSTALL/bin/condenser"
       install -m 0755 bin/condenser-hook-agent "$CRAFT_PART_INSTALL/bin/condenser-hook-agent"
       install -m 0755 bin/droplet "$CRAFT_PART_INSTALL/bin/droplet"
+      "$CRAFT_PART_INSTALL/bin/raind" completion bash > "$CRAFT_PART_INSTALL/bin/raind-completion.bash"

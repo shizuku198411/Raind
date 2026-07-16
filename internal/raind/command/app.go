@@ -134,6 +134,7 @@ func NewApp() *cli.App {
 
 	// disable slice flag separator
 	app.DisableSliceFlagSeparator = true
+	app.Commands = append(app.Commands, completioncommand.CommandComplete(app))
 	app.Commands = append(app.Commands, completioncommand.CommandCompletion(app))
 
 	return app
