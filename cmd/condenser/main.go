@@ -95,23 +95,6 @@ func main() {
 		}
 	}()
 
-	// Swagger
-	swaggerAddr := ":7758"
-	swaggerRouter := httpapi.NewSwaggerRouter()
-	swaggerSrv := &http.Server{
-		Addr:    swaggerAddr,
-		Handler: swaggerRouter,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-		},
-	}
-	go func() {
-		log.Printf("[*] swagger listening on %s", swaggerAddr)
-		if err := swaggerSrv.ListenAndServeTLS(utils.PublicCertPath, utils.PrivateKeyPath); err != nil {
-			log.Fatal(err)
-		}
-	}()
-
 	// enriched logger
 	go func() {
 		log.Printf("[*] enrichement logger start")

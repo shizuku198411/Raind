@@ -186,15 +186,6 @@ assert_api_fail_method() {
   jq -e '.status == "fail" and (.message | length > 0)' "${out}" >/dev/null
 }
 
-assert_swagger() {
-  local out="${E2E_WORK_DIR}/swagger.json"
-
-  log "GET /swagger/doc.json"
-  sudo_cmd curl -sk --connect-timeout 1 --max-time 3 \
-    "https://127.0.0.1:7758/swagger/doc.json" >"${out}"
-  jq -e '.swagger == "2.0"' "${out}" >/dev/null
-}
-
 assert_client_cert_required() {
   local code
 
@@ -461,7 +452,6 @@ main() {
   wait_ready
 
   assert_read_api_surface
-  assert_swagger
   assert_client_cert_required
   assert_cert_contracts
   assert_spiffe_rejections

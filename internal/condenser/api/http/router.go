@@ -28,33 +28,11 @@ import (
 	securityProfileHandler "raind/internal/condenser/api/http/securityprofile"
 	serviceHandler "raind/internal/condenser/api/http/service"
 	websocketHandler "raind/internal/condenser/api/http/websocket"
-	_ "raind/internal/condenser/docs"
 	"raind/internal/condenser/utils"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
-
-	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
-
-// @title Condenser API
-// @version 1.0
-// @description High-level container runtime API for Raind stack
-// @BasePath /
-// @schemes http
-
-func NewSwaggerRouter() *chi.Mux {
-	r := chi.NewRouter()
-
-	// middleware
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	// == swagger ==
-	r.Get("/swagger/*", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
-
-	return r
-}
 
 func NewApiRouter() *chi.Mux {
 	r := chi.NewRouter()
