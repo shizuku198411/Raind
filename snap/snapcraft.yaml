@@ -62,4 +62,4 @@ parts:
       install -m 0755 bin/condenser "$CRAFT_PART_INSTALL/bin/condenser"
       install -m 0755 bin/condenser-hook-agent "$CRAFT_PART_INSTALL/bin/condenser-hook-agent"
       install -m 0755 bin/droplet "$CRAFT_PART_INSTALL/bin/droplet"
-      "$CRAFT_PART_INSTALL/bin/raind" completion bash > "$CRAFT_PART_INSTALL/bin/raind-completion.bash"
+      "$CRAFT_PART_INSTALL/bin/raind" completion --snap bash > "$CRAFT_PART_INSTALL/bin/raind-completion.bash"

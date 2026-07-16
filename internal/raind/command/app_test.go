@@ -89,6 +89,18 @@ func TestCompletionCommandsRenderSupportedShells(t *testing.T) {
 	}
 }
 
+func TestSnapBashCompletionUsesSnapRun(t *testing.T) {
+	app := NewApp()
+	var out bytes.Buffer
+	app.Writer = &out
+
+	err := app.Run([]string{"raind", "completion", "--snap", "bash"})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "snap run raind __complete")
+	assert.Contains(t, out.String(), "complete -F _raind_complete /snap/bin/raind raind")
+}
+
 func TestCompleteSuggestsTopLevelCommands(t *testing.T) {
 	app := NewApp()
 	var out bytes.Buffer
