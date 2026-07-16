@@ -33,6 +33,9 @@ func CommandCompletion(app *cli.App) *cli.Command {
 		Name:      "completion",
 		Usage:     "print shell completion script",
 		ArgsUsage: "bash|zsh|fish",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "snap", Usage: "render bash completion for snapd completer integration"},
+		},
 		Action: func(ctx *cli.Context) error {
 			shell := strings.ToLower(strings.TrimSpace(ctx.Args().First()))
 			if shell == "" {
@@ -42,7 +45,11 @@ func CommandCompletion(app *cli.App) *cli.Command {
 			info := collectInfo(app)
 			switch shell {
 			case "bash":
-				fmt.Fprint(ctx.App.Writer, renderBash(app.Name, info))
+				if ctx.Bool("snap") {
+					fmt.Fprint(ctx.App.Writer, renderBashWithCommand(app.Name, info, "snap run "+app.Name, []string{app.Name, "/snap/bin/" + app.Name}))
+				} else {
+					fmt.Fprint(ctx.App.Writer, renderBash(app.Name, info))
+				}
 			case "zsh":
 				fmt.Fprint(ctx.App.Writer, renderZsh(app.Name, info))
 			case "fish":
@@ -183,13 +190,17 @@ func uniqueStrings(items []string) []string {
 }
 
 func renderBash(bin string, commands []topCommandInfo) string {
+	return renderBashWithCommand(bin, commands, bin, []string{bin})
+}
+
+func renderBashWithCommand(bin string, commands []topCommandInfo, completeCommand string, completeNames []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# bash completion for %s\n", bin)
 	fmt.Fprintf(&b, "_%s_complete() {\n", bin)
 	fmt.Fprint(&b, "  local cur out directive candidates\n")
 	fmt.Fprint(&b, "  COMPREPLY=()\n")
 	fmt.Fprint(&b, "  cur=\"${COMP_WORDS[COMP_CWORD]}\"\n")
-	fmt.Fprintf(&b, "  out=$(%s __complete \"${COMP_WORDS[@]:1}\" 2>/dev/null)\n", bin)
+	fmt.Fprintf(&b, "  out=$(%s __complete \"${COMP_WORDS[@]:1}\" 2>/dev/null)\n", completeCommand)
 	b.WriteString("  directive=$(printf '%s\\n' \"$out\" | tail -n 1)\n")
 	b.WriteString("  candidates=$(printf '%s\\n' \"$out\" | sed '$d')\n\n")
 	fmt.Fprint(&b, "  case \"$directive\" in\n")
@@ -205,7 +216,7 @@ func renderBash(bin string, commands []topCommandInfo) string {
 	fmt.Fprint(&b, "  fi\n")
 	fmt.Fprint(&b, "  return 0\n")
 	fmt.Fprint(&b, "}\n\n")
-	fmt.Fprintf(&b, "complete -F _%s_complete %s\n", bin, bin)
+	fmt.Fprintf(&b, "complete -F _%s_complete %s\n", bin, strings.Join(uniqueStrings(completeNames), " "))
 
 	return b.String()
 }
