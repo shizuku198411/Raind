@@ -103,7 +103,6 @@ sudo systemctl status raind-daemon.service
      CGroup: /system.slice/raind-daemon.service
              └─4747 /usr/local/bin/condenser
 
-Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] swagger listening on :7758
 Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] enrichement logger start
 Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] service controller start
 Jun 16 16:26:11 raind-dev-4ec1a7cf condenser[4747]: 2026/06/16 16:26:11 [*] ingress https gateway listening on :7443
