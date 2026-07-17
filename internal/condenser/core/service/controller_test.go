@@ -19,19 +19,23 @@ import (
 
 type recordedCommandFactory struct {
 	commands []string
+	outputs  map[string][]byte
 }
 
 func (f *recordedCommandFactory) Command(name string, args ...string) utils.CommandExecutor {
-	f.commands = append(f.commands, name+" "+strings.Join(args, " "))
-	return &noopCommandExecutor{}
+	cmd := name + " " + strings.Join(args, " ")
+	f.commands = append(f.commands, cmd)
+	return &noopCommandExecutor{output: f.outputs[cmd]}
 }
 
-type noopCommandExecutor struct{}
+type noopCommandExecutor struct {
+	output []byte
+}
 
 func (n *noopCommandExecutor) Start() error                   { return nil }
 func (n *noopCommandExecutor) Wait() error                    { return nil }
 func (n *noopCommandExecutor) Run() error                     { return nil }
-func (n *noopCommandExecutor) Output() ([]byte, error)        { return nil, nil }
+func (n *noopCommandExecutor) Output() ([]byte, error)        { return n.output, nil }
 func (n *noopCommandExecutor) CombineOutput() ([]byte, error) { return nil, nil }
 func (n *noopCommandExecutor) Pid() int                       { return -1 }
 func (n *noopCommandExecutor) SetEnv(envv []string)           {}
@@ -85,7 +89,8 @@ func (f *fakeEndpointContainerService) GetLogWithTailLines(string, int) ([]byte,
 }
 
 type fakeEndpointIpam struct {
-	addresses map[string]struct {
+	defaultInterfaceAddr string
+	addresses            map[string]struct {
 		host   string
 		bridge string
 		addr   string
@@ -99,8 +104,10 @@ func (f *fakeEndpointIpam) StoreBridge(string) (string, string, error)  { return
 func (f *fakeEndpointIpam) RemoveBridge(string) error                   { return nil }
 func (f *fakeEndpointIpam) GetRuntimeSubnet() (string, error)           { return "", nil }
 func (f *fakeEndpointIpam) GetDefaultInterface() (string, error)        { return "", nil }
-func (f *fakeEndpointIpam) GetDefaultInterfaceAddr() (string, error)    { return "", nil }
-func (f *fakeEndpointIpam) GetBridgeAddr(string) (string, error)        { return "", nil }
+func (f *fakeEndpointIpam) GetDefaultInterfaceAddr() (string, error) {
+	return f.defaultInterfaceAddr, nil
+}
+func (f *fakeEndpointIpam) GetBridgeAddr(string) (string, error) { return "", nil }
 func (f *fakeEndpointIpam) GetDnsProxyInfo() (string, string, []string, error) {
 	return "", "", nil, nil
 }
@@ -254,9 +261,46 @@ func TestReconcileCleansPreviousServiceRulesByServiceID(t *testing.T) {
 	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SNAT-svc-1")
 }
 
+func TestCleanupManagedRulesOnStartRemovesStaleServiceChains(t *testing.T) {
+	commands := &recordedCommandFactory{
+		outputs: map[string][]byte{
+			"iptables -t nat -S": []byte(strings.Join([]string{
+				"-P PREROUTING ACCEPT",
+				"-N RAIND-SVC-stale-80",
+				"-N RAIND-SNAT-stale",
+				"-A PREROUTING -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-stale-80",
+				"-A OUTPUT -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-stale-80",
+				"-A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-stale",
+			}, "\n")),
+			"iptables -S": []byte(strings.Join([]string{
+				"-P FORWARD ACCEPT",
+				"-N RAIND-FWD-stale",
+				"-A FORWARD -j RAIND-FWD-stale",
+			}, "\n")),
+		},
+	}
+	controller := &ServiceController{commandFactory: commands}
+
+	require.NoError(t, controller.cleanupManagedRulesOnStart())
+
+	assert.Contains(t, commands.commands, "iptables -t nat -D PREROUTING -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-stale-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -D OUTPUT -d 10.166.255.1/32 -p tcp --dport 80 -j RAIND-SVC-stale-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -D POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-stale")
+	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SVC-stale-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SVC-stale-80")
+	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SNAT-stale")
+	assert.Contains(t, commands.commands, "iptables -t nat -X RAIND-SNAT-stale")
+	assert.Contains(t, commands.commands, "iptables -D FORWARD -j RAIND-FWD-stale")
+	assert.Contains(t, commands.commands, "iptables -F RAIND-FWD-stale")
+	assert.Contains(t, commands.commands, "iptables -X RAIND-FWD-stale")
+}
+
 func TestApplyRulesUsesManagedForwardChain(t *testing.T) {
 	commands := &recordedCommandFactory{}
-	controller := &ServiceController{commandFactory: commands}
+	controller := &ServiceController{
+		commandFactory: commands,
+		ipamHandler:    &fakeEndpointIpam{defaultInterfaceAddr: "192.0.2.10"},
+	}
 	svc := ssm.ServiceInfo{
 		ServiceId: "svc-1",
 		Name:      "web",
@@ -284,17 +328,22 @@ func TestApplyRulesUsesManagedForwardChain(t *testing.T) {
 	assert.Contains(t, commands.commands, "iptables -t nat -F RAIND-SNAT-svc-1")
 	assert.Contains(t, commands.commands, "iptables -t nat -D POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
 	assert.Contains(t, commands.commands, "iptables -t nat -A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -D POSTROUTING -s 192.0.2.10/32 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -A POSTROUTING -s 192.0.2.10/32 -j RAIND-SNAT-svc-1")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i rbr0 -o rbr0 -p tcp -m conntrack --ctstate DNAT --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.Contains(t, commands.commands, "iptables -A RAIND-FWD-svc-1 -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
-	assert.Contains(t, commands.commands, "iptables -t nat -A RAIND-SNAT-svc-1 -s 127.0.0.0/8 -d 10.166.0.2 -p tcp --dport 80 -j MASQUERADE")
+	assert.Contains(t, commands.commands, "iptables -t nat -A RAIND-SNAT-svc-1 -d 10.166.0.2 -p tcp --dport 80 -j MASQUERADE")
 	assert.NotContains(t, commands.commands, "iptables -A FORWARD -i eth0 -o rbr0 -p tcp --dport 80 -d 10.166.0.2 -j ACCEPT")
 	assert.NotContains(t, commands.commands, "iptables -A FORWARD -o eth0 -i rbr0 -p tcp --sport 80 -s 10.166.0.2 -j ACCEPT")
 }
 
-func TestApplyRulesDoesNotCreateLocalhostSNATForClusterIP(t *testing.T) {
+func TestApplyRulesCreatesHostSNATForClusterIP(t *testing.T) {
 	commands := &recordedCommandFactory{}
-	controller := &ServiceController{commandFactory: commands}
+	controller := &ServiceController{
+		commandFactory: commands,
+		ipamHandler:    &fakeEndpointIpam{defaultInterfaceAddr: "192.0.2.10"},
+	}
 	svc := ssm.ServiceInfo{
 		ServiceId: "svc-1",
 		Name:      "web",
@@ -315,10 +364,10 @@ func TestApplyRulesDoesNotCreateLocalhostSNATForClusterIP(t *testing.T) {
 
 	require.NoError(t, controller.applyRules(svc, endpoints))
 
-	for _, cmd := range commands.commands {
-		assert.NotContains(t, cmd, "-A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
-		assert.NotContains(t, cmd, "MASQUERADE")
-	}
+	assert.Contains(t, commands.commands, "iptables -t nat -N RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -A POSTROUTING -s 127.0.0.0/8 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -A POSTROUTING -s 192.0.2.10/32 -j RAIND-SNAT-svc-1")
+	assert.Contains(t, commands.commands, "iptables -t nat -A RAIND-SNAT-svc-1 -d 10.166.0.2 -p tcp --dport 80 -j MASQUERADE")
 }
 
 func TestServiceTypeDefaultsToClusterIP(t *testing.T) {

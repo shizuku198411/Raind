@@ -39,6 +39,13 @@ type ServiceController struct {
 }
 
 func (c *ServiceController) Start() {
+	if err := c.cleanupManagedRulesOnStart(); err != nil {
+		log.Printf("service controller startup cleanup failed: %v", err)
+	}
+	if err := c.reconcileOnce(); err != nil {
+		log.Printf("service controller initial reconcile failed: %v", err)
+	}
+
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
@@ -261,21 +268,20 @@ func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpo
 	}
 
 	snatChain := c.serviceSNATChainName(svc.ServiceId)
-	if serviceType(svc) == ssm.ServiceTypeNodePort {
-		if err := c.ensureSNATChain(snatChain); err != nil {
+	if err := c.ensureSNATChain(snatChain); err != nil {
+		return err
+	}
+	if err := c.flushSNATChain(snatChain); err != nil {
+		return err
+	}
+	_ = c.deleteSNATJumpRules(snatChain)
+	if err := c.addLocalhostSNATJumpRule(snatChain); err != nil {
+		return err
+	}
+	if hostAddr := c.defaultHostInterfaceAddr(); hostAddr != "" {
+		if err := c.addHostSNATJumpRule(snatChain, hostAddr); err != nil {
 			return err
 		}
-		if err := c.flushSNATChain(snatChain); err != nil {
-			return err
-		}
-		_ = c.deleteSNATJumpRule(snatChain)
-		if err := c.addSNATJumpRule(snatChain); err != nil {
-			return err
-		}
-	} else {
-		_ = c.deleteSNATJumpRule(snatChain)
-		_ = c.flushSNATChain(snatChain)
-		_ = c.deleteSNATChain(snatChain)
 	}
 
 	for _, port := range svc.Ports {
@@ -312,9 +318,7 @@ func (c *ServiceController) applyRules(svc ssm.ServiceInfo, endpoints []svcEndpo
 				}
 			}
 			_ = c.addForwardRules(forwardChain, ep, port.TargetPort, proto)
-			if serviceType(svc) == ssm.ServiceTypeNodePort {
-				_ = c.addLocalhostSNATRule(snatChain, ep.Addr, port.TargetPort, proto)
-			}
+			_ = c.addServiceSNATRule(snatChain, ep.Addr, port.TargetPort, proto)
 		}
 	}
 	return nil
@@ -386,7 +390,7 @@ func (c *ServiceController) cleanupServiceRules(svc ssm.ServiceInfo) {
 	_ = c.deleteForwardChain(forwardChain)
 
 	snatChain := c.serviceSNATChainName(svc.ServiceId)
-	_ = c.deleteSNATJumpRule(snatChain)
+	_ = c.deleteSNATJumpRules(snatChain)
 	_ = c.flushSNATChain(snatChain)
 	_ = c.deleteSNATChain(snatChain)
 
@@ -400,6 +404,92 @@ func (c *ServiceController) cleanupServiceRules(svc ssm.ServiceInfo) {
 		_ = c.flushChain(chain)
 		_ = c.deleteChain(chain)
 	}
+}
+
+func (c *ServiceController) cleanupManagedRulesOnStart() error {
+	if err := c.cleanupManagedIptablesRules("nat", []string{"RAIND-SVC-", "RAIND-SNAT-"}); err != nil {
+		return err
+	}
+	return c.cleanupManagedIptablesRules("", []string{"RAIND-FWD-"})
+}
+
+func (c *ServiceController) cleanupManagedIptablesRules(table string, prefixes []string) error {
+	rules, err := c.iptablesRules(table)
+	if err != nil {
+		return err
+	}
+
+	chains := map[string]struct{}{}
+	for _, line := range rules {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "-N":
+			if hasManagedPrefix(fields[1], prefixes) {
+				chains[fields[1]] = struct{}{}
+			}
+		case "-A":
+			target := jumpTarget(fields)
+			if hasManagedPrefix(target, prefixes) {
+				deleteArgs := append([]string{}, fields...)
+				deleteArgs[0] = "-D"
+				_ = c.runIptables(table, deleteArgs...)
+			}
+		}
+	}
+
+	for chain := range chains {
+		_ = c.runIptables(table, "-F", chain)
+		_ = c.runIptables(table, "-X", chain)
+	}
+	return nil
+}
+
+func (c *ServiceController) iptablesRules(table string) ([]string, error) {
+	out, err := c.commandFactory.Command("iptables", tableArgs(table, "-S")...).Output()
+	if err != nil {
+		return nil, err
+	}
+	var rules []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			rules = append(rules, line)
+		}
+	}
+	return rules, nil
+}
+
+func (c *ServiceController) runIptables(table string, args ...string) error {
+	return c.commandFactory.Command("iptables", tableArgs(table, args...)...).Run()
+}
+
+func tableArgs(table string, args ...string) []string {
+	if table == "" {
+		return args
+	}
+	out := []string{"-t", table}
+	return append(out, args...)
+}
+
+func jumpTarget(fields []string) string {
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "-j" {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func hasManagedPrefix(value string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ServiceController) deleteChain(chain string) error {
@@ -451,7 +541,7 @@ func (c *ServiceController) deleteSNATChain(chain string) error {
 	return nil
 }
 
-func (c *ServiceController) addSNATJumpRule(chain string) error {
+func (c *ServiceController) addLocalhostSNATJumpRule(chain string) error {
 	cmd := c.commandFactory.Command(
 		"iptables", "-t", "nat", "-A", "POSTROUTING",
 		"-s", "127.0.0.0/8",
@@ -460,20 +550,51 @@ func (c *ServiceController) addSNATJumpRule(chain string) error {
 	return cmd.Run()
 }
 
-func (c *ServiceController) deleteSNATJumpRule(chain string) error {
+func (c *ServiceController) addHostSNATJumpRule(chain, hostAddr string) error {
+	hostAddr = strings.TrimSpace(strings.Split(hostAddr, "/")[0])
+	if hostAddr == "" {
+		return nil
+	}
+	cmd := c.commandFactory.Command(
+		"iptables", "-t", "nat", "-A", "POSTROUTING",
+		"-s", hostAddr+"/32",
+		"-j", chain,
+	)
+	return cmd.Run()
+}
+
+func (c *ServiceController) deleteSNATJumpRules(chain string) error {
 	cmd := c.commandFactory.Command(
 		"iptables", "-t", "nat", "-D", "POSTROUTING",
 		"-s", "127.0.0.0/8",
 		"-j", chain,
 	)
 	_ = cmd.Run()
+	if hostAddr := c.defaultHostInterfaceAddr(); hostAddr != "" {
+		cmd = c.commandFactory.Command(
+			"iptables", "-t", "nat", "-D", "POSTROUTING",
+			"-s", hostAddr+"/32",
+			"-j", chain,
+		)
+		_ = cmd.Run()
+	}
 	return nil
 }
 
-func (c *ServiceController) addLocalhostSNATRule(chain, endpointAddr string, targetPort int, proto string) error {
+func (c *ServiceController) defaultHostInterfaceAddr() string {
+	if c.ipamHandler == nil {
+		return ""
+	}
+	hostAddr, err := c.ipamHandler.GetDefaultInterfaceAddr()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(hostAddr, "/")[0])
+}
+
+func (c *ServiceController) addServiceSNATRule(chain, endpointAddr string, targetPort int, proto string) error {
 	cmd := c.commandFactory.Command(
 		"iptables", "-t", "nat", "-A", chain,
-		"-s", "127.0.0.0/8",
 		"-d", endpointAddr,
 		"-p", proto,
 		"--dport", itoa(targetPort),

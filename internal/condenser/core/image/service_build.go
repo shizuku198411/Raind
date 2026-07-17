@@ -1591,6 +1591,9 @@ func ExtractTarToDirWithOptions(r io.Reader, dst string, opt ExtractTarOptions) 
 			if err := ensureSafeExtractionDir(dst, filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
+			if err := validateBuildContextSymlinkTarget(dst, target, hdr.Linkname); err != nil {
+				return err
+			}
 			if err := ensureExtractionTargetAbsentOrNotSymlink(target, hdr.Name); err != nil {
 				return err
 			}
@@ -1654,6 +1657,29 @@ func ensureSafeExtractionDir(root string, dir string, perm fs.FileMode) error {
 				return fmt.Errorf("not a directory while extracting tar: %s", current)
 			}
 		}
+	}
+	return nil
+}
+
+func validateBuildContextSymlinkTarget(root string, target string, linkname string) error {
+	if linkname == "" {
+		return fmt.Errorf("symlink target is empty: %s", target)
+	}
+	if strings.ContainsRune(linkname, '\x00') {
+		return fmt.Errorf("symlink target contains NUL byte: %s", target)
+	}
+	if filepath.IsAbs(linkname) {
+		return fmt.Errorf("absolute symlink target is not allowed in build context: %s -> %s", target, linkname)
+	}
+
+	linkTarget := filepath.Clean(filepath.Join(filepath.Dir(target), linkname))
+	root = filepath.Clean(root)
+	rel, err := filepath.Rel(root, linkTarget)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("symlink target escapes build context: %s -> %s", target, linkname)
 	}
 	return nil
 }
