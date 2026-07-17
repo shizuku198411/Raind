@@ -144,3 +144,45 @@ func buildTestTar(t *testing.T, files map[string]string) []byte {
 	require.NoError(t, tw.Close())
 	return buf.Bytes()
 }
+
+func TestExtractTarToDirWithOptionsRejectsEscapingSymlinkTarget(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "dir/link",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "../../outside",
+		Mode:     0o777,
+	}))
+	require.NoError(t, tw.Close())
+
+	err := ExtractTarToDirWithOptions(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractTarOptions{
+		MaxBytes:   int64(buf.Len() + 1024),
+		MaxFile:    1024,
+		MaxEntries: 10,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink target escapes build context")
+}
+
+func TestExtractTarToDirWithOptionsRejectsAbsoluteSymlinkTarget(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "link",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/tmp/outside",
+		Mode:     0o777,
+	}))
+	require.NoError(t, tw.Close())
+
+	err := ExtractTarToDirWithOptions(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractTarOptions{
+		MaxBytes:   int64(buf.Len() + 1024),
+		MaxFile:    1024,
+		MaxEntries: 10,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "absolute symlink target")
+}

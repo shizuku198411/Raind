@@ -644,14 +644,14 @@ func (s *RegistryDockerHub) applyOneLayer(rootfs, layerBlobPath string) error {
 			continue
 		}
 
-		// remove /
-		name := strings.TrimPrefix(hdr.Name, "/")
-		name = filepath.Clean(name)
-		if name == "." {
+		name, err := cleanArchivePath(hdr.Name)
+		if err != nil {
+			return fmt.Errorf("invalid path %q: %w", hdr.Name, err)
+		}
+		if name == "" {
 			continue
 		}
 
-		// protect path traversal
 		dstPath, err := s.joinRoot(rootfs, name)
 		if err != nil {
 			return fmt.Errorf("invalid path %q: %w", hdr.Name, err)
@@ -666,7 +666,7 @@ func (s *RegistryDockerHub) applyOneLayer(rootfs, layerBlobPath string) error {
 			if err != nil {
 				return err
 			}
-			if err := s.removeAllChildren(opaqueDir); err != nil {
+			if err := s.removeAllChildren(rootfs, opaqueDir); err != nil {
 				return fmt.Errorf("opaque dir cleanup %s: %w", opaqueDir, err)
 			}
 			continue
@@ -679,20 +679,22 @@ func (s *RegistryDockerHub) applyOneLayer(rootfs, layerBlobPath string) error {
 			if err != nil {
 				return err
 			}
-			_ = os.RemoveAll(targetAbs)
+			if err := s.removeArchiveTarget(rootfs, targetAbs); err != nil {
+				return err
+			}
 			continue
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(dstPath, os.FileMode(hdr.Mode)); err != nil {
+			if err := s.ensureSafeExtractionDir(rootfs, dstPath, os.FileMode(hdr.Mode).Perm()); err != nil {
 				return err
 			}
 			_ = os.Chtimes(dstPath, time.Now(), hdr.ModTime)
 			_ = s.applyOwner(dstPath, hdr, false)
 
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			if err := s.ensureSafeParentDir(rootfs, dstPath); err != nil {
 				return err
 			}
 			if err := s.writeFileFromTar(dstPath, tr, os.FileMode(hdr.Mode)); err != nil {
@@ -702,28 +704,51 @@ func (s *RegistryDockerHub) applyOneLayer(rootfs, layerBlobPath string) error {
 			_ = s.applyOwner(dstPath, hdr, false)
 
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			if err := s.ensureSafeParentDir(rootfs, dstPath); err != nil {
 				return err
 			}
-			_ = os.RemoveAll(dstPath)
+			if err := validateImageLayerSymlinkTarget(rootfs, dstPath, hdr.Linkname); err != nil {
+				return err
+			}
+			if err := s.removeArchiveTarget(rootfs, dstPath); err != nil {
+				return err
+			}
 			if err := os.Symlink(hdr.Linkname, dstPath); err != nil {
 				return err
 			}
 			_ = s.applyOwner(dstPath, hdr, true)
 
 		case tar.TypeLink: // hardlink
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			if err := s.ensureSafeParentDir(rootfs, dstPath); err != nil {
 				return err
 			}
-			linkTarget := strings.TrimPrefix(hdr.Linkname, "/")
-			linkTarget = filepath.Clean(linkTarget)
+			linkTarget, err := cleanArchivePath(hdr.Linkname)
+			if err != nil {
+				return fmt.Errorf("invalid hardlink target %q: %w", hdr.Linkname, err)
+			}
+			if linkTarget == "" {
+				return fmt.Errorf("invalid hardlink target %q", hdr.Linkname)
+			}
 			targetAbs, err := s.joinRoot(rootfs, linkTarget)
 			if err != nil {
 				return err
 			}
-			_ = os.RemoveAll(dstPath)
-			if err := os.Link(targetAbs, dstPath); err != nil {
-				return fmt.Errorf("hardlink %s -> %s: %w", dstPath, targetAbs, err)
+			realTarget, err := s.resolveExistingPathUnderRoot(rootfs, targetAbs)
+			if err != nil {
+				return err
+			}
+			st, err := os.Stat(realTarget)
+			if err != nil {
+				return err
+			}
+			if !st.Mode().IsRegular() {
+				return fmt.Errorf("hardlink target is not a regular file: %s", hdr.Linkname)
+			}
+			if err := s.removeArchiveTarget(rootfs, dstPath); err != nil {
+				return err
+			}
+			if err := os.Link(realTarget, dstPath); err != nil {
+				return fmt.Errorf("hardlink %s -> %s: %w", dstPath, realTarget, err)
 			}
 			_ = s.applyOwner(dstPath, hdr, false)
 
@@ -756,10 +781,11 @@ func (s *RegistryDockerHub) applyOwner(path string, hdr *tar.Header, isSymlink b
 
 func (s *RegistryDockerHub) writeFileFromTar(dstPath string, r io.Reader, mode os.FileMode) error {
 	tmp := dstPath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	fd, err := unix.Open(tmp, unix.O_CREAT|unix.O_WRONLY|unix.O_TRUNC|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode.Perm()))
 	if err != nil {
 		return err
 	}
+	f := os.NewFile(uintptr(fd), tmp)
 	_, copyErr := io.Copy(f, r)
 	closeErr := f.Close()
 	if copyErr != nil {
@@ -773,6 +799,200 @@ func (s *RegistryDockerHub) writeFileFromTar(dstPath string, r io.Reader, mode o
 	// atomic-ish swap
 	_ = os.RemoveAll(dstPath)
 	return os.Rename(tmp, dstPath)
+}
+
+func cleanArchivePath(name string) (string, error) {
+	if strings.ContainsRune(name, '\x00') {
+		return "", fmt.Errorf("archive path contains NUL byte")
+	}
+	name = strings.TrimPrefix(name, "/")
+	name = filepath.Clean(name)
+	if name == "." || name == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive path escapes root: %s", name)
+	}
+	return name, nil
+}
+
+func validateImageLayerSymlinkTarget(rootfs, dstPath, linkname string) error {
+	if linkname == "" {
+		return fmt.Errorf("symlink target is empty")
+	}
+	if strings.ContainsRune(linkname, '\x00') {
+		return fmt.Errorf("symlink target contains NUL byte")
+	}
+
+	absRoot, err := filepath.Abs(rootfs)
+	if err != nil {
+		return fmt.Errorf("resolve rootfs: %w", err)
+	}
+	absRoot = filepath.Clean(absRoot)
+
+	var target string
+	if filepath.IsAbs(linkname) {
+		target = filepath.Join(absRoot, strings.TrimPrefix(filepath.Clean(linkname), string(filepath.Separator)))
+	} else {
+		target = filepath.Clean(filepath.Join(filepath.Dir(dstPath), linkname))
+	}
+
+	rel, err := filepath.Rel(absRoot, target)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("symlink target escapes rootfs: %s -> %s", dstPath, linkname)
+	}
+	return nil
+}
+
+func (s *RegistryDockerHub) ensureSafeParentDir(rootfs, target string) error {
+	return s.ensureSafeExtractionDir(rootfs, filepath.Dir(target), 0o755)
+}
+
+func (s *RegistryDockerHub) ensureSafeExtractionDir(rootfs, dir string, perm os.FileMode) error {
+	absRoot, err := filepath.Abs(rootfs)
+	if err != nil {
+		return fmt.Errorf("resolve rootfs: %w", err)
+	}
+	absRoot = filepath.Clean(absRoot)
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return fmt.Errorf("resolve real rootfs: %w", err)
+	}
+	realRoot = filepath.Clean(realRoot)
+
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("resolve extraction directory: %w", err)
+	}
+	dir = filepath.Clean(dir)
+
+	rel, err := filepath.Rel(absRoot, dir)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("extraction directory escapes root: %s", dir)
+	}
+	if rel == "." {
+		return nil
+	}
+
+	current := absRoot
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return fmt.Errorf("extraction directory escapes root: %s", dir)
+		}
+
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				resolved, err := filepath.EvalSymlinks(current)
+				if err != nil {
+					return fmt.Errorf("resolve symlink while extracting layer: %s: %w", current, err)
+				}
+				resolved = filepath.Clean(resolved)
+				if err := ensureResolvedPathUnderRoot(realRoot, resolved); err != nil {
+					return fmt.Errorf("symlink parent escapes rootfs while extracting layer: %s: %w", current, err)
+				}
+				st, err := os.Stat(resolved)
+				if err != nil {
+					return err
+				}
+				if !st.IsDir() {
+					return fmt.Errorf("not a directory while extracting layer: %s", current)
+				}
+				current = resolved
+				continue
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("not a directory while extracting layer: %s", current)
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(current, perm); err != nil {
+			if !os.IsExist(err) {
+				return err
+			}
+			info, statErr := os.Lstat(current)
+			if statErr != nil {
+				return statErr
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				resolved, err := filepath.EvalSymlinks(current)
+				if err != nil {
+					return fmt.Errorf("resolve symlink while extracting layer: %s: %w", current, err)
+				}
+				resolved = filepath.Clean(resolved)
+				if err := ensureResolvedPathUnderRoot(realRoot, resolved); err != nil {
+					return fmt.Errorf("symlink parent escapes rootfs while extracting layer: %s: %w", current, err)
+				}
+				st, err := os.Stat(resolved)
+				if err != nil {
+					return err
+				}
+				if !st.IsDir() {
+					return fmt.Errorf("not a directory while extracting layer: %s", current)
+				}
+				current = resolved
+				continue
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("not a directory while extracting layer: %s", current)
+			}
+		}
+	}
+	return nil
+}
+
+func ensureResolvedPathUnderRoot(realRoot, resolved string) error {
+	rel, err := filepath.Rel(realRoot, filepath.Clean(resolved))
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("resolved path escapes rootfs: %s", resolved)
+	}
+	return nil
+}
+
+func (s *RegistryDockerHub) removeArchiveTarget(rootfs, target string) error {
+	if err := s.ensureSafeParentDir(rootfs, target); err != nil {
+		return err
+	}
+	return os.RemoveAll(target)
+}
+
+func (s *RegistryDockerHub) resolveExistingPathUnderRoot(rootfs, target string) (string, error) {
+	realRoot, err := filepath.EvalSymlinks(rootfs)
+	if err != nil {
+		return "", fmt.Errorf("resolve real rootfs: %w", err)
+	}
+	realRoot = filepath.Clean(realRoot)
+
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("resolve path under rootfs: %w", err)
+	}
+	realTarget = filepath.Clean(realTarget)
+
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("resolved path escapes rootfs: %s", target)
+	}
+	return realTarget, nil
 }
 
 func (s *RegistryDockerHub) joinRoot(rootfs, rel string) (string, error) {
@@ -804,13 +1024,16 @@ func (s *RegistryDockerHub) joinRoot(rootfs, rel string) (string, error) {
 	return absCandidate, nil
 }
 
-func (s *RegistryDockerHub) removeAllChildren(dir string) error {
-	st, err := os.Stat(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return os.MkdirAll(dir, 0o755)
-		}
+func (s *RegistryDockerHub) removeAllChildren(rootfs, dir string) error {
+	if err := s.ensureSafeExtractionDir(rootfs, dir, 0o755); err != nil {
 		return err
+	}
+	st, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to clean symlink directory while extracting: %s", dir)
 	}
 	if !st.IsDir() {
 		return fmt.Errorf("not a dir: %s", dir)
@@ -821,7 +1044,7 @@ func (s *RegistryDockerHub) removeAllChildren(dir string) error {
 	}
 	for _, e := range ents {
 		p := filepath.Join(dir, e.Name())
-		if err := os.RemoveAll(p); err != nil {
+		if err := s.removeArchiveTarget(rootfs, p); err != nil {
 			return err
 		}
 	}
